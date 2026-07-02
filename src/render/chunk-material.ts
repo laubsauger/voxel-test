@@ -31,12 +31,22 @@ import {
   positionWorld,
   texture,
   transformNormalToView,
+  uniform,
   uniformArray,
   vec3,
 } from 'three/tsl'
 import { VOXEL_SIZE } from '../world/chunks'
 import { MATERIALS } from './materials'
 import type { ChunkTextures } from './texture-arrays'
+
+/**
+ * T58 — night boost for emissive materials (lamp id 13 is the only emissive
+ * entry). WorldRenderer's day cycle drives this per frame (1 by day, ~3 at
+ * night) so street lamps visibly carry the scene after dark via bloom.
+ * Module-level uniform: shared by every chunk material instance (single
+ * renderer per page).
+ */
+export const emissiveNightBoost = uniform(1)
 
 /** shared per-fragment nodes: material id, voxel AO shade, flat voxel salt */
 function chunkCommonNodes() {
@@ -94,7 +104,7 @@ export function createChunkMaterial(textures?: ChunkTextures): MeshStandardNodeM
     material.colorNode = rampColor.mul(aoShade)
     material.roughnessNode = roughness.element(matId)
     material.metalnessNode = metalness.element(matId)
-    material.emissiveNode = rampColor.mul(emissive.element(matId))
+    material.emissiveNode = rampColor.mul(emissive.element(matId)).mul(emissiveNightBoost)
     return material
   }
 
@@ -159,8 +169,8 @@ export function createChunkMaterial(textures?: ChunkTextures): MeshStandardNodeM
   const roughScalar = roughness.element(matId)
   material.roughnessNode = mix(roughScalar, texRough.mul(roughScalar).mul(1.6).clamp(0, 1), hasTex)
   material.metalnessNode = metalness.element(matId)
-  // emissive materials (lamp) feed the bloom pass
-  material.emissiveNode = base.mul(emissive.element(matId))
+  // emissive materials (lamp) feed the bloom pass; night cycle boosts them
+  material.emissiveNode = base.mul(emissive.element(matId)).mul(emissiveNightBoost)
 
   return material
 }

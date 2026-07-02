@@ -72,8 +72,71 @@ both take priority over `scene.background`, so main.ts's flat clear color
 becomes dead code but is harmless. The post stack is
 scene → GTAO (half-res) → bloom (threshold 1.0) → ACES tonemap; tone
 mapping still comes from `renderer.toneMapping` and is applied exactly once
-by the RenderPipeline output. Sky sun elevation/azimuth are runtime
-parameters (`atmosphere.setSunDirection`) for a future day cycle.
+by the RenderPipeline output (`renderer.toneMappingExposure` is live —
+the day cycle shifts it mildly at night).
+
+### T58 day/night cycle
+
+Time of day derives from **sim.tick** (deterministic, multiplayer-synced
+for free; render reads the tick, never writes — V6). Default: 24 h day per
+20 min real time, starting at 15:00 (golden afternoon — the exact look the
+smoke gate screenshots; an unwired tick keeps the world frozen there).
+
+**Integrator wiring (one argument):** in `src/game.ts`'s
+`startLoop()` animation-loop callback, the line
+
+```ts
+this.world.update(dt) // remesh budget, debris, CSM (V7)
+```
+
+becomes
+
+```ts
+this.world.update(dt, this.sim.tick) // + T58: tick drives the day cycle
+```
+
+(currently game.ts line 267 — directly above `this.bodyMeshes.update(...)`.)
+
+Everything else is automatic each frame: sun/moon orbit drives the one
+CSM DirectionalLight (`world.sun` — the moon takes over as a dim blue
+shadow caster at night; the direction swap happens while intensity ≈ 0 at
+twilight so it never pops, and shadow-pass cost stays identical to the
+static build), sky/fog palettes (dawn/dusk warm bands, night sky + stars),
+hemisphere light, exposure, lamp emissive (B25: material id 13 — lamp
+heads, car light bars — is OFF in daylight, ramps on smoothly through
+dusk, full after dark) and a pool of 3 real PointLights parked on the
+lamps nearest the camera at night (castShadow off; measured free —
+night fps == noon fps).
+
+### T65 time-of-day controls (settings UI wiring)
+
+All knobs are live — read every frame, apply immediately. WorldRenderer
+glides displayed time toward the target (fast exponential, ~0.3 s for a
+big jump) so slider drags and override toggles never pop CSM/exposure.
+
+```ts
+// fixed time slider (0-24 h) — overrides tick-derived time while set
+world.cycle.overrideHours = 13.5
+// resume the tick-derived cycle
+world.cycle.overrideHours = null
+// cycle speed multiplier — USE THE METHOD, it rebases the clock so time
+// is continuous across the change (a raw field write would jump):
+world.setCycleSpeed(4)              // 4× (24 h day in 5 min)
+world.cycle.speedMultiplier        // read side for the slider position
+// base config (plain fields, mostly boot-time):
+world.cycle.cycleLengthSec = 1200   // real seconds per 24 h day at 1×
+world.cycle.timeOfDayOffsetHours    // time at tick 0 (default 15)
+```
+
+These are render-layer only (V6): in multiplayer every peer sees the same
+tick-derived time by default; overrides/speed are local visual settings.
+
+A render-side dev handle `window.__bbCycle` exists for CDP probes and
+until the settings UI lands: `setOverride(h|null)`, `setSpeed(m)`,
+`demo(hoursPerSec)` (render-clock preview drift, dev only — real time
+comes from the tick), `stop()`, `hours`, `state`, `info` (renderer.info),
+`lampCount()`, `regionCount()`, `sun`. `scripts/cycle-shots.mjs`
+screenshots noon/golden/dusk/night + a culling probe with it.
 
 ## Per-frame (inside `renderer.setAnimationLoop`)
 
@@ -83,7 +146,7 @@ renderer.setAnimationLoop((now: number) => {
   last = now
   driver.advance(dtMs, sim)     // sim ticks (V11) — unchanged
   cam.update(dtMs / 1000)
-  world.update(dtMs / 1000)     // drain dirty → schedule → dispatch/apply
+  world.update(dtMs / 1000, sim.tick) // dirty→schedule→dispatch/apply + T58 day cycle
   world.render()                // replaces renderer.render(scene, camera)
 })
 ```
