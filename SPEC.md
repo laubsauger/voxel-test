@@ -60,16 +60,16 @@ T14|.|[R] debris/dust particles on destroy (render-only)|T6|V6
 T15|.|[W] water CA: integer level buffer, ping-pong TSL compute, solid blocking|T3,T4|V4,V9
 T16|.|[W] water surface extract + TSL water shading (refract, depth absorb)|T15|
 T17|.|[W] buoyancy: field readback → force on floats-flagged bodies|T15,T12|I.mat
-T18|.|[C] .vox importer (I.vox) + material remap|T3|I.vox
-T19|.|[C] proc suburb layout: streets, lots, terrain, pool placement, from seed|T3|V2
-T20|.|[C] scene stamp: layout + .vox props → world, deterministic from seed|T18,T19|V2
+T18|x|[C] .vox importer (I.vox) + material remap|T3|I.vox
+T19|x|[C] proc suburb layout: streets, lots, terrain, pool placement, from seed|T3|V2
+T20|x|[C] scene stamp: layout + .vox props → world, deterministic from seed|T18,T19|V2
 T21|.|[PL] Jolt char controller capsule + FP camera + walk via move commands|T10|I.jolt,V1
 T22|.|[PL] segmented voxel body: per-bone grids, damage removes voxels, segment-loss effects|T21|
 T23|.|[PL] TP camera toggle + sphere-cast collision vs world|T21|
-T24|.|[N] signaling server (WS) + WebRTC DataChannel pairing|T4|I.net
-T25|.|[N] lockstep transport: input delay buffer 2-3 ticks, tick barrier|T24|V2,V3
-T26|.|[N] join snapshot: serialize sim state, RLE chunks, fast-forward|T25|V3
-T27|.|[N] desync detector: periodic hash exchange, loud fail|T25|V10
+T24|x|[N] signaling server (WS) + WebRTC DataChannel pairing|T4|I.net
+T25|x|[N] lockstep transport: input delay buffer 2-3 ticks, tick barrier|T24|V2,V3
+T26|x|[N] join snapshot: serialize sim state, RLE chunks, fast-forward|T25|V3
+T27|x|[N] desync detector: periodic hash exchange, loud fail|T25|V10
 T28|.|[CORE] tool UX: hotbar dig/place/gun/explode, crosshair, hit feedback|T5,T13|
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
