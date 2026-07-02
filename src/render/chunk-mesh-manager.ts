@@ -13,6 +13,11 @@
  *
  * V7: dispatches, geometry data applies and region rebuilds are all budgeted
  * per frame; ordering comes from the RemeshScheduler (near-camera first).
+ *
+ * B3 — initial-load burst: until the pipeline first drains completely,
+ * budgets and worker queue depth run much higher (nothing else competes for
+ * the frame during world build), then drop to steady-state. All still
+ * bounded per frame (V7).
  */
 import {
   BufferAttribute,
@@ -43,6 +48,14 @@ export interface EditInfo {
   ci: number
   center: Vec3Like
 }
+
+/** steady-state jobs queued per worker — keeps meshers fed between frames */
+const WORKER_DEPTH = 2
+/** initial-load burst (B3): deeper worker queues + bigger per-frame budgets */
+const BURST_WORKER_DEPTH = 4
+const BURST_DISPATCH = 24
+const BURST_APPLY = 64
+const BURST_REGION_BUILDS = 32
 
 /** chunks per region edge — REGION³ chunks merge into one draw call (T35) */
 export const REGION = 4
@@ -105,7 +118,11 @@ export class ChunkMeshManager {
   /** regions whose chunkData changed since their last rebuild */
   private readonly dirtyRegions = new Set<number>()
   private readonly workers: Worker[] = []
-  private readonly idle: number[] = []
+  /** jobs currently queued per worker — dispatch fills to the depth limit */
+  private readonly jobCount: number[] = []
+  private inFlight = 0
+  /** B3: burst budgets until the pipeline first drains completely */
+  private initialBuild = true
   private readonly completed: MeshResponse[] = []
   /** latest dispatched (or invalidated) job version per chunk */
   private readonly versions = new Map<number, number>()
@@ -132,14 +149,15 @@ export class ChunkMeshManager {
       const w = new Worker(new URL('./mesh-worker.ts', import.meta.url), { type: 'module' })
       w.onmessage = (e: MessageEvent<MeshResponse>) => {
         this.completed.push(e.data)
-        this.idle.push(i)
+        this.jobCount[i]--
+        this.inFlight--
       }
       // V10 spirit: a dead mesher must not silently freeze world updates
       w.onerror = (e) => {
         throw new Error(`mesh worker ${i} failed: ${e.message}`)
       }
       this.workers.push(w)
-      this.idle.push(i)
+      this.jobCount.push(0)
     }
   }
 
@@ -183,8 +201,19 @@ export class ChunkMeshManager {
       }
     }
 
+    // B3: burst budgets during the initial world build, steady-state after
+    const burst = this.initialBuild
+    const maxApply = burst ? Math.max(this.maxApplyPerFrame, BURST_APPLY) : this.maxApplyPerFrame
+    const maxDispatch = burst
+      ? Math.max(this.maxDispatchPerFrame, BURST_DISPATCH)
+      : this.maxDispatchPerFrame
+    const maxBuilds = burst
+      ? Math.max(this.maxRegionBuildsPerFrame, BURST_REGION_BUILDS)
+      : this.maxRegionBuildsPerFrame
+    const depth = burst ? BURST_WORKER_DEPTH : WORKER_DEPTH
+
     let applies = 0
-    while (this.completed.length > 0 && applies < this.maxApplyPerFrame) {
+    while (this.completed.length > 0 && applies < maxApply) {
       const r = this.completed.shift()!
       // drop stale results — a newer job for this chunk was dispatched
       if (r.version !== this.versions.get(r.ci)) continue
@@ -192,7 +221,9 @@ export class ChunkMeshManager {
       applies++
     }
 
-    const budget = Math.min(this.idle.length, this.maxDispatchPerFrame)
+    let slots = 0
+    for (const c of this.jobCount) slots += Math.max(0, depth - c)
+    const budget = Math.min(slots, maxDispatch)
     for (const ci of this.scheduler.take(budget, camPos)) {
       if (this.world.chunkAt(ci).kind === ChunkKind.Empty) {
         // no voxels ⇒ no faces; skip the worker round-trip and invalidate
@@ -205,7 +236,13 @@ export class ChunkMeshManager {
       const padded = buildPaddedChunk((x, y, z) => this.world.getVoxel(x, y, z), cx, cy, cz)
       const version = this.nextVersion++
       this.versions.set(ci, version)
-      const wi = this.idle.pop()!
+      // least-loaded worker keeps queues even (workerCount ≤ 4)
+      let wi = 0
+      for (let i = 1; i < this.jobCount.length; i++) {
+        if (this.jobCount[i] < this.jobCount[wi]) wi = i
+      }
+      this.jobCount[wi]++
+      this.inFlight++
       // buildPaddedChunk allocates a plain ArrayBuffer (never shared)
       const req: MeshRequest = { ci, version, padded: padded.buffer as ArrayBuffer }
       this.workers[wi].postMessage(req, [padded.buffer])
@@ -213,10 +250,20 @@ export class ChunkMeshManager {
 
     let builds = 0
     for (const ri of this.dirtyRegions) {
-      if (builds >= this.maxRegionBuildsPerFrame) break
+      if (builds >= maxBuilds) break
       this.dirtyRegions.delete(ri)
       this.buildRegion(ri)
       builds++
+    }
+
+    // initial build over once the whole pipeline has drained once (B3)
+    if (
+      this.initialBuild &&
+      this.scheduler.size === 0 &&
+      this.inFlight === 0 &&
+      this.completed.length === 0
+    ) {
+      this.initialBuild = false
     }
   }
 
@@ -342,7 +389,8 @@ export class ChunkMeshManager {
   dispose(): void {
     for (const w of this.workers) w.terminate()
     this.workers.length = 0
-    this.idle.length = 0
+    this.jobCount.length = 0
+    this.inFlight = 0
     for (const ri of [...this.regionMeshes.keys()]) this.removeRegionMesh(ri)
     this.chunkData.clear()
     this.dirtyRegions.clear()

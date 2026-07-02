@@ -136,6 +136,21 @@ world.particles.burst({ x, y, z }, 40) // world meters, render-only
   rebuild by typed-array concatenation (positions offset, indices rebased),
   budgeted by `maxRegionBuildsPerFrame` (V7). Edit latency: dirty chunk →
   worker remesh → region rebuild, still a few frames end to end.
+- **Initial-load burst (B3):** until the remesh pipeline first drains
+  completely, dispatch/apply/region budgets and worker queue depth run at
+  burst values (24/64/32, depth 4), then drop to the steady-state options
+  above. All still bounded per frame (V7). Steady state keeps each worker
+  fed with up to 2 queued jobs.
+- **Movement-aware remesh priority (B3):** `WorldRenderer.update` leads the
+  scheduler focus along the camera velocity (0.5 s, clamped to one region),
+  so chunks ahead of a fast-moving camera mesh first.
+- **Shadow config (B4):** the chunk material renders **front faces** into
+  the shadow map (`shadowSide = FrontSide`) — voxel walls are 10 cm thin,
+  and back-face depth let light leak through wall/roof/floor joins into
+  interiors. The sun's `normalBias` is scaled per CSM cascade after the
+  first render (CSMShadowNode only scales `bias`). If you add another
+  world-geometry material, set `shadowSide = FrontSide` on it too or
+  interiors will leak again.
 - Meshing runs in `min(4, cores-1)` module workers; padded chunk copies
   (34³ = 39 KB) transfer, results transfer back — zero structured-clone
   copies of bulk data.

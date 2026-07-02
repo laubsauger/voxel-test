@@ -13,6 +13,7 @@ import {
   DirectionalLight,
   HemisphereLight,
   RenderPipeline,
+  Vector3,
   type DirectionalLightShadow,
   type PerspectiveCamera,
   type Scene,
@@ -46,6 +47,14 @@ export interface WorldRendererOptions {
 /** max debris bursts per frame — a huge explosion dirties many chunks */
 const MAX_BURSTS_PER_FRAME = 8
 
+/**
+ * B3 — movement-aware remesh priority: the scheduler focus is the camera
+ * position led along its velocity, so chunks ahead of a moving camera mesh
+ * first instead of popping in late. Lead is clamped to one region.
+ */
+const FOCUS_LEAD_TIME = 0.5
+const FOCUS_MAX_LEAD = 12.8
+
 export class WorldRenderer {
   readonly chunks: ChunkMeshManager
   readonly sun: DirectionalLight
@@ -57,7 +66,11 @@ export class WorldRenderer {
   private readonly scene: Scene
   private readonly camera: PerspectiveCamera
   private firstUpdate = true
+  private csmBiasTuned = false
   private readonly debrisEnabled: boolean
+  // B3 focus prediction scratch (no per-frame allocations)
+  private readonly prevCamPos = new Vector3()
+  private readonly meshFocus = new Vector3()
 
   constructor(opts: WorldRendererOptions) {
     this.renderer = opts.renderer
@@ -69,8 +82,12 @@ export class WorldRenderer {
     this.sun.position.set(60, 100, 40)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
-    this.sun.shadow.bias = -0.0002
-    this.sun.shadow.normalBias = 0.02
+    // B4: chunk material renders front faces into the shadow map (see
+    // chunk-material.ts) — depth bias stays tiny (CSMShadowNode scales it
+    // ×(i+1) per cascade), acne is handled by normalBias instead, which we
+    // scale per cascade after the CSM node initializes (see render()).
+    this.sun.shadow.bias = -0.00005
+    this.sun.shadow.normalBias = 0.03
     this.csm = new CSMShadowNode(this.sun, { cascades: 3, maxFar: 150, mode: 'practical' })
     this.csm.fade = true
     // custom shadow node hook (not yet in @types/three)
@@ -118,7 +135,18 @@ export class WorldRenderer {
    * seconds (render-side clock only — never fed back into the sim, V6).
    */
   update(dt: number): void {
-    this.chunks.update(this.camera.position)
+    // B3: remesh focus = camera position led along its velocity
+    const camPos = this.camera.position
+    if (this.firstUpdate || dt <= 0) {
+      this.meshFocus.copy(camPos)
+    } else {
+      this.meshFocus.subVectors(camPos, this.prevCamPos).divideScalar(dt) // velocity m/s
+      const lead = Math.min(this.meshFocus.length() * FOCUS_LEAD_TIME, FOCUS_MAX_LEAD)
+      if (lead > 1e-3) this.meshFocus.normalize().multiplyScalar(lead).add(camPos)
+      else this.meshFocus.copy(camPos)
+    }
+    this.prevCamPos.copy(camPos)
+    this.chunks.update(this.meshFocus)
     if (this.firstUpdate) {
       this.firstUpdate = false
       if (this.debrisEnabled) {
@@ -136,6 +164,17 @@ export class WorldRenderer {
   render(): void {
     if (this.pipeline) this.pipeline.render()
     else this.renderer.render(this.scene, this.camera)
+    // B4: CSMShadowNode clones the sun shadow per cascade lazily on first
+    // render and only scales `bias` ×(i+1) — scale normalBias to match once
+    // the cascade lights exist (far cascades have ~3× the texel size, so a
+    // constant normalBias leaves acne/leaks at distance).
+    if (!this.csmBiasTuned && this.csm.lights.length > 0) {
+      this.csmBiasTuned = true
+      const base = this.sun.shadow.normalBias
+      this.csm.lights.forEach((l, i) => {
+        if (l.shadow) l.shadow.normalBias = base * (i + 1)
+      })
+    }
   }
 
   /** call on window resize, after camera.updateProjectionMatrix() */

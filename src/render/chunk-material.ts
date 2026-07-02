@@ -11,7 +11,7 @@
  * is visual salt, not sim randomness; render layer may be non-deterministic),
  * and darkens by baked AO.
  */
-import { Color, MeshStandardNodeMaterial } from 'three/webgpu'
+import { Color, FrontSide, MeshStandardNodeMaterial } from 'three/webgpu'
 import {
   attribute,
   float,
@@ -27,6 +27,14 @@ import { MATERIALS } from './materials'
 
 export function createChunkMaterial(): MeshStandardNodeMaterial {
   const material = new MeshStandardNodeMaterial()
+
+  // B4: render front faces into the shadow map (three's default is back
+  // faces). Voxel walls/roofs are a single voxel (10cm) thick — back-face
+  // depth sits on the interior surface, so bias + far-cascade texel error
+  // let light bleed through wall/roof/floor joins. Front-face depth puts
+  // interiors a full wall thickness below the stored depth: no leaks.
+  // Acne on lit faces is handled by the sun's normalBias (world-renderer).
+  material.shadowSide = FrontSide
 
   const rampLo = uniformArray<'color'>(MATERIALS.map((m) => new Color(m.colorRamp[0])), 'color')
   const rampHi = uniformArray<'color'>(MATERIALS.map((m) => new Color(m.colorRamp[1])), 'color')
