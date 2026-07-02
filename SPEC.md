@@ -94,7 +94,7 @@ T42|x|[C] vegetation: trees (trunk+leaf canopy, MAT_LEAVES), shrubs, yard/parkwa
 T43|x|[C] street detail: road markings (id 15 = paint), fences, lamp posts (emissive), mailboxes, driveway/roof/palette variation — cute pass|T20|B6,V2
 T44|x|[PL] sprint (input bit 64, speed mult) + functional crouch (capsule shrink, slow) — sim-side, deterministic move op|T21|V1,V2
 T45|x|[PL] fly/spectator mode: quick toggle (F), free camera detached from player (render-only, lockstep-safe), speed tiers|T21|V6
-T46|.|[PL] player visual detail: segment-based colors (skin/shirt/pants/shoes), better proportions, damage-visible voxel body|T22|§C
+T46|x|[PL] player visual detail: segment-based colors (skin/shirt/pants/shoes), better proportions, damage-visible voxel body|T22|§C
 T47|x|[PL] noclip dev mode: 'noclip' toggle op, player skips collision + direct velocity integration, deterministic (command-driven), dev-gated in UI|T21|V1,V2
 T50|.|[C] world expansion (B11): 2048×2048×768 world. Districts: suburban core (spawn), rowhouse/denser blocks, commercial+highrise (5-15 story towers: concrete/glass/metal, elevator shafts/stairwells), parks (ponds=water, paths, tree clusters), parking lots. Deep procgen variety, deterministic|T20|B11,V2,§C
 T51|.|[C] house/lot detail (B11): interiors — rooms, interior doors, basic voxel furniture; garages, balconies, chimneys, varied rooflines; backyard variety|T50|B11,V2
@@ -104,8 +104,8 @@ T57|-|[SPIKE] 5cm voxels: BENCHED 2026-07-02 by user — staying at 10cm (Teardo
 T53|.|[R] destruction/combat VFX (B13): explosion = flash+fireball+radial debris (velocities FROM blast center)+smoke plume+dust ring; gun muzzle flash+tracer+impact fx by material; debris particle overhaul (impulse-centered emission)|T14|B13,V6,§C
 T54|.|[P] projectile entities: thrown bomb = sim projectile (arc, bounce, fuse timer → explode at rest), deterministic. Visual: classic black round voxel bomb + fuse spark, trailed|T13|B13,B14,V1,V2
 T52|x|[UI] audio wiring per INTEGRATION-audio.md (B9: engine init on gesture, listener sync, footstep poller, event hooks) + fullscreen setting & quick-access + mute quick-access in main/pause menus + ESC toggles pause closed (B10)|T34,T37|B9,B10,I.audio,I.settings
-T48|.|[PL] procedural animation rig: render-side bone animation of voxel segments — walk/run cycles stride-matched to velocity (NO foot skating), idle sway, jump/fall/land, crouch pose, yaw/pitch aim. Sim segments stay authoritative for damage (V6)|T22,T46|§C,V6
-T49|.|[PL] FP viewmodel: hands (+feet when looking down) visible in first person, equipped hotbar tool rendered in hand, FP anims (swing/dig, place, recoil, bob synced to stride)|T48,T28|§C,V6
+T48|x|[PL] procedural animation rig: render-side bone animation of voxel segments — walk/run cycles stride-matched to velocity (NO foot skating), idle sway, jump/fall/land, crouch pose, yaw/pitch aim. Sim segments stay authoritative for damage (V6)|T22,T46|§C,V6
+T49|x|[PL] FP viewmodel: hands (+feet when looking down) visible in first person, equipped hotbar tool rendered in hand, FP anims (swing/dig, place, recoil, bob synced to stride)|T48,T28|§C,V6
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 
@@ -126,5 +126,8 @@ B13|2026-07-02|user: destruction/combat not immersive — no projectiles, no muz
 B14|2026-07-02|explosion feels binary — voxels vanish or nothing (threshold shell). No graduated falloff, no ejecta ('yanked out' voxels), no shockwave feel. Bomb needs classic look: black round voxel bomb + fuse|T54,T55
 B15|2026-07-02|wall pieces crumble then get STUCK MID-AIR, non-interactive — suspected: region-limited connectivity escape hatch marks floating fragments 'supported' at region boundary → stay in static world mesh|boom agent investigating; T56 follow-up
 B16|2026-07-02|user: vaporize must not be default — bomb into wall should crumble it into persistent debris, minimal vaporization. Teardown model: most removed volume → debris bodies/particles|T55 emphasis shift
+B17|2026-07-02|dynamic bodies opt out of interaction — dig/shoot raycasts test WORLD voxels only, never Jolt bodies: no impulse, no damage to debris/islands|boom agent: tool rays vs bodies + body-local voxel damage
+B18|2026-07-02|impact particles: wrong origin (not at hit voxel), ignore surface normal + impact vector, always emit bottom-up|boom agent T53 requirement
+B19|2026-07-02|spawn pool tiny 2x2 plunge + NO VISIBLE WATER. Spawn lot should be villa/mansion: garden, LARGE pool, pool house|world agent
 B8|2026-07-02|flat walls show per-voxel diagonal shading noise reading as broken AO (screenshot evidence) — per-voxel color hash interpolates across voxel + triangle diagonal seams; true AO must be uniform on coplanar faces, darken only real edges/corners|render-quality agent: flat-per-voxel variation sampling (voxel-center hash, no in-voxel gradient), verify AO uniformity on flat walls, GTAO radius > voxel size
 B5|2026-07-02|user smoke feedback: glass windows render opaque (known R-track v1 limitation, single opaque mesh pass)|T39
