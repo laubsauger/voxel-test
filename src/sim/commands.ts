@@ -45,7 +45,7 @@ export interface ExplodeOp {
 
 export interface MoveOp {
   kind: 'move'
-  /** bitfield: 1 fwd, 2 back, 4 left, 8 right, 16 jump, 32 crouch */
+  /** bitfield: 1 fwd, 2 back, 4 left, 8 right, 16 jump, 32 crouch, 64 sprint */
   input: number
   yaw: number
   pitch: number
@@ -55,7 +55,12 @@ export interface SpawnOp {
   kind: 'spawn'
 }
 
-export type Op = DigOp | PlaceOp | ShootOp | ExplodeOp | MoveOp | SpawnOp
+/** T47 — toggle noclip fly mode on the issuing player (dev tool, hashable state) */
+export interface NoclipOp {
+  kind: 'noclip'
+}
+
+export type Op = DigOp | PlaceOp | ShootOp | ExplodeOp | MoveOp | SpawnOp | NoclipOp
 
 export interface Command {
   tick: number

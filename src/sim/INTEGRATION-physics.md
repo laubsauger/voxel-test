@@ -24,14 +24,32 @@ registerEditOps(sim)                    // dig/place (T5)
 //    next tick like any edit — floating authored props would fall.
 
 // 2. async physics init — MUST complete before the loop starts (WASM load).
-//    Registers: 'explode' (T13), 'spawn'/'move' (T21) op handlers, and the
-//    physics step as a Sim system.
+//    Registers: 'explode' (T13), 'spawn'/'move' (T21), 'noclip' (T47) op
+//    handlers, and the physics step as a Sim system.
+//    Move-op input bitfield (T44): 1 fwd, 2 back, 4 left, 8 right, 16 jump,
+//    32 crouch (capsule 1.2m, 0.5× speed, auto-blocked un-crouch), 64 sprint
+//    (1.6×, ground only). 'noclip' toggles collision-free fly per player
+//    (jump=up, crouch=down, sprint faster) — dev tool, hashed sim state.
 const phys = await createPhysics(sim)
 
 // 3. any OTHER sim systems (water T15, etc.): register order = execution
 //    order inside the tick. Physics registered first ⇒ runs first. If another
 //    track needs to run before physics, call sim.addSystem before
 //    createPhysics resolves — i.e. decide order here in main, deterministically.
+
+// 4. buoyancy coupling (T17/T40.6) — REQUIRED order: physics → water → buoyancy.
+//    attachBuoyancy must be called after BOTH createPhysics and attachWaterSim:
+import { attachWaterSim } from './sim/water/water-sim'
+import { attachBuoyancy } from './sim/buoyancy-coupling'
+const water = attachWaterSim(sim)
+attachBuoyancy(sim, phys, water)
+//    Why this order: buoyancy samples the tick's post-step body transforms and
+//    post-step water field, then accumulates Jolt AddForce/AddTorque; Jolt
+//    consumes accumulated forces in the NEXT tick's step. One-tick force
+//    latency — deterministic (pure function of tick-N state) and stable (drag
+//    far below critical damping; 16.7ms ≪ bob period). Full rationale in
+//    src/sim/buoyancy-coupling.ts header. Floats-flagged (I.mat) island
+//    bodies bob and settle at the waterline; everything else sinks normally.
 
 const driver = new FixedStepDriver()
 const input = new PlayerInput(renderer.domElement)
@@ -119,6 +137,16 @@ Assumed, NOT verified:
   the same tick (no 1-tick ghost collision), but their connectivity check runs
   next tick — progressive collapse settles over ticks, deterministically.
 - **Islands stay dynamic forever** (V12); sleeping allowed, no re-weld.
+- **T40 feel**: island bodies get per-material friction/restitution
+  (MATERIAL_FEEL in physics.ts, keyed by the island's dominant material —
+  `DynamicBody.mat`), MaxLinearVelocity 60 m/s + MaxAngularVelocity 25 rad/s
+  caps, angular damping 0.25. Kill plane: bodies with py < −10 m are removed
+  from sim+Jolt inside the tick (ascending id); `phys.removedBodies` counts
+  them and is part of hashPhysics.
+- **Sleeping floaters** are not re-woken by water changes (buoyancy skips
+  inactive bodies) — a drained pool leaves a slept floater hovering until the
+  next nearby impulse/edit wakes it. v1 tradeoff, documented in
+  buoyancy-coupling.ts.
 - **Mass** = voxel count × `MATERIALS[mat].density` × 0.001 m³;
   inertia from compound shape via `EOverrideMassProperties_CalculateInertia`.
 - **materials.ts** is the sim-side I.mat slice (density/strength/flags).

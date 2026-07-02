@@ -40,6 +40,66 @@ const NUM_BP_LAYERS = 2
 
 export const GRAVITY_Y = -9.81
 
+// ---------------------------------------------------------------------------
+// T40 — destruction feel tuning
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard cap on dynamic island body speed (m/s). Set on MotionProperties via
+ * BodyCreationSettings; Jolt clamps both at impulse application
+ * (SetLinearVelocityClamped inside Body.AddImpulse) and after each solver
+ * step — nothing ever flies off to infinity or NaNs (T40).
+ */
+export const MAX_BODY_LINEAR_VELOCITY = 60
+/** rad/s cap on island spin — debris tumbles, never turns into a blur */
+export const MAX_BODY_ANGULAR_VELOCITY = 25
+/** extra angular damping on islands so tumbling chunks settle and sleep */
+export const BODY_ANGULAR_DAMPING = 0.25
+/** bodies whose origin falls below this (meters) are removed from sim + Jolt */
+export const KILL_PLANE_Y = -10
+
+/** per-material surface response for island bodies (T40) */
+export interface MaterialFeel {
+  friction: number
+  restitution: number
+}
+
+/**
+ * I.mat-derived friction/restitution, indexed by material id. materials.ts is
+ * the id authority (V13) and is read-only for this track, so the feel columns
+ * live here. Values chosen for weight-believability:
+ *   - masonry/earth (dirt, grass, asphalt, concrete, brick): high friction,
+ *     near-zero restitution — slabs thud and stay put.
+ *   - wood: moderate friction 0.7, restitution 0.25 — planks clatter/bounce.
+ *   - metal: low friction 0.25, restitution 0.3 — slides and clangs.
+ *   - glass: slick, small bounce before it (visually) shatters.
+ *   - leaves: grippy and dead — foliage clumps flop, never bounce.
+ */
+export const MATERIAL_FEEL: readonly MaterialFeel[] = [
+  { friction: 0.5, restitution: 0.05 }, // 0 air (unused)
+  { friction: 0.9, restitution: 0.02 }, // 1 dirt
+  { friction: 0.9, restitution: 0.02 }, // 2 grass
+  { friction: 0.85, restitution: 0.04 }, // 3 asphalt
+  { friction: 0.85, restitution: 0.03 }, // 4 concrete
+  { friction: 0.8, restitution: 0.05 }, // 5 brick
+  { friction: 0.7, restitution: 0.25 }, // 6 wood
+  { friction: 0.75, restitution: 0.05 }, // 7 plaster
+  { friction: 0.4, restitution: 0.1 }, // 8 glass
+  { friction: 0.25, restitution: 0.3 }, // 9 metal
+  { friction: 0.3, restitution: 0.0 }, // 10 water-solid
+  { friction: 0.9, restitution: 0.0 }, // 11 leaves
+  { friction: 0.7, restitution: 0.15 }, // 12 rooftile
+  { friction: 0.5, restitution: 0.2 }, // 13 lamp
+  { friction: 0.8, restitution: 0.0 }, // 14 flesh
+]
+
+const DEFAULT_FEEL: MaterialFeel = { friction: 0.5, restitution: 0.05 }
+
+/** feel params for a material id — safe on ids outside the table */
+export function materialFeel(mat: number): MaterialFeel {
+  return MATERIAL_FEEL[mat] ?? DEFAULT_FEEL
+}
+
 /** Full 32³ chunk as a single box — fast path for Uniform chunks. */
 const FULL_CHUNK_BOX: Box[] = [{ x: 0, y: 0, z: 0, sx: CHUNK, sy: CHUNK, sz: CHUNK }]
 
@@ -95,6 +155,8 @@ export interface DynamicBody {
   count: number
   /** kg — voxel count × material density × voxel volume */
   mass: number
+  /** dominant material id (most voxels, ties → lowest id) — feel + buoyancy */
+  mat: number
   px: number
   py: number
   pz: number
@@ -126,6 +188,9 @@ export class PhysicsWorld {
 
   /** player entities keyed by playerId (T21) — see player.ts */
   readonly players = new Map<number, PlayerEntity>()
+
+  /** total bodies removed by the kill plane — hashed sim state (T40, V3) */
+  removedBodies = 0
 
   private readonly settings: Jolt.JoltSettings
   /** shared gravity vector for character updates (matches physics system gravity) */
@@ -203,8 +268,31 @@ export class PhysicsWorld {
   tick(sim: Sim): void {
     this.structuralPass(sim)
     this.joltInterface.Step(DT, 1)
-    updatePlayers(this) // character controllers, fixed order (T21)
+    updatePlayers(this, sim) // character controllers, fixed order (T21)
     this.readbackBodies()
+    this.killPlanePass()
+  }
+
+  /**
+   * T40 — kill plane: bodies whose origin fell below KILL_PLANE_Y leave the
+   * sim and Jolt this tick. Removal order = ascending entity id (map insertion
+   * is allocation order, but sort anyway — deterministic, hashable via the
+   * removedBodies counter + body-set shrink).
+   */
+  private killPlanePass(): void {
+    let doomed: number[] | undefined
+    for (const [id, b] of this.bodies) {
+      if (b.py < KILL_PLANE_Y) (doomed ??= []).push(id)
+    }
+    if (!doomed) return
+    doomed.sort((a, b) => a - b)
+    for (const id of doomed) {
+      const b = this.bodies.get(id)!
+      this.bodyInterface.RemoveBody(b.body.GetID())
+      this.bodyInterface.DestroyBody(b.body.GetID())
+      this.bodies.delete(id)
+      this.removedBodies++
+    }
   }
 
   /**
@@ -262,10 +350,21 @@ export class PhysicsWorld {
     const sz = z1 - z0 + 1
     const grid = new Uint8Array(sx * sy * sz)
     let mass = 0
+    const matCounts = new Uint32Array(256)
     for (const v of vs) {
       grid[v.x - x0 + (v.z - z0) * sx + (v.y - y0) * sx * sz] = v.mat
       mass += material(v.mat).density * VOXEL_VOLUME
+      matCounts[v.mat]++
       sim.world.setVoxel(v.x, v.y, v.z, 0)
+    }
+    // dominant material: most voxels, ties broken by lowest id (deterministic)
+    let mat = 0
+    let best = 0
+    for (let m = 1; m < 256; m++) {
+      if (matCounts[m] > best) {
+        best = matCounts[m]
+        mat = m
+      }
     }
 
     const api = this.api
@@ -275,6 +374,13 @@ export class PhysicsWorld {
     const bcs = new api.BodyCreationSettings(shape, pos, rot, api.EMotionType_Dynamic, LAYER_MOVING)
     bcs.mOverrideMassProperties = api.EOverrideMassProperties_CalculateInertia
     bcs.mMassPropertiesOverride.mMass = mass
+    // T40 feel: per-material surface response + velocity caps + settle damping
+    const feel = materialFeel(mat)
+    bcs.mFriction = feel.friction
+    bcs.mRestitution = feel.restitution
+    bcs.mAngularDamping = BODY_ANGULAR_DAMPING
+    bcs.mMaxLinearVelocity = MAX_BODY_LINEAR_VELOCITY
+    bcs.mMaxAngularVelocity = MAX_BODY_ANGULAR_VELOCITY
     const body = this.bodyInterface.CreateBody(bcs)
     this.bodyInterface.AddBody(body.GetID(), api.EActivation_Activate)
     api.destroy(bcs)
@@ -291,6 +397,7 @@ export class PhysicsWorld {
       grid,
       count: vs.length,
       mass,
+      mat,
       px: x0 * VOXEL_SIZE,
       py: y0 * VOXEL_SIZE,
       pz: z0 * VOXEL_SIZE,
@@ -444,6 +551,7 @@ export function hashPhysics(phys: PhysicsWorld): number {
   const h = new Fnv()
   h.u32(phys.staticBodyCount)
   h.u32(phys.bodies.size)
+  h.u32(phys.removedBodies) // kill-plane removals are sim state (T40)
   const ids = [...phys.bodies.keys()].sort((a, b) => a - b)
   for (const id of ids) {
     const b = phys.bodies.get(id)!
@@ -451,6 +559,7 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.f64(b.px).f64(b.py).f64(b.pz)
     h.f64(b.qx).f64(b.qy).f64(b.qz).f64(b.qw)
     h.f64(b.mass)
+    h.u32(b.mat)
     h.u32(b.sx).u32(b.sy).u32(b.sz)
     h.bytes(b.grid)
   }
@@ -464,6 +573,8 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.f64(p.yaw).f64(p.pitch)
     h.u32(p.input)
     h.u32(p.flags)
+    // T44/T47 — capsule height + noclip are sim state (V3)
+    h.u32((p.crouching ? 1 : 0) | (p.noclip ? 2 : 0))
     for (const seg of p.segments) {
       h.u32(seg.count)
       h.bytes(seg.grid)
