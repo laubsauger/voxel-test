@@ -5,28 +5,6 @@
    All UI is DOM overlay (§C UI bar). No frameworks.
    ========================================================================== */
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url('/fonts/chakra-petch-500.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url('/fonts/chakra-petch-600.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('/fonts/chakra-petch-700.woff2') format('woff2');
-}
-
 :root {
   /* ink */
   --ink: #edf3f9;

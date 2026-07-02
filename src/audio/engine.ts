@@ -80,6 +80,11 @@ export interface StorageLike {
 
 type FetchLike = (url: string) => Promise<{ ok: boolean; status: number; arrayBuffer(): Promise<ArrayBuffer> }>
 
+function publicAssetPath(path: string): string {
+  if (!path.startsWith('/')) return path
+  return `${import.meta.env.BASE_URL}${path.slice(1)}`
+}
+
 // --- volume contract ----------------------------------------------------------
 export type BusName = 'master' | 'music' | 'sfx'
 
@@ -163,7 +168,7 @@ export class AudioEngine {
   async loadManifest(source: string | AudioManifest = '/audio/manifest.json'): Promise<void> {
     let data: unknown
     if (typeof source === 'string') {
-      const res = await this.fetchFn(source)
+      const res = await this.fetchFn(publicAssetPath(source))
       if (!res.ok) throw new Error(`audio manifest fetch failed: ${res.status} ${source}`)
       data = JSON.parse(new TextDecoder().decode(await res.arrayBuffer()))
     } else {
@@ -268,7 +273,7 @@ export class AudioEngine {
     let p = this.buffers.get(def.path)
     if (!p) {
       p = (async () => {
-        const res = await this.fetchFn(def.path)
+        const res = await this.fetchFn(publicAssetPath(def.path))
         if (!res.ok) throw new Error(`audio fetch failed: ${res.status} ${def.path}`)
         const decoded = await this.ctx!.decodeAudioData(await res.arrayBuffer())
         // UI one-shots: downmix to mono — some generated assets ship with

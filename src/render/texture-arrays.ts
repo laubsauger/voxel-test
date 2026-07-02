@@ -100,7 +100,7 @@ async function fetchPixels(url: string): Promise<Uint8ClampedArray | null> {
  * Build the chunk texture arrays and kick off async loading. Base url is
  * usually '' (vite serves public/ at root).
  */
-export function createChunkTextures(baseUrl = ''): ChunkTextures {
+export function createChunkTextures(baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '')): ChunkTextures {
   const layers = TEXTURED_MATS.length
   const px = TEXTURE_SIZE * TEXTURE_SIZE
   const albedoData = new Uint8Array(px * 4 * layers)

@@ -4,11 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BLOCKBURB</title>
-    <link rel="preload" href="/fonts/chakra-petch-700.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="/fonts/chakra-petch-600.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="/fonts/chakra-petch-500.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="%BASE_URL%fonts/chakra-petch-700.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="%BASE_URL%fonts/chakra-petch-600.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="%BASE_URL%fonts/chakra-petch-500.woff2" as="font" type="font/woff2" crossorigin />
     <style>
       /* boot-critical styles only — the design system lives in src/ui/style.css */
+      @font-face {
+        font-family: 'Chakra Petch';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url('%BASE_URL%fonts/chakra-petch-500.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Chakra Petch';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url('%BASE_URL%fonts/chakra-petch-600.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Chakra Petch';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('%BASE_URL%fonts/chakra-petch-700.woff2') format('woff2');
+      }
       html, body { margin: 0; height: 100%; overflow: hidden; background: #07090d; }
       #app { width: 100%; height: 100%; }
       #fatal {
