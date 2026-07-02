@@ -11,7 +11,7 @@ Browser voxel sandbox: fully destructible suburban arena (terrain→player), str
 - Stack: TypeScript, Vite, three.js WebGPURenderer + TSL, Jolt WASM.
 - Desktop Chrome, WebGPU only. No WebGL fallback code.
 - Voxel 10cm. Arena fixed ~205×205×77m (2048×2048×768 voxel space, 64×64×24 chunks). No streaming. (Expanded from 100×100×50m per user 2026-07-02 — B11.)
-- 60fps target: mid-range dGPU / Apple Silicon.
+- Perf bar (raised 2026-07-02): calm scene 120fps on the dev machine (Apple Silicon) = headroom for weaker targets at 60. Destruction may dip, never hitch (B23 gates stay).
 - Sandbox first. Combat shape deferred to post-M4 playtest.
 - Visual bar: AAA aspiration. Real PBR textures (CC0: ambientcg.com, freepbr.com), quality lighting + atmosphere. Voxel geo ≠ excuse for flat look.
 - UI bar: same AAA standard for ALL UI — menu, HUD, hotbar, crosshair, hit/damage feedback, overlays. Cohesive design system (type, spacing, motion, sound hooks). No programmer-art UI ever ships.
@@ -155,5 +155,6 @@ B24|2026-07-02|cars spawn partially inside houses (placement overlap); also user
 B25|2026-07-02|streetlights + car light bars glow in bright daylight — emissive must follow time-of-day|sky-cycle agent
 B26|2026-07-02|WaterSurface re-extracts the ENTIRE pool surface on every dig anywhere (water-sim notifyVoxelChanged bumps version unconditionally) — 5.5-7.8ms/dig, found by T63 probe|water-v2 agent
 B27|2026-07-02|asphalt/street footsteps sound weirdly metallic — regenerate toned-down asphalt (+concrete check) footstep set|polish agent
+B28|2026-07-02|user perf concern: calm scene must hold 120fps on dev machine (weaker-machine headroom). Measure ONLY with agent queue drained (parallel agent Chrome/vitest load skews local fps). Budget audit: post-stack cost (GTAO/bloom), water surface, region draws, FX pools|perf wave after current agents land
 B8|2026-07-02|flat walls show per-voxel diagonal shading noise reading as broken AO (screenshot evidence) — per-voxel color hash interpolates across voxel + triangle diagonal seams; true AO must be uniform on coplanar faces, darken only real edges/corners|render-quality agent: flat-per-voxel variation sampling (voxel-center hash, no in-voxel gradient), verify AO uniformity on flat walls, GTAO radius > voxel size
 B5|2026-07-02|user smoke feedback: glass windows render opaque (known R-track v1 limitation, single opaque mesh pass)|T39

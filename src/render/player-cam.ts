@@ -8,7 +8,7 @@
  * Both camera modes read the same player entity.
  */
 import { PerspectiveCamera } from 'three/webgpu'
-import { EYE_HEIGHT, type PlayerEntity } from '../sim/player'
+import { CROUCH_HEIGHT, EYE_HEIGHT, type PlayerEntity } from '../sim/player'
 import { VOXEL_SIZE, type ChunkStore } from '../world/chunks'
 
 export type CamMode = 'fp' | 'tp'
@@ -60,11 +60,17 @@ export class PlayerCam {
     this.mode = this.mode === 'fp' ? 'tp' : 'fp'
   }
 
+  private eyeSmooth = EYE_HEIGHT
+
   /** call once per rendered frame with the sim player entity (read-only) */
   update(player: PlayerEntity, world: ChunkStore): void {
     this.camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ')
+    // T44 — crouching shrinks the capsule; the eye must follow or FP looks
+    // unchanged (user bug). Exp-smoothed so the transition reads as a duck.
+    const targetEye = player.crouching ? CROUCH_HEIGHT - 0.15 : EYE_HEIGHT
+    this.eyeSmooth += (targetEye - this.eyeSmooth) * 0.25
     const ex = player.px
-    const ey = player.py + EYE_HEIGHT
+    const ey = player.py + this.eyeSmooth
     const ez = player.pz
     if (this.mode === 'fp') {
       this.camera.position.set(ex, ey, ez)
