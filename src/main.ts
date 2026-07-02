@@ -573,6 +573,9 @@ function finishSessionStart(s: MpSession, pingSend: (n: number) => void): void {
     get frames() {
       return frames
     },
+    get maxRafGapMs() {
+      return Math.round(game.maxRafGapMs)
+    },
     get canStep() {
       return s.node.canStep
     },

@@ -19,19 +19,23 @@
  *      pages, (b) desync detector green, (c) both report the same tick within
  *      barrier tolerance, (d) zero console/page errors.
  *
- * TRANSPORT (read this before trusting a result):
- *   default = `?transport=ws` — lockstep runs over the signaling server's
- *   relay. This proves cross-process sim determinism (the merge-gate claim)
- *   with a stable transport. It does NOT exercise WebRTC.
- *   `--rtc` = real RTCDataChannel path. It passes, but ~10% of headless-CDP
- *   runs hit a loopback-WebRTC environment flake: both pcs stay 'connected'
- *   while SCTP delivery silently dies mid-run (no JS errors, no state
- *   change, no dc close) → barrier starves → host drops the peer at 30s.
- *   Real-browser sessions are unaffected (verified manually + many green
- *   rtc runs); this is a headless/CDP quirk, not product code — see
- *   .claude/skills/cdp-testing/SKILL.md "WebRTC under CDP".
+ * POST-MORTEM (why there are two transports): early runs failed ~10% with a
+ * signature that looked like silent WebRTC death (peer starves at the
+ * barrier, pcs 'connected', zero errors). Building a ws-relay transport to
+ * isolate it reproduced the SAME failure — WebRTC was innocent. Root cause:
+ * rAF starvation. Two headless Chromes contending for one GPU routinely gap
+ * rAF by 0.6-1.5s (logged every run) and occasionally 30s+; the sim pump
+ * lived only in setAnimationLoop, so a starved page stopped sending inputs
+ * until the host dropped it. Fixed in Game.startLoop with a background
+ * interval pump that feeds the lockstep barrier when rAF is silent (also
+ * fixes real backgrounded tabs). Both transports green since.
  *
- * Usage: node scripts/mp-e2e.mjs [--headed] [--rtc]
+ *   default = real WebRTC DataChannel path (the product transport).
+ *   `--ws`  = lockstep over the signaling server relay (`?transport=ws`) —
+ *             transport-isolation mode: if default fails and --ws passes,
+ *             suspect WebRTC/env; if both fail identically, it's sim/app.
+ *
+ * Usage: node scripts/mp-e2e.mjs [--headed] [--ws]
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
@@ -42,7 +46,7 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VITE_PORT = Number(process.env.MP_E2E_PORT ?? 5800 + (process.pid % 500))
 const SIGNAL_PORT = VITE_PORT + 500
 const HEADED = process.argv.includes('--headed')
-const RTC = process.argv.includes('--rtc')
+const WS = process.argv.includes('--ws')
 const SEED = 424242
 const RUN_TICKS = 600
 const HASH_INTERVAL = 30
@@ -94,8 +98,8 @@ note(`vite up on :${VITE_PORT}`)
 const URL =
   `http://localhost:${VITE_PORT}/?seed=${SEED}` +
   `&signal=${encodeURIComponent(`ws://localhost:${SIGNAL_PORT}`)}` +
-  (RTC ? '' : '&transport=ws')
-note(`transport: ${RTC ? 'WebRTC DataChannel (--rtc; flaky under headless CDP)' : 'ws-relay (determinism gate)'}`)
+  (WS ? '&transport=ws' : '')
+note(`transport: ${WS ? 'ws-relay (--ws transport-isolation mode)' : 'WebRTC DataChannel (product path)'}`)
 
 const browsers = []
 const pages = {}
@@ -120,6 +124,7 @@ async function dumpDiagnostics() {
               desync: n.desync,
               hashCount: n.lastHashes.length,
               framesIn500ms: n.frames - f0,
+              maxRafGapMs: n.maxRafGapMs,
               canStep: n.canStep,
               waitingOn: n.waitingOn,
               channelStats: n.channelStats,
@@ -367,6 +372,7 @@ try {
         verifiedTick: window.__bbNet.verifiedTick,
         desync: window.__bbNet.desync,
         hashes: window.__bbNet.lastHashes,
+        maxRafGapMs: window.__bbNet.maxRafGapMs,
       })),
     ),
   )
@@ -408,6 +414,8 @@ try {
   const skew = Math.abs(stateA.tick - stateB.tick)
   if (skew > TICK_TOLERANCE) fail(`tick skew ${skew} exceeds barrier tolerance ${TICK_TOLERANCE}`)
   else note(`tick skew ${skew} (A=${stateA.tick} B=${stateB.tick})`)
+  // rAF starvation evidence (headless GPU contention) — pump covers it, log it
+  note(`max rAF gap: A=${stateA.maxRafGapMs}ms B=${stateB.maxRafGapMs}ms`)
 
   // (d) no console/page errors on either page
   for (const label of ['A', 'B']) {

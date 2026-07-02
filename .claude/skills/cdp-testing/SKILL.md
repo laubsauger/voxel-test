@@ -98,25 +98,30 @@ learned the hard way; do not rediscover them.
   `.local` mDNS names; headless/automation contexts can resolve them flakily
   or not at all. ALWAYS add `--disable-features=WebRtcHideLocalIpsWithMdns`
   to BOTH launches for loopback WebRTC tests (test-only; real users
-  unaffected). No STUN/TURN needed on loopback once this is off.
-- **Even with that flag, loopback WebRTC under headless CDP flakes ~10%**:
-  both `pc.connectionState` stay `connected`, no `iceconnectionstatechange`,
-  no `datachannel.onclose`, no JS errors — but SCTP delivery silently dies
-  mid-run (sometimes transiently, sometimes permanently). Symptom in
-  lockstep: one peer starves at the tick barrier while the other stalls,
-  then drops it. Diagnosed with per-channel sent/received counters +
-  `bufferedAmount` + a rAF heartbeat exposed on `window.__bbNet` — main
-  threads alive, transport dead. Not product code.
-- **Consequence: don't gate merges on headless WebRTC.** The `Channel`
-  interface is transport-agnostic; `mp-e2e` defaults to `?transport=ws`
-  (lockstep tunneled through the signaling server relay,
-  `SignalingClient.relayChannel`) which is deterministic and stable — that
-  run proves cross-process sim determinism. `npm run mp-e2e -- --rtc`
-  exercises the real WebRTC path (passes most runs; expect the ~10% env
-  flake). Real sessions always use WebRTC.
-- Transport state breadcrumbs live in `src/net/signaling.ts` as
-  `console.warn('[net] …')` — harnesses should echo warnings starting with
-  `[net]` for live triage but NOT count them as failures.
+  unaffected). No STUN/TURN needed on loopback once this is off. With the
+  flag, ICE completed instantly and reliably in every T72 run.
+- **rAF STARVATION masquerades as transport death — check it FIRST.** Two
+  headless Chromes contending for one GPU routinely gap rAF by 0.6-1.5s and
+  occasionally 30s+. Anything pumped only from `setAnimationLoop` (the
+  lockstep input sender!) silently stops during a gap: one peer starves at
+  the tick barrier, the other stalls, then drops it — with pcs 'connected',
+  zero errors, timers still firing. T72 misdiagnosed this as "~10% silent
+  WebRTC SCTP death" until the identical failure reproduced over a plain
+  WebSocket relay. Fixes: (a) product — `Game.startLoop` background interval
+  pump feeds the lockstep barrier when rAF is silent >250ms (also fixes real
+  backgrounded tabs); (b) diagnosis — expose a rAF heartbeat + max-gap on
+  the debug handle (`__bbNet.frames` / `maxRafGapMs`) and print it in every
+  harness run.
+- **Transport triage kit** (keep using it): per-channel `sent`/`received`
+  counters + `dc.bufferedAmount` + `readyState` on `DataChannelAdapter`,
+  surfaced via `__bbNet.channelStats`; pc/ice/dc state breadcrumbs in
+  `src/net/signaling.ts` as `console.warn('[net] …')` — harnesses echo
+  `[net]` warnings for live triage but do NOT count them as failures.
+- **Transport-isolation mode**: `npm run mp-e2e -- --ws` runs lockstep over
+  the signaling server relay (`?transport=ws`, `SignalingClient.relayChannel`)
+  instead of WebRTC. If default (WebRTC) fails and `--ws` passes → suspect
+  WebRTC/env; if both fail identically → it's sim/app code. Default gate =
+  real WebRTC path; both modes green since the pump fix.
 
 ## Frame profiling
 

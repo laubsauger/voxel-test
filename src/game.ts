@@ -316,31 +316,71 @@ export class Game {
     cam.lookAt(cx, 6, cz)
   }
 
+  /** rAF starvation diagnostics (mp-e2e triage; __bbNet reads these) */
+  lastRafAt = performance.now()
+  maxRafGapMs = 0
+
+  /**
+   * T71/T72 — advance the lockstep session. Called from the rAF loop AND
+   * from a low-frequency background pump: if rAF starves (occluded/
+   * backgrounded tab, GPU contention — observed 30s+ gaps in headless e2e),
+   * a peer that only steps in rAF stops sending inputs and stalls the whole
+   * session until the host drops it. The pump keeps the barrier fed;
+   * rendering stays rAF-only. Time comes from one shared clock so the two
+   * callers never double-count (V2: ticks, not wall time, stay authoritative).
+   */
+  private lastNetAdvanceAt = performance.now()
+
+  private advanceNet(): void {
+    if (!this.net) return
+    const now = performance.now()
+    const dtMs = now - this.lastNetAdvanceAt
+    this.lastNetAdvanceAt = now
+    // T71 — lockstep: local move ships via submitLocal (applies at
+    // tick+inputDelay everywhere). One move per stepped advance: at a
+    // barrier stall we stop submitting so a 30s stall doesn't dump
+    // thousands of stale moves into one bundle on release.
+    if (this.spawned && !this.movePending) {
+      this.net.node.submitLocal({
+        kind: 'move',
+        input: this.flying ? 0 : this.input.inputBits(),
+        yaw: this.input.yaw,
+        pitch: this.input.pitch,
+      })
+      this.movePending = true
+    }
+    // advance ONLY released ticks (tick barrier, V2) — never free-run
+    if (this.net.driver.advance(dtMs, this.net.node) > 0) this.movePending = false
+  }
+
   private startLoop(): void {
     let last = performance.now()
     let frames = 0
     let fpsAt = last
+    // background pump: only acts when rAF has been silent for >250ms.
+    // maxStepsPerAdvance on the interval path must cover the pump period at
+    // 60Hz (250ms ≈ 15 ticks) or a starved tab caps below real-time.
+    const pump = setInterval(() => {
+      if (this.disposed) {
+        clearInterval(pump)
+        return
+      }
+      if (!this.net || performance.now() - this.lastRafAt < 250) return
+      // real background tabs throttle timers to ~1s — 60 steps covers a full
+      // second so a hidden tab holds 60Hz instead of dragging the barrier
+      this.net.driver.maxStepsPerAdvance = 60
+      this.advanceNet()
+      this.net.driver.maxStepsPerAdvance = 10
+    }, 250)
     this.renderer.setAnimationLoop((now: number) => {
       const dtMs = Math.min(now - last, 100)
       last = now
       const dt = dtMs / 1000
+      this.maxRafGapMs = Math.max(this.maxRafGapMs, now - this.lastRafAt)
+      this.lastRafAt = now
 
       if (this.net) {
-        // T71 — lockstep: local move ships via submitLocal (applies at
-        // tick+inputDelay everywhere). One move per stepped frame: at a
-        // barrier stall we stop submitting so a 30s stall doesn't dump
-        // thousands of stale moves into one bundle on release.
-        if (this.spawned && !this.movePending) {
-          this.net.node.submitLocal({
-            kind: 'move',
-            input: this.flying ? 0 : this.input.inputBits(),
-            yaw: this.input.yaw,
-            pitch: this.input.pitch,
-          })
-          this.movePending = true
-        }
-        // advance ONLY released ticks (tick barrier, V2) — never free-run
-        if (this.net.driver.advance(dtMs, this.net.node) > 0) this.movePending = false
+        this.advanceNet()
       } else if (this.holdTicks) {
         // MP build phase: render/mesh, but the sim stays at tick 0 for lockstep
       } else {

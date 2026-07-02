@@ -46,16 +46,22 @@ Key wiring facts (differ from the original sketch below):
 - Leaving a lobby/session (or the desync overlay's "Return to Menu") is a
   `location.reload()` — clean-slate v1 pragmatism; the backdrop-game swap
   only runs forward (menu → session), never backward.
-- **Transports.** Real sessions: WebRTC DataChannel (default). Automated
-  tests: `?transport=ws` tunnels lockstep through the signaling server relay
-  (JSON only, binary throws). Reason: loopback WebRTC under headless CDP
-  silently drops SCTP delivery in ~10% of runs with zero observable errors
-  (pcs stay `connected`) — see `.claude/skills/cdp-testing/SKILL.md`
-  "WebRTC under CDP". The rtc path is still exercised by
-  `npm run mp-e2e -- --rtc` and passed repeatedly; the merge gate just
-  doesn't bet on headless WebRTC weather. NOTE for real networks: product
-  code has no ICE-restart/reconnect handling — a mid-session transport blip
-  behaves like a dropped peer (stall banner → host drop at 30s).
+- **rAF starvation is handled.** The lockstep pump originally lived only in
+  `setAnimationLoop`; a page whose rAF starves (backgrounded/occluded tab,
+  GPU contention — headless e2e showed routine 0.6-1.5s and occasional 30s+
+  gaps) stopped sending inputs and stalled the whole session until the host
+  dropped it. `Game.startLoop` now runs a 250ms background interval pump
+  that feeds the barrier whenever rAF has been silent >250ms (60-step budget
+  → a hidden tab holds ~60Hz even with 1s-throttled timers). This was
+  initially misdiagnosed as silent WebRTC death — the ws-relay transport
+  reproduced it, exonerating WebRTC.
+- **Transports.** Real sessions: WebRTC DataChannel (default, and the mp-e2e
+  gate path). `?transport=ws` tunnels lockstep through the signaling server
+  relay (JSON only, binary throws) — transport-isolation debugging
+  (`npm run mp-e2e -- --ws`); see `.claude/skills/cdp-testing/SKILL.md`
+  "WebRTC under CDP". NOTE for real networks: no ICE-restart/reconnect
+  handling — a mid-session transport blip behaves like a dropped peer
+  (stall banner → host drop at 30s).
 
 ## Still deferred (NOT built)
 

@@ -159,11 +159,12 @@ export class SignalingClient {
    * server's existing member-to-member relay ({t:'signal', data:{ch}} —
    * disjoint from SDP/ICE payloads). Reliable + ordered (single TCP ws).
    *
-   * PURPOSE: automated testing only (`?transport=ws`). Two headless Chromes
-   * under CDP flake ~10% on loopback WebRTC (transport reports `connected`
-   * while SCTP delivery silently dies — see mp-e2e + INTEGRATION-net.md);
-   * the merge gate needs determinism proof, not WebRTC weather. Real
-   * sessions default to WebRTC ('rtc').
+   * PURPOSE: transport-isolation debugging for automated tests
+   * (`?transport=ws`, `npm run mp-e2e -- --ws`): if a run fails on WebRTC
+   * but passes here, suspect WebRTC/env; if both fail identically, it's
+   * sim/app code. Building this exonerated WebRTC in T72 — the "silent
+   * transport death" reproduced here too and turned out to be rAF
+   * starvation (see INTEGRATION-net.md). Real sessions use 'rtc'.
    */
   relayChannel(peerId: number): Channel {
     const listeners: ((msg: Wire) => void)[] = []

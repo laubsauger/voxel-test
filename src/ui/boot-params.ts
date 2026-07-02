@@ -18,8 +18,9 @@ export interface BootConfig {
   signalUrl: string
   /**
    * T72 — session transport. 'rtc' (default) = WebRTC DataChannel.
-   * 'ws' = relay through the signaling server — AUTOMATED TESTING ONLY
-   * (headless-CDP WebRTC is flaky; the mp-e2e merge gate uses this).
+   * 'ws' = relay through the signaling server — transport-isolation
+   * debugging for automated tests (`npm run mp-e2e -- --ws`), never for
+   * real sessions.
    */
   transport: 'rtc' | 'ws'
 }
