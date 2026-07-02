@@ -268,7 +268,7 @@ export class PhysicsWorld {
   tick(sim: Sim): void {
     this.structuralPass(sim)
     this.joltInterface.Step(DT, 1)
-    updatePlayers(this) // character controllers, fixed order (T21)
+    updatePlayers(this, sim) // character controllers, fixed order (T21)
     this.readbackBodies()
     this.killPlanePass()
   }
@@ -573,6 +573,8 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.f64(p.yaw).f64(p.pitch)
     h.u32(p.input)
     h.u32(p.flags)
+    // T44/T47 — capsule height + noclip are sim state (V3)
+    h.u32((p.crouching ? 1 : 0) | (p.noclip ? 2 : 0))
     for (const seg of p.segments) {
       h.u32(seg.count)
       h.bytes(seg.grid)

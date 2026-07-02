@@ -22,16 +22,24 @@ export const INPUT_LEFT = 4
 export const INPUT_RIGHT = 8
 export const INPUT_JUMP = 16
 export const INPUT_CROUCH = 32
+export const INPUT_SPRINT = 64
 
 export const PLAYER_RADIUS = 0.3
 /** capsule cylinder half-height; total height = 2*(HALF_CYL + RADIUS) = 1.8m */
 export const PLAYER_HALF_CYL = 0.6
 export const PLAYER_HEIGHT = 2 * (PLAYER_HALF_CYL + PLAYER_RADIUS)
 export const EYE_HEIGHT = 1.6
+/** T44 — crouched capsule: total height 1.2m (< 1.4m gaps passable) */
+export const CROUCH_HALF_CYL = 0.3
+export const CROUCH_HEIGHT = 2 * (CROUCH_HALF_CYL + PLAYER_RADIUS)
 
 export const WALK_SPEED = 4
 export const CROUCH_SPEED = 2
+/** T44 — sprint: ground-only speed multiplier */
+export const SPRINT_MULT = 1.6
 export const JUMP_SPEED = 6
+/** T47 — noclip fly speed (m/s); sprint bit applies SPRINT_MULT */
+export const NOCLIP_SPEED = 10
 const GRAVITY_Y = -9.81
 
 /**
@@ -114,7 +122,37 @@ export interface PlayerEntity {
   segments: PlayerSegment[]
   /** FLAG_LOST_* bits — set when a segment drops below the destroyed threshold */
   flags: number
+  /** T44 — capsule currently crouched (1.2m); hashed sim state */
+  crouching: boolean
+  /** T47 — noclip fly mode (dev): no collision, direct integration; hashed */
+  noclip: boolean
   char: Jolt.CharacterVirtual
+  /** standing capsule shape — retained for crouch↔stand swaps (T44) */
+  standShape: Jolt.Shape
+  /** crouched capsule shape (T44) */
+  crouchShape: Jolt.Shape
+}
+
+/** capsule with origin at the feet (shared by spawn + crouch swap) */
+function makeCapsule(api: PhysicsWorld['api'], halfCyl: number): Jolt.Shape {
+  const offset = new api.Vec3(0, halfCyl + PLAYER_RADIUS, 0)
+  const rot = new api.Quat(0, 0, 0, 1)
+  const settings = new api.RotatedTranslatedShapeSettings(
+    offset,
+    rot,
+    new api.CapsuleShapeSettings(halfCyl, PLAYER_RADIUS),
+  )
+  const result = settings.Create()
+  if (result.HasError()) throw new Error(`player capsule: ${result.GetError().c_str()}`)
+  const shape = result.Get()
+  // pin the shape: the settings' cached result holds the only Ref until a
+  // character references it. Never released — same (negligible, test-only)
+  // leak class as CharacterVirtual, see INTEGRATION-physics.md.
+  shape.AddRef()
+  api.destroy(settings)
+  api.destroy(offset)
+  api.destroy(rot)
+  return shape
 }
 
 /** deterministic spawn column per player */
@@ -136,20 +174,11 @@ export function spawnPlayer(sim: Sim, phys: PhysicsWorld, playerId: number): Pla
   const api = phys.api
   const p = spawnPoint(sim, playerId)
 
-  // capsule with origin at the feet
-  const offset = new api.Vec3(0, PLAYER_HALF_CYL + PLAYER_RADIUS, 0)
-  const rot = new api.Quat(0, 0, 0, 1)
-  const shapeSettings = new api.RotatedTranslatedShapeSettings(
-    offset,
-    rot,
-    new api.CapsuleShapeSettings(PLAYER_HALF_CYL, PLAYER_RADIUS),
-  )
-  const shapeResult = shapeSettings.Create()
-  if (shapeResult.HasError()) throw new Error(`player capsule: ${shapeResult.GetError().c_str()}`)
-  const shape = shapeResult.Get()
+  const standShape = makeCapsule(api, PLAYER_HALF_CYL)
+  const crouchShape = makeCapsule(api, CROUCH_HALF_CYL)
 
   const settings = new api.CharacterVirtualSettings()
-  settings.mShape = shape
+  settings.mShape = standShape
   settings.mMass = 70
   const up = new api.Vec3(0, 1, 0)
   settings.mSupportingVolume = new api.Plane(up, -PLAYER_RADIUS)
@@ -159,9 +188,6 @@ export function spawnPlayer(sim: Sim, phys: PhysicsWorld, playerId: number): Pla
   const charRot = new api.Quat(0, 0, 0, 1)
   const char = new api.CharacterVirtual(settings, pos, charRot, phys.physicsSystem)
 
-  api.destroy(shapeSettings)
-  api.destroy(offset)
-  api.destroy(rot)
   api.destroy(settings)
   api.destroy(up)
   api.destroy(pos)
@@ -181,7 +207,11 @@ export function spawnPlayer(sim: Sim, phys: PhysicsWorld, playerId: number): Pla
     input: 0,
     segments: makeSegments(),
     flags: 0,
+    crouching: false,
+    noclip: false,
     char,
+    standShape,
+    crouchShape,
   }
   phys.players.set(playerId, entity)
   return entity
@@ -257,18 +287,120 @@ export function registerPlayerOps(sim: Sim, phys: PhysicsWorld): void {
     p.yaw = cmd.op.yaw
     p.pitch = cmd.op.pitch
   })
+  // T47 — noclip toggle (dev). Hashable entity flag; mechanics in updatePlayers.
+  sim.onOp('noclip', (s, cmd) => {
+    const p = phys.players.get(cmd.playerId)
+    if (!p) throw new Error(`noclip for unspawned player ${cmd.playerId} at tick ${s.tick}`)
+    p.noclip = !p.noclip
+    if (!p.noclip) {
+      // resuming collision: CharacterVirtual already tracks the flown position
+      // (synced every noclip tick); Jolt resolves any overlap on next update.
+      p.vx = 0
+      p.vy = 0
+      p.vz = 0
+    }
+  })
+}
+
+/**
+ * T44 — headroom probe for un-crouching: conservative voxel AABB around the
+ * standing capsule's extra extent (crouched top → standing top). Solid voxel
+ * anywhere in the band = stay crouched. Deterministic, world-state only.
+ */
+function standingHeadroomClear(sim: Sim, p: PlayerEntity): boolean {
+  const x0 = Math.floor((p.px - PLAYER_RADIUS + 0.02) / VOXEL_SIZE)
+  const x1 = Math.floor((p.px + PLAYER_RADIUS - 0.02) / VOXEL_SIZE)
+  const z0 = Math.floor((p.pz - PLAYER_RADIUS + 0.02) / VOXEL_SIZE)
+  const z1 = Math.floor((p.pz + PLAYER_RADIUS - 0.02) / VOXEL_SIZE)
+  const y0 = Math.floor((p.py + CROUCH_HEIGHT) / VOXEL_SIZE)
+  const y1 = Math.floor((p.py + PLAYER_HEIGHT - 1e-4) / VOXEL_SIZE)
+  for (let y = y0; y <= y1; y++)
+    for (let z = z0; z <= z1; z++)
+      for (let x = x0; x <= x1; x++) {
+        if (sim.world.getVoxel(x, y, z) !== 0) return false
+      }
+  return true
+}
+
+/** T47 — noclip fly integration: pure function of input/yaw/pitch, no collision */
+function updateNoclip(phys: PhysicsWorld, p: PlayerEntity): void {
+  const api = phys.api
+  let lx = 0
+  let lz = 0
+  if (p.input & INPUT_FWD) lz -= 1
+  if (p.input & INPUT_BACK) lz += 1
+  if (p.input & INPUT_LEFT) lx -= 1
+  if (p.input & INPUT_RIGHT) lx += 1
+  const cy = Math.cos(p.yaw)
+  const sy = Math.sin(p.yaw)
+  const cp = Math.cos(p.pitch)
+  const sp = Math.sin(p.pitch)
+  // forward = look direction (yaw+pitch), right = horizontal (matches walk math)
+  let dx = -lz * -sy * cp + lx * cy
+  let dy = -lz * sp
+  let dz = -lz * -cy * cp + lx * -sy
+  if (p.input & INPUT_JUMP) dy += 1
+  if (p.input & INPUT_CROUCH) dy -= 1
+  const len = Math.sqrt(dx * dx + dy * dy + dz * dz)
+  let vx = 0
+  let vy = 0
+  let vz = 0
+  if (len > 1e-9) {
+    const speed = (NOCLIP_SPEED * (p.input & INPUT_SPRINT ? SPRINT_MULT : 1)) / len
+    vx = dx * speed
+    vy = dy * speed
+    vz = dz * speed
+  }
+  p.px += vx * DT
+  p.py += vy * DT
+  p.pz += vz * DT
+  p.vx = vx
+  p.vy = vy
+  p.vz = vz
+  // keep the character in sync so toggling noclip off resumes right here
+  const pos = new api.RVec3(p.px, p.py, p.pz)
+  p.char.SetPosition(pos)
+  api.destroy(pos)
 }
 
 /**
  * Character update, called from the physics sim system every tick.
  * Fixed player order (ascending playerId) and fixed DT — deterministic (V2).
  */
-export function updatePlayers(phys: PhysicsWorld): void {
+export function updatePlayers(phys: PhysicsWorld, sim: Sim): void {
   if (phys.players.size === 0) return
   const api = phys.api
   const pids = [...phys.players.keys()].sort((a, b) => a - b)
   for (const pid of pids) {
     const p = phys.players.get(pid)!
+
+    // T47 — noclip: direct command-driven integration, skip the character update
+    if (p.noclip) {
+      updateNoclip(phys, p)
+      continue
+    }
+
+    const grounded = p.char.GetGroundState() === api.EGroundState_OnGround
+
+    // T44 — crouch transitions: shrink is unconditional, standing back up
+    // needs headroom (voxel probe) AND a penetration-free shape swap (both
+    // deterministic). Shape swap keeps the feet-origin convention.
+    const wantCrouch = (p.input & INPUT_CROUCH) !== 0
+    if (wantCrouch !== p.crouching) {
+      const target = wantCrouch ? p.crouchShape : p.standShape
+      if (wantCrouch || standingHeadroomClear(sim, p)) {
+        const ok = p.char.SetShape(
+          target,
+          0.01,
+          phys.movingBPFilter,
+          phys.movingLayerFilter,
+          phys.bodyFilter,
+          phys.shapeFilter,
+          phys.tempAllocator,
+        )
+        if (ok) p.crouching = wantCrouch
+      }
+    }
 
     // desired horizontal velocity from input bitfield + yaw
     let lx = 0
@@ -281,7 +413,12 @@ export function updatePlayers(phys: PhysicsWorld): void {
     let wz = 0
     if (lx !== 0 || lz !== 0) {
       const inv = 1 / Math.sqrt(lx * lx + lz * lz)
-      const speed = p.input & INPUT_CROUCH ? CROUCH_SPEED : WALK_SPEED
+      // T44 — crouch halves speed; sprint (ground only) multiplies it
+      const speed = p.crouching
+        ? CROUCH_SPEED
+        : p.input & INPUT_SPRINT && grounded
+          ? WALK_SPEED * SPRINT_MULT
+          : WALK_SPEED
       const c = Math.cos(p.yaw)
       const s = Math.sin(p.yaw)
       // rotate local (lx, lz) by yaw about Y (three.js YXZ convention)
@@ -289,7 +426,6 @@ export function updatePlayers(phys: PhysicsWorld): void {
       wz = (-lx * s + lz * c) * inv * speed
     }
 
-    const grounded = p.char.GetGroundState() === api.EGroundState_OnGround
     let vy: number
     if (grounded) {
       vy = p.input & INPUT_JUMP ? JUMP_SPEED : 0
