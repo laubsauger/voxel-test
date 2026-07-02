@@ -95,6 +95,15 @@ export class WaterSim {
     return this.wake.size
   }
 
+  /**
+   * True while a chunk is in the wake set (changed within the last WAKE_TTL
+   * steps). Render-side disturbance hook (T61) — read-only, deterministic,
+   * not part of the hash.
+   */
+  isChunkAwake(ci: number): boolean {
+    return this.wake.has(ci)
+  }
+
   levelAt(x: number, y: number, z: number): number {
     if (!inBounds(x, y, z)) return 0
     const page = this.pages.get(chunkIndex(x >> 5, y >> 5, z >> 5))

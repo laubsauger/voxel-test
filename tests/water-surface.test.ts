@@ -57,6 +57,55 @@ describe('water surface extraction (T16, V6)', () => {
     expect(maxDepth).toBeCloseTo(3 * VOXEL_SIZE, 6)
   })
 
+  it('B20: a shorter water neighbor exposes a side strip (no see-through seams)', () => {
+    const world = new ChunkStore()
+    world.fillBox(0, 0, 0, 31, 4, 31, 2)
+    const w = new WaterSim(world)
+    w.addWater(5, 5, 5, MAX_LEVEL) // full column
+    w.addWater(6, 5, 5, 100) // shorter neighbor — covers the shared face only up to 100/255
+    const s = extractWaterSurface(w, world)
+    // find the +x face of the full cell (normal +1,0,0 at x plane 6*VOXEL)
+    let found = false
+    for (let q = 0; q < s.normals.length / 12; q++) {
+      const nx = s.normals[q * 12]
+      const px = s.positions[q * 12]
+      if (nx !== 1 || Math.abs(px - 0.6) > 1e-6) continue
+      const ys = [1, 2, 3].map((v) => s.positions[q * 12 + v * 3 + 1]).concat(s.positions[q * 12 + 1])
+      const minY = Math.min(...ys)
+      const maxY = Math.max(...ys)
+      // strip spans exactly neighbor fill height -> own fill height
+      expect(minY).toBeCloseTo((5 + 100 / MAX_LEVEL) * VOXEL_SIZE, 6)
+      expect(maxY).toBeCloseTo(6 * VOXEL_SIZE, 6)
+      found = true
+    }
+    expect(found, 'side strip between differing fill heights was not emitted').toBe(true)
+    // and the shorter cell's own face against the taller one stays culled
+    for (let q = 0; q < s.normals.length / 12; q++) {
+      const nx = s.normals[q * 12]
+      const px = s.positions[q * 12]
+      expect(nx === -1 && Math.abs(px - 0.6) < 1e-6, 'interior face leaked').toBe(false)
+    }
+  })
+
+  it('B20: a partial cell under falling water still has a top surface', () => {
+    const world = new ChunkStore()
+    world.fillBox(0, 0, 0, 31, 4, 31, 2)
+    const w = new WaterSim(world)
+    w.addWater(5, 5, 5, 120) // partial pool cell
+    w.addWater(5, 7, 5, 200) // blob falling in from above (gap at y=6)
+    const s = extractWaterSurface(w, world)
+    let tops = 0
+    let bottoms = 0
+    for (let q = 0; q < s.normals.length / 12; q++) {
+      const ny = s.normals[q * 12 + 1]
+      if (ny === 1) tops++
+      if (ny === -1) bottoms++
+    }
+    // partial cell top + blob top; blob underside + (partial cell over solid floor -> none)
+    expect(tops).toBe(2)
+    expect(bottoms).toBe(1)
+  })
+
   it('extraction never mutates sim state (V6)', () => {
     const world = new ChunkStore()
     world.fillBox(0, 0, 0, 31, 4, 31, 2)
