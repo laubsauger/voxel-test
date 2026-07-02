@@ -169,6 +169,17 @@ store.subscribe('controls.invertY', applyControls)
 store.subscribe('graphics.quality', applyGraphics)
 store.subscribe('graphics.fov', applyGraphics)
 
+// T65 — time-of-day controls drive the T58 cycle live (render-only, V6)
+const applyTime = () => {
+  const t = store.get('dev.timeOfDay')
+  game.world.cycle.overrideHours = t < 0 ? null : t
+}
+const applyCycleSpeed = () => game.world.setCycleSpeed(store.get('dev.cycleSpeed'))
+applyTime()
+applyCycleSpeed()
+store.subscribe('dev.timeOfDay', applyTime)
+store.subscribe('dev.cycleSpeed', applyCycleSpeed)
+
 const dev = new DevOverlay(game)
 // T47 — noclip on N, dev-gated (deterministic sim op, lockstep-safe)
 document.addEventListener('keydown', (e) => {
