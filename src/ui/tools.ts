@@ -12,7 +12,7 @@ import { LOCAL_PLAYER } from '../game'
 import { nextSeq } from '../render/command-seq'
 import { MAT_CONCRETE } from '../sim/materials'
 import { raycastWorld } from './raycast'
-import type { Hud } from './hud'
+import type { Hud, ToolId } from './hud'
 
 /** reach for dig/build, meters */
 export const EDIT_RANGE = 9
@@ -55,6 +55,11 @@ export class ToolController {
       if (e.button !== 0 || game.state !== 'play' || !this.locked()) return
       this.fire()
     })
+  }
+
+  /** T49 — equipped hotbar tool id (render-side read for the FP viewmodel) */
+  get equipped(): ToolId {
+    return this.hud.tool.id
   }
 
   private locked(): boolean {
