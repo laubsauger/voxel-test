@@ -71,7 +71,11 @@ try {
     consoleErrors.push(`${m.text()} (${url})`)
   })
 
-  await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded', timeout: 15000 })
+  // I.boot: ?boot=game bypasses the menu straight into gameplay (T31)
+  await page.goto(`http://localhost:${PORT}/?boot=game&seed=1337`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 15000,
+  })
 
   // WebGPU actually available in this Chrome?
   const gpu = await page.evaluate(async () => {
