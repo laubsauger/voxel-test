@@ -73,7 +73,43 @@ export interface ThrowOp {
   vz: number
 }
 
-export type Op = DigOp | PlaceOp | ShootOp | ExplodeOp | MoveOp | SpawnOp | NoclipOp | ThrowOp
+/**
+ * T64 — spawn a drivable vehicle entity (dev/scene op). Position is the
+ * CENTER of the car footprint in world meters (y = ground surface under the
+ * wheels); yaw in radians about +Y (0 = car front faces -z, three.js YXZ).
+ */
+export interface VehicleSpawnOp {
+  kind: 'vehicle_spawn'
+  /** archetype key from gen/props car builders: sedan0..2, pickup0..2, van0..2 */
+  archetype: string
+  x: number
+  y: number
+  z: number
+  yaw: number
+}
+
+/** T64 — issuing player enters the nearest vehicle with a free seat (driver first) */
+export interface VehicleEnterOp {
+  kind: 'vehicle_enter'
+}
+
+/** T64 — issuing player exits their vehicle (voxel-clearance-checked door placement) */
+export interface VehicleExitOp {
+  kind: 'vehicle_exit'
+}
+
+export type Op =
+  | DigOp
+  | PlaceOp
+  | ShootOp
+  | ExplodeOp
+  | MoveOp
+  | SpawnOp
+  | NoclipOp
+  | ThrowOp
+  | VehicleSpawnOp
+  | VehicleEnterOp
+  | VehicleExitOp
 
 export interface Command {
   tick: number

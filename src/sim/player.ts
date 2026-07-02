@@ -126,6 +126,16 @@ export interface PlayerEntity {
   crouching: boolean
   /** T47 — noclip fly mode (dev): no collision, direct integration; hashed */
   noclip: boolean
+  /**
+   * T64 — vehicle entity id the player is seated in (0 = on foot). While
+   * seated the capsule is parked: updatePlayers skips it entirely and the
+   * vehicle system (src/sim/vehicle.ts) drives px/py/pz from the seat.
+   * Hashed sim state (V3). NOTE for the water/swim track: this is the only
+   * player.ts overlap from T64 — seated players must also skip swim logic.
+   */
+  seatedVehicle: number
+  /** T64 — seat index in the vehicle's seat list (0 = driver); hashed */
+  seat: number
   char: Jolt.CharacterVirtual
   /** standing capsule shape — retained for crouch↔stand swaps (T44) */
   standShape: Jolt.Shape
@@ -209,6 +219,8 @@ export function spawnPlayer(sim: Sim, phys: PhysicsWorld, playerId: number): Pla
     flags: 0,
     crouching: false,
     noclip: false,
+    seatedVehicle: 0,
+    seat: 0,
     char,
     standShape,
     crouchShape,
@@ -379,6 +391,10 @@ export function updatePlayers(phys: PhysicsWorld, sim: Sim): void {
       updateNoclip(phys, p)
       continue
     }
+
+    // T64 — seated in a vehicle: capsule parked, the vehicle system owns
+    // position (seat-follow) and input (drive mapping). Deterministic skip.
+    if (p.seatedVehicle !== 0) continue
 
     const grounded = p.char.GetGroundState() === api.EGroundState_OnGround
 
