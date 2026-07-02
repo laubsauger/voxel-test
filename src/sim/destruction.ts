@@ -7,6 +7,7 @@
 import type { Sim } from './loop'
 import { VOXEL_SIZE } from '../world/chunks'
 import { material } from './materials'
+import { damagePlayersSphere } from './player'
 import type { PhysicsWorld } from './physics'
 
 /** impulse (kg·m/s) applied per unit of explode power at the blast center */
@@ -43,6 +44,8 @@ export function registerDestructionOps(sim: Sim, phys: PhysicsWorld): void {
   sim.onOp('explode', (s, cmd) => {
     const { x, y, z, r, power } = cmd.op
     destroySphere(s, x, y, z, r, power)
+    // T22: explode overlap damages player body segments (same strength rule)
+    damagePlayersSphere(phys, x, y, z, r, power)
     // synchronous connectivity + island extraction on the affected region (T11/T12)
     phys.structuralPass(s)
     // radial impulse to nearby dynamic bodies — including islands spawned above

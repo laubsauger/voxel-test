@@ -12,6 +12,7 @@
 import type Jolt from 'jolt-physics'
 import { DT, type Sim } from './loop'
 import { VOXEL_SIZE, WORLD_VY } from '../world/chunks'
+import { MAT_FLESH, material } from './materials'
 import type { PhysicsWorld } from './physics'
 
 // MoveOp input bitfield (src/sim/commands.ts)
@@ -33,6 +34,67 @@ export const CROUCH_SPEED = 2
 export const JUMP_SPEED = 6
 const GRAVITY_Y = -9.81
 
+/**
+ * T22 [PL] — segmented voxel body: per-bone small voxel grids defined as data.
+ * Local voxel space: origin at the player's feet center, axis-aligned
+ * (v1 damage model ignores yaw — documented in INTEGRATION-physics.md).
+ * Segment destroyed (count below threshold) → status flag on the entity.
+ */
+export interface SegmentDef {
+  name: string
+  /** local voxel offset of the grid corner relative to feet center */
+  ox: number
+  oy: number
+  oz: number
+  sx: number
+  sy: number
+  sz: number
+}
+
+/** total height 18 voxels = 1.8m: legs 0..5, torso 6..13, head 14..17 */
+export const SEGMENT_DEFS: readonly SegmentDef[] = [
+  { name: 'head', ox: -2, oy: 14, oz: -2, sx: 4, sy: 4, sz: 4 },
+  { name: 'torso', ox: -3, oy: 6, oz: -2, sx: 6, sy: 8, sz: 4 },
+  { name: 'armL', ox: -5, oy: 6, oz: -1, sx: 2, sy: 8, sz: 2 },
+  { name: 'armR', ox: 3, oy: 6, oz: -1, sx: 2, sy: 8, sz: 2 },
+  { name: 'legL', ox: -3, oy: 0, oz: -1, sx: 2, sy: 6, sz: 2 },
+  { name: 'legR', ox: 1, oy: 0, oz: -1, sx: 2, sy: 6, sz: 2 },
+]
+
+// status flag bits, index-aligned with SEGMENT_DEFS
+export const FLAG_LOST_HEAD = 1
+export const FLAG_LOST_TORSO = 2
+export const FLAG_LOST_ARM_L = 4
+export const FLAG_LOST_ARM_R = 8
+export const FLAG_LOST_LEG_L = 16
+export const FLAG_LOST_LEG_R = 32
+
+/** segment counts as destroyed when live voxels drop below this fraction of initial */
+export const SEGMENT_DESTROYED_FRACTION = 0.3
+
+export interface PlayerSegment {
+  readonly def: SegmentDef
+  /** mini voxel grid, x + z*sx + y*sx*sz, MAT_FLESH or 0 */
+  grid: Uint8Array
+  count: number
+  readonly initial: number
+  /** bumped on damage — render rebuild trigger */
+  version: number
+}
+
+function makeSegments(): PlayerSegment[] {
+  return SEGMENT_DEFS.map((def) => {
+    const vol = def.sx * def.sy * def.sz
+    return {
+      def,
+      grid: new Uint8Array(vol).fill(MAT_FLESH),
+      count: vol,
+      initial: vol,
+      version: 0,
+    }
+  })
+}
+
 export interface PlayerEntity {
   /** entity id via sim.allocEntityId() (V8) */
   id: number
@@ -48,6 +110,10 @@ export interface PlayerEntity {
   pitch: number
   /** latest MoveOp bitfield — persists until the next move command */
   input: number
+  /** segmented voxel body (T22) */
+  segments: PlayerSegment[]
+  /** FLAG_LOST_* bits — set when a segment drops below the destroyed threshold */
+  flags: number
   char: Jolt.CharacterVirtual
 }
 
@@ -113,10 +179,68 @@ export function spawnPlayer(sim: Sim, phys: PhysicsWorld, playerId: number): Pla
     yaw: 0,
     pitch: 0,
     input: 0,
+    segments: makeSegments(),
+    flags: 0,
     char,
   }
   phys.players.set(playerId, entity)
   return entity
+}
+
+/**
+ * T22 — sphere damage vs player segments (shoot/explode overlap).
+ * Same strength rule as world destruction: voxel dies when
+ * falloff·power ≥ strength. Sphere center/radius in world voxel coords.
+ * Deterministic: ascending playerId, fixed grid scan order (V2).
+ */
+export function damagePlayersSphere(
+  phys: PhysicsWorld,
+  cx: number,
+  cy: number,
+  cz: number,
+  r: number,
+  power: number,
+): void {
+  const r2 = r * r
+  const pids = [...phys.players.keys()].sort((a, b) => a - b)
+  for (const pid of pids) {
+    const p = phys.players.get(pid)!
+    // player-local grids are axis-aligned at the feet voxel (yaw ignored, v1)
+    const bx = Math.floor(p.px / VOXEL_SIZE)
+    const by = Math.floor(p.py / VOXEL_SIZE)
+    const bz = Math.floor(p.pz / VOXEL_SIZE)
+    for (let si = 0; si < p.segments.length; si++) {
+      const seg = p.segments[si]
+      const { ox, oy, oz, sx, sy, sz } = seg.def
+      let changed = false
+      for (let y = 0; y < sy; y++) {
+        for (let z = 0; z < sz; z++) {
+          for (let x = 0; x < sx; x++) {
+            const gi = x + z * sx + y * sx * sz
+            const mat = seg.grid[gi]
+            if (mat === 0) continue
+            const dx = bx + ox + x + 0.5 - cx
+            const dy = by + oy + y + 0.5 - cy
+            const dz = bz + oz + z + 0.5 - cz
+            const d2 = dx * dx + dy * dy + dz * dz
+            if (d2 > r2) continue
+            const falloff = 1 - Math.sqrt(d2) / r
+            if (falloff * power >= material(mat).strength) {
+              seg.grid[gi] = 0
+              seg.count--
+              changed = true
+            }
+          }
+        }
+      }
+      if (changed) {
+        seg.version++
+        if (seg.count < seg.initial * SEGMENT_DESTROYED_FRACTION) {
+          p.flags |= 1 << si
+        }
+      }
+    }
+  }
 }
 
 export function registerPlayerOps(sim: Sim, phys: PhysicsWorld): void {

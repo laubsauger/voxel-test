@@ -463,6 +463,11 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.f64(p.vx).f64(p.vy).f64(p.vz)
     h.f64(p.yaw).f64(p.pitch)
     h.u32(p.input)
+    h.u32(p.flags)
+    for (const seg of p.segments) {
+      h.u32(seg.count)
+      h.bytes(seg.grid)
+    }
   }
   return h.value
 }
