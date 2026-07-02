@@ -57,6 +57,23 @@ const BURST_DISPATCH = 24
 const BURST_APPLY = 64
 const BURST_REGION_BUILDS = 32
 
+/**
+ * T63 (B23) — region rebuild coalescing + time budget (steady state only).
+ *
+ * A single dig remeshes the edited chunk + 6 face neighbors; their worker
+ * results trickle in over 2-3 frames, and each arrival re-dirtied the region,
+ * so one dig rebuilt the same region geometry 2-3 times (full typed-array
+ * concat + GPU re-upload each time). Steady state now defers a dirty region
+ * while any member chunk still has a remesh queued or in flight, so the
+ * region rebuilds ONCE per edit. Deferral is render-side only (V6) — the sim
+ * never sees it.
+ */
+/** frames a dirty region may defer before rebuilding anyway (staleness cap) */
+const MAX_REGION_DEFER = 8
+/** per-frame wall-clock budget (ms) for region concat work — V7 gates the
+ * actual rebuild time, not just the rebuild count */
+const REGION_BUILD_MS_BUDGET = 3
+
 /** chunks per region edge — REGION³ chunks merge into one draw call (T35) */
 export const REGION = 4
 const REGION_CX = Math.ceil(WORLD_CX / REGION)
@@ -125,6 +142,10 @@ export class ChunkMeshManager {
   private readonly regionMeshesT = new Map<number, Mesh>()
   /** regions whose chunkData changed since their last rebuild */
   private readonly dirtyRegions = new Set<number>()
+  /** worker jobs outstanding per chunk (T63) — region deferral looks these up */
+  private readonly pendingJobs = new Map<number, number>()
+  /** frames each dirty region has been deferred (T63, capped) */
+  private readonly regionDefers = new Map<number, number>()
   private readonly workers: Worker[] = []
   /** jobs currently queued per worker — dispatch fills to the depth limit */
   private readonly jobCount: number[] = []
@@ -230,6 +251,11 @@ export class ChunkMeshManager {
     let applies = 0
     while (this.completed.length > 0 && applies < maxApply) {
       const r = this.completed.shift()!
+      const jobs = this.pendingJobs.get(r.ci)
+      if (jobs !== undefined) {
+        if (jobs <= 1) this.pendingJobs.delete(r.ci)
+        else this.pendingJobs.set(r.ci, jobs - 1)
+      }
       // drop stale results — a newer job for this chunk was dispatched
       if (r.version !== this.versions.get(r.ci)) continue
       this.applyResult(r)
@@ -258,15 +284,29 @@ export class ChunkMeshManager {
       }
       this.jobCount[wi]++
       this.inFlight++
+      this.pendingJobs.set(ci, (this.pendingJobs.get(ci) ?? 0) + 1)
       // buildPaddedChunk allocates a plain ArrayBuffer (never shared)
       const req: MeshRequest = { ci, version, padded: padded.buffer as ArrayBuffer }
       this.workers[wi].postMessage(req, [padded.buffer])
     }
 
+    // region rebuilds — count-budgeted; steady state additionally coalesces
+    // (defer while member chunks are still remeshing) and time-gates the
+    // concat work itself (T63, V7)
     let builds = 0
+    const buildStart = performance.now()
     for (const ri of this.dirtyRegions) {
       if (builds >= maxBuilds) break
+      if (!burst) {
+        if (builds > 0 && performance.now() - buildStart > REGION_BUILD_MS_BUDGET) break
+        const defers = this.regionDefers.get(ri) ?? 0
+        if (defers < MAX_REGION_DEFER && this.regionHasPendingChunks(ri)) {
+          this.regionDefers.set(ri, defers + 1)
+          continue
+        }
+      }
       this.dirtyRegions.delete(ri)
+      this.regionDefers.delete(ri)
       this.buildRegion(ri)
       builds++
     }
@@ -280,6 +320,30 @@ export class ChunkMeshManager {
     ) {
       this.initialBuild = false
     }
+  }
+
+  /**
+   * T63 — true while any member chunk of the region is queued for remesh or
+   * has a worker job outstanding; the region rebuild defers so one edit
+   * produces one rebuild instead of one per result wave. 64 Set/Map lookups.
+   */
+  private regionHasPendingChunks(ri: number): boolean {
+    const [rx, ry, rz] = regionCoords(ri)
+    for (let dy = 0; dy < REGION; dy++) {
+      const cy = ry * REGION + dy
+      if (cy >= WORLD_CY) break
+      for (let dz = 0; dz < REGION; dz++) {
+        const cz = rz * REGION + dz
+        if (cz >= WORLD_CZ) break
+        for (let dx = 0; dx < REGION; dx++) {
+          const cx = rx * REGION + dx
+          if (cx >= WORLD_CX) break
+          const ci = chunkIndex(cx, cy, cz)
+          if (this.pendingJobs.has(ci) || this.scheduler.has(ci)) return true
+        }
+      }
+    }
+    return false
   }
 
   private applyResult(r: MeshResponse): void {
@@ -426,6 +490,8 @@ export class ChunkMeshManager {
     for (const ri of [...this.regionMeshesT.keys()]) removeRegionMesh(this.parent, this.regionMeshesT, ri)
     this.chunkData.clear()
     this.dirtyRegions.clear()
+    this.pendingJobs.clear()
+    this.regionDefers.clear()
     this.scheduler.clear()
   }
 }
