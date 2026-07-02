@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ChunkStore } from '../src/world/chunks'
 import { WaterSim } from '../src/sim/water/water-sim'
-import { MAX_LEVEL } from '../src/sim/water/rules'
+import { LATERAL_DEADBAND, MAX_LEVEL } from '../src/sim/water/rules'
 
 // T15 — CPU reference water CA behavior. These tests encode the *physics
 // contract*: gravity pulls water down, it spreads to a flat equilibrium,
@@ -70,11 +70,13 @@ describe('water CA — lateral spread (T15)', () => {
     }
     expect(massAtRest).toBe(MAX_LEVEL)
     expect(wet.length).toBeGreaterThan(10) // actually spread out, not a single column
-    // equilibrium: no adjacent pair differs by more than 1 (pair rule fixpoint)
+    // equilibrium: no adjacent pair differs by more than LATERAL_DEADBAND —
+    // the settle deadband (B21) makes diff<=2 a fixpoint; anything steeper
+    // still flowing means the surface never went flat
     for (const [x, z] of wet) {
       const l = w.levelAt(x, 5, z)
       for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-        expect(Math.abs(l - w.levelAt(x + dx, 5, z + dz))).toBeLessThanOrEqual(1)
+        expect(Math.abs(l - w.levelAt(x + dx, 5, z + dz))).toBeLessThanOrEqual(LATERAL_DEADBAND)
       }
     }
   })

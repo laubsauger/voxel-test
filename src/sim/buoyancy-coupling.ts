@@ -123,7 +123,13 @@ export function applyBuoyancy(phys: PhysicsWorld, water: WaterSim): void {
 /**
  * Register buoyancy as a Sim system. Call AFTER createPhysics() and
  * attachWaterSim() — execution slot must follow both (see header).
+ *
+ * Also hands the water field to the physics world (T60 player swimming):
+ * this is the one existing wiring point that sees both physics and water,
+ * so game.ts needs no change. Water steps before physics each tick, so the
+ * character update reads the current tick's field — deterministic (V2).
  */
 export function attachBuoyancy(sim: Sim, phys: PhysicsWorld, water: WaterSim): void {
+  phys.water = water
   sim.addSystem(() => applyBuoyancy(phys, water))
 }

@@ -46,7 +46,7 @@ import {
 } from '../../world/chunks'
 import { Fnv } from '../hash'
 import type { Sim } from '../loop'
-import { MAX_LEVEL, lateralNext, lateralPhase, verticalNext } from './rules'
+import { DonorMode, MAX_LEVEL, lateralNext, lateralPhase, verticalNext } from './rules'
 
 const CZ_STRIDE = WORLD_CX
 const CY_STRIDE = WORLD_CX * WORLD_CZ
@@ -82,6 +82,8 @@ export class WaterSim {
   private readonly pages = new Map<number, Uint8Array>()
   /** chunk index → remaining awake steps */
   private readonly wake = new Map<number, number>()
+  /** chunks with changed water since last drainRenderDirty() — render-only (B26) */
+  private readonly renderDirty = new Set<number>()
   private readonly pool: Uint8Array[] = []
   /** CA steps actually executed (does not advance while settled) — part of hashed state */
   stepCount = 0
@@ -93,6 +95,33 @@ export class WaterSim {
   /** number of awake chunks — 0 means fully settled (perf invariant) */
   get activeChunkCount(): number {
     return this.wake.size
+  }
+
+  /**
+   * True while a chunk is in the wake set (changed within the last WAKE_TTL
+   * steps). Render-side disturbance hook (T61) — read-only, deterministic,
+   * not part of the hash.
+   */
+  isChunkAwake(ci: number): boolean {
+    return this.wake.has(ci)
+  }
+
+  /** render-side page accessor (surface extraction) — read-only, may be null */
+  pageAt(ci: number): Uint8Array | null {
+    return this.pages.get(ci) ?? null
+  }
+
+  /**
+   * Chunks whose water content changed since the last drain — consumed by the
+   * render layer for incremental surface rebuilds (B26). Render-only
+   * bookkeeping (same pattern as PhysicsWorld.drainRemesh); never hashed,
+   * never read by rules.
+   */
+  drainRenderDirty(): number[] {
+    if (this.renderDirty.size === 0) return []
+    const out = [...this.renderDirty].sort((a, b) => a - b)
+    this.renderDirty.clear()
+    return out
   }
 
   levelAt(x: number, y: number, z: number): number {
@@ -121,6 +150,7 @@ export class WaterSim {
     }
     page[vi] = cur + add
     this.wake.set(ci, WAKE_TTL)
+    this.renderDirty.add(ci)
     this.version++
     return add
   }
@@ -138,19 +168,43 @@ export class WaterSim {
     page[vi] -= take
     this.freeIfEmpty(ci, page)
     this.wake.set(ci, WAKE_TTL)
+    this.renderDirty.add(ci)
     this.version++
     return take
   }
 
   /**
    * MUST be called for every voxel edit that could touch water (contract with
-   * edit ops). Wakes the region; if the cell became solid, destroys the
+   * edit ops). Wakes the region ONLY when water is actually nearby (B26 —
+   * a dig on the far side of the arena must cost nothing here and must not
+   * trigger a surface rebuild); if the cell became solid, destroys the
    * displaced water and returns the destroyed amount (explicit sink).
+   *
+   * "Nearby" = any cell whose CA rule reads this voxel's solidity holds
+   * water: self, the 6 face neighbors (vertical flow + lateral pairing),
+   * and the 4 lateral neighbors of the cell ABOVE (their donor-support /
+   * waterfall-receiver checks read this voxel as a below-cell). If all 11
+   * are dry, every flow term involving this voxel stays 0 — skipping the
+   * wake is exact, not an approximation.
    */
   notifyVoxelChanged(x: number, y: number, z: number): number {
     if (!inBounds(x, y, z)) return 0
+    const nearby =
+      this.levelAt(x, y, z) > 0 ||
+      this.levelAt(x, y + 1, z) > 0 ||
+      this.levelAt(x, y - 1, z) > 0 ||
+      this.levelAt(x + 1, y, z) > 0 ||
+      this.levelAt(x - 1, y, z) > 0 ||
+      this.levelAt(x, y, z + 1) > 0 ||
+      this.levelAt(x, y, z - 1) > 0 ||
+      this.levelAt(x + 1, y + 1, z) > 0 ||
+      this.levelAt(x - 1, y + 1, z) > 0 ||
+      this.levelAt(x, y + 1, z + 1) > 0 ||
+      this.levelAt(x, y + 1, z - 1) > 0
+    if (!nearby) return 0
     const ci = chunkIndex(x >> 5, y >> 5, z >> 5)
     this.wake.set(ci, WAKE_TTL)
+    this.renderDirty.add(ci)
     this.version++
     if (this.world.getVoxel(x, y, z) === 0) return 0
     const page = this.pages.get(ci)
@@ -196,8 +250,14 @@ export class WaterSim {
     for (const ci of active) {
       if (changed.has(ci)) continue
       const ttl = this.wake.get(ci)! - 1
-      if (ttl <= 0) this.wake.delete(ci)
-      else this.wake.set(ci, ttl)
+      if (ttl <= 0) {
+        this.wake.delete(ci)
+        // sleep transition is render-observable: the surface bakes the wake
+        // state into the waterFlow (disturbance) attribute — rebuild once so
+        // a settled chunk stops shimmering (T61)
+        this.renderDirty.add(ci)
+        this.version++
+      } else this.wake.set(ci, ttl)
     }
     for (const ci of changed) this.wake.set(ci, WAKE_TTL)
     this.stepCount = (this.stepCount + 1) >>> 0
@@ -248,6 +308,7 @@ export class WaterSim {
       }
       if (old) this.release(old)
       changedOut.add(r.ci)
+      this.renderDirty.add(r.ci)
       this.version++
     }
   }
@@ -328,21 +389,27 @@ export class WaterSim {
     const base = axis === 0 ? bx : bz
     const wrap = 31 * localStride
 
-    /** donor support using self-chunk fast paths; donor is always at local (vi, yl) of chunk `chunk` */
-    const supportedLocal = (vi: number, yl: number): boolean => {
-      if (yl > 0) {
-        const bvi = vi - LY
-        return solidAt(selfChunk, bvi) || self[bvi] === MAX_LEVEL
-      }
-      if (!hasBelow) return true // world floor
-      const bvi = vi + WRAP_Y
-      return solidAt(belowChunk!, bvi) || belowPage[bvi] === MAX_LEVEL
+    /** donor mode from a below-cell (solidity + previous-state water level) — rules.ts DonorMode */
+    const modeFromBelow = (belowSolid: boolean, belowLevel: number): DonorMode => {
+      if (belowSolid || belowLevel === MAX_LEVEL) return DonorMode.Supported
+      return belowLevel > 0 ? DonorMode.Splashing : DonorMode.Falling
     }
 
-    /** generic (cross-chunk) donor support at world coords */
-    const supportedWorld = (x: number, y: number, z: number): boolean => {
-      if (y === 0) return true
-      return this.world.getVoxel(x, y - 1, z) !== 0 || this.levelAt(x, y - 1, z) === MAX_LEVEL
+    /** donor mode using self-chunk fast paths; donor is at local (vi, yl) of this chunk */
+    const donorModeLocal = (vi: number, yl: number): DonorMode => {
+      if (yl > 0) {
+        const bvi = vi - LY
+        return modeFromBelow(solidAt(selfChunk, bvi), self[bvi])
+      }
+      if (!hasBelow) return DonorMode.Supported // world floor
+      const bvi = vi + WRAP_Y
+      return modeFromBelow(solidAt(belowChunk!, bvi), belowPage[bvi])
+    }
+
+    /** generic (cross-chunk) donor mode at world coords */
+    const donorModeWorld = (x: number, y: number, z: number): DonorMode => {
+      if (y === 0) return DonorMode.Supported
+      return modeFromBelow(this.world.getVoxel(x, y - 1, z) !== 0, this.levelAt(x, y - 1, z))
     }
 
     let changed = false
@@ -364,7 +431,10 @@ export class WaterSim {
             const partner = self[pvi]
             if (partner !== level) {
               const donorVi = level > partner ? vi : pvi
-              next = lateralNext(level, partner, supportedLocal(donorVi, yl))
+              const receiverVi = level > partner ? pvi : vi
+              const receiverUnsupported =
+                (level === 0 || partner === 0) && donorModeLocal(receiverVi, yl) !== DonorMode.Supported
+              next = lateralNext(level, partner, donorModeLocal(donorVi, yl), receiverUnsupported)
             }
           }
         } else if (isLeft ? cChunk + 1 < cMaxChunk : cChunk > 0) {
@@ -376,17 +446,21 @@ export class WaterSim {
             const nPage = this.pages.get(nci) ?? ZERO_PAGE
             const partner = nPage[pvi]
             if (partner !== level) {
-              let donorSupported: boolean
+              const xl = vi & 31
+              const zl = (vi >> 5) & 31
+              const px = axis === 0 ? (isLeft ? bx + 32 : bx - 1) : bx + xl
+              const pz = axis === 1 ? (isLeft ? bz + 32 : bz - 1) : bz + zl
+              let donorMode: DonorMode
+              let receiverUnsupported = false
               if (level > partner) {
-                donorSupported = supportedLocal(vi, yl)
+                donorMode = donorModeLocal(vi, yl)
+                receiverUnsupported =
+                  partner === 0 && donorModeWorld(px, by + yl, pz) !== DonorMode.Supported
               } else {
-                const xl = vi & 31
-                const zl = (vi >> 5) & 31
-                const px = axis === 0 ? (isLeft ? bx + 32 : bx - 1) : bx + xl
-                const pz = axis === 1 ? (isLeft ? bz + 32 : bz - 1) : bz + zl
-                donorSupported = supportedWorld(px, by + yl, pz)
+                donorMode = donorModeWorld(px, by + yl, pz)
+                receiverUnsupported = level === 0 && donorModeLocal(vi, yl) !== DonorMode.Supported
               }
-              next = lateralNext(level, partner, donorSupported)
+              next = lateralNext(level, partner, donorMode, receiverUnsupported)
             }
           }
         }
@@ -431,12 +505,23 @@ export function hashWater(water: WaterSim): number {
 }
 
 /**
+ * CA steps per sim tick (T62). Two: one lateral phase advances per CA step,
+ * so a single step/tick moves mass across N cells in O(N²·4) ticks —
+ * pool-scale draining read as static (B21). Two steps double fall speed to
+ * 12 m/s (reads right for water) and double lateral transport. Settled water
+ * still costs nothing (step() early-returns on an empty active set).
+ */
+export const WATER_STEPS_PER_TICK = 2
+
+/**
  * Wire the water CA into the sim loop as a system (runs once per tick after
  * command handlers). The returned WaterSim is the sim-side API for source/
  * sink ops (pool filling, future water commands).
  */
 export function attachWaterSim(sim: Sim): WaterSim {
   const water = new WaterSim(sim.world)
-  sim.addSystem(() => water.step())
+  sim.addSystem(() => {
+    for (let i = 0; i < WATER_STEPS_PER_TICK; i++) water.step()
+  })
   return water
 }

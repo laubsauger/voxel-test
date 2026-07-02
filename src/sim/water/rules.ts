@@ -29,15 +29,55 @@
  *   phase = stepCount & 3 selects axis (x or z) and pairing offset (0 or 1),
  *   so over 4 steps every lateral face is visited once. Cell pairs with
  *   exactly one partner per pass: partner = coord+1 if (coord+offset) even,
- *   else coord-1. The pair equalizes:
- *     total = L + Ln; half = total >> 1; remainder goes to the FULLER cell
- *   (prevents 2-cell oscillation; equal levels have even total, no remainder).
- *   Exchange happens only if:
- *     - both cells non-solid and in bounds (else: keep L), and
- *     - the DONOR (fuller cell) is supported: y == 0, or solid below, or
- *       water below at MAX. Unsupported water falls instead of spreading;
- *       a supported donor may push into an unsupported partner (waterfall
- *       over a ledge works).
+ *   else coord-1. Exchange requires both cells non-solid and in bounds
+ *   (else: keep L). The DONOR is the fuller cell; its mobility selects the
+ *   rule leg. Mobility derives from the donor's below-cell in the SAME
+ *   previous-state snapshot, so both sides of the pair compute it
+ *   identically (pairwise symmetry ⇒ mass exact, V9):
+ *
+ *   SUPPORTED donor (y == 0, or solid below, or water below at MAX):
+ *     1) WATERFALL leg (T62/B21 drain acceleration): if the partner is EMPTY
+ *        and the partner is itself unsupported (its below-cell is open and
+ *        not full — the received water will fall next vertical pass), the
+ *        donor gives EVERYTHING: donor → 0, partner → L. This turns the
+ *        approach to a breach/ledge from diffusion (half-diff per visit)
+ *        into advection (full cells per visit) — pools visibly drain and
+ *        cascades stay chunky instead of thinning into films. Convergent:
+ *        the moved mass falls on the next vertical pass (strict Σ y·L
+ *        decrease); it cannot ping-pong because the emptied donor no longer
+ *        donates and a filled-up receiver becomes supported (normal legs).
+ *     2) otherwise equalize with a settle deadband (B21):
+ *       diff = |L - Ln|; diff <= LATERAL_DEADBAND ⇒ no flow;
+ *       else total = L + Ln; half = total >> 1; remainder to the FULLER cell.
+ *     Why the deadband: without it, diff-2 ramps under the alternating
+ *     pairing sustain a bucket-brigade trickle for O(area) steps (tens of
+ *     thousands at yard scale) — the sim never slept, breach outflow "ran
+ *     forever" and the surface mesh rebuilt every frame (B21 + B20 flicker).
+ *     With it, any configuration whose adjacent diffs are all <= 2 is a true
+ *     fixpoint; residue films are <= 2 levels/cell (~0.8% of a voxel).
+ *
+ *   SPLASHING donor (unsupported, landing on partial water: 0 < below < MAX):
+ *     partial lateral spill (T62 "rolling"):
+ *       t = diff >> 2; t == 0 ⇒ no flow; else donor -t, partner +t.
+ *     Quarter-diff is contractive (no overshoot ⇒ no pair oscillation) and
+ *     mass-exact; falls visibly slosh outward where they meet a pool instead
+ *     of stacking a 1-wide column.
+ *
+ *   FALLING donor (unsupported, below open and empty): no lateral flow —
+ *     free-falling streams stay coherent. A supported donor may still push
+ *     into an unsupported partner (waterfall over a ledge works).
+ *
+ * Settle guarantee: vertical flow strictly decreases Σ y·L; lateral flow
+ * keeps it constant and either strictly decreases Σ L² (deadbanded
+ * equalization; contractive splash) or hands mass to a cell that must fall
+ * next vertical pass (waterfall leg ⇒ later strict Σ y·L decrease). The
+ * pair (Σ y·L, Σ L²) is a lexicographic Lyapunov function over finite
+ * integer state ⇒ the CA reaches a fixpoint and the active set empties.
+ *
+ * Neighborhood note (V4): the lateral pass reads the pair cells plus BOTH
+ * pair cells' below-cells (donor mobility + waterfall receiver check). That
+ * is one diagonal read per side — still a fixed, tiny stencil on the
+ * previous-state snapshot; gather-only and atomics-free as before.
  *
  * Compression/pressure rule: intentionally omitted in v1 (task marks it
  * optional). Consequence: no upward equalization through U-bends. Documented
@@ -45,6 +85,19 @@
  */
 
 export const MAX_LEVEL = 255
+
+/** supported-donor pairs with level difference <= this do not flow (B21 settle deadband) */
+export const LATERAL_DEADBAND = 2
+
+/** donor mobility for the lateral pass — decided by the donor's below-cell */
+export const enum DonorMode {
+  /** unsupported, below open and empty — falls, no lateral flow */
+  Falling = 0,
+  /** unsupported, landing on partial water below — quarter-diff spill (T62) */
+  Splashing = 1,
+  /** y == 0, solid below, or full water below — deadbanded equalization */
+  Supported = 2,
+}
 
 /** Next level of a cell in the vertical pass. Caller guarantees self is non-solid. */
 export function verticalNext(level: number, above: number, below: number, belowOpen: boolean): number {
@@ -58,11 +111,34 @@ export function verticalNext(level: number, above: number, below: number, belowO
 /**
  * Next level of a cell in the lateral pass, given its pair partner.
  * Caller guarantees: self non-solid, partner non-solid and in bounds.
- * Symmetric: both cells of the pair evaluate this with swapped (level, partner)
- * and identical donorSupported, and the results sum to level + partner.
+ * Symmetric: both cells of the pair evaluate this with swapped (level,
+ * partner) and identical donorMode/receiverUnsupported (both derive from the
+ * same previous-state snapshot), and the results sum to level + partner.
+ *
+ * `receiverUnsupported`: the EMPTIER cell of the pair is not supported (its
+ * below-cell is open and below MAX) — it would fall next vertical pass.
+ * Only consulted by the waterfall leg; pass false when unknown/irrelevant
+ * (e.g. equal levels).
  */
-export function lateralNext(level: number, partner: number, donorSupported: boolean): number {
-  if (level === partner || !donorSupported) return level
+export function lateralNext(
+  level: number,
+  partner: number,
+  donorMode: DonorMode,
+  receiverUnsupported: boolean,
+): number {
+  if (level === partner || donorMode === DonorMode.Falling) return level
+  const diff = level > partner ? level - partner : partner - level
+  if (donorMode === DonorMode.Splashing) {
+    const t = diff >> 2
+    if (t === 0) return level
+    return level > partner ? level - t : level + t
+  }
+  // Supported donor. Waterfall leg: empty receiver about to fall gets it all.
+  if ((level === 0 || partner === 0) && receiverUnsupported) {
+    return level > partner ? 0 : level + partner
+  }
+  // Deadbanded equalization
+  if (diff <= LATERAL_DEADBAND) return level
   const total = level + partner
   const half = total >> 1
   // remainder (total odd) goes to the fuller cell

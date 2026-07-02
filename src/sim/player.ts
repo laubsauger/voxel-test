@@ -42,6 +42,69 @@ export const JUMP_SPEED = 6
 export const NOCLIP_SPEED = 10
 const GRAVITY_Y = -9.81
 
+// ---------------------------------------------------------------------------
+// T60 — swimming. Active when the capsule CENTER is inside a water cell
+// (phys.water set by attachBuoyancy). All constants/laws are pure functions
+// of sim state at fixed DT — deterministic (V2).
+// ---------------------------------------------------------------------------
+/** horizontal swim speed (m/s) — slower than walking, sprint has no effect */
+export const SWIM_SPEED = 2.2
+/** jump bit = swim up (also how you climb out at a pool edge) */
+export const SWIM_UP_SPEED = 2.6
+/** crouch bit = sink */
+export const SWIM_SINK_SPEED = 2.0
+/** passive float: target feet depth below the waterline (head stays out) */
+export const FLOAT_DEPTH = 1.3
+/** exponential velocity response per tick: 1 - exp(-8·DT) (water drag feel) */
+const SWIM_ACCEL_K = 1 - Math.exp(-8 * DT)
+/** passive buoyancy controller gain (m/s of correction per m of depth error) */
+const FLOAT_GAIN = 2.5
+const FLOAT_MAX_SPEED = 1.2
+/** |vy| at the water surface above this emits a splash event (T60 hook) */
+const SPLASH_MIN_SPEED = 1.0
+
+/** T60 — splash event payload (render/audio hook, see INTEGRATION-water.md §7) */
+export interface SplashEvent {
+  playerId: number
+  /** world meters at the capsule center */
+  x: number
+  y: number
+  z: number
+  /** vertical speed magnitude at the transition (m/s) — scale volume/particles */
+  speed: number
+  /** true = plunged in, false = surfaced/exited */
+  entering: boolean
+}
+
+/** water sampler shape (WaterSim.levelAt) — kept structural to avoid a runtime import */
+interface WaterField {
+  levelAt(vx: number, vy: number, vz: number): number
+}
+
+/** water level 0..255 at a world-space point */
+function waterLevelAtPoint(water: WaterField, x: number, y: number, z: number): number {
+  return water.levelAt(Math.floor(x / VOXEL_SIZE), Math.floor(y / VOXEL_SIZE), Math.floor(z / VOXEL_SIZE))
+}
+
+/**
+ * Waterline height (meters) above a submerged point: scan the column up to
+ * the topmost contiguous water cell and add its fill fraction. Bounded scan,
+ * deterministic.
+ */
+function waterSurfaceY(water: WaterField, x: number, y: number, z: number): number {
+  const vx = Math.floor(x / VOXEL_SIZE)
+  const vz = Math.floor(z / VOXEL_SIZE)
+  let vy = Math.floor(y / VOXEL_SIZE)
+  let level = water.levelAt(vx, vy, vz)
+  for (let i = 0; i < 32; i++) {
+    const above = water.levelAt(vx, vy + 1, vz)
+    if (above === 0) break
+    vy++
+    level = above
+  }
+  return (vy + level / 255) * VOXEL_SIZE
+}
+
 /**
  * T22 [PL] — segmented voxel body: per-bone small voxel grids defined as data.
  * Local voxel space: origin at the player's feet center, axis-aligned
@@ -124,6 +187,9 @@ export interface PlayerEntity {
   flags: number
   /** T44 — capsule currently crouched (1.2m); hashed sim state */
   crouching: boolean
+  /** T60 — capsule center is in water this tick (derived each tick from
+   *  position + water field — not hashed; render/audio read it for feel) */
+  swimming: boolean
   /** T47 — noclip fly mode (dev): no collision, direct integration; hashed */
   noclip: boolean
   char: Jolt.CharacterVirtual
@@ -208,6 +274,7 @@ export function spawnPlayer(sim: Sim, phys: PhysicsWorld, playerId: number): Pla
     segments: makeSegments(),
     flags: 0,
     crouching: false,
+    swimming: false,
     noclip: false,
     char,
     standShape,
@@ -382,10 +449,26 @@ export function updatePlayers(phys: PhysicsWorld, sim: Sim): void {
 
     const grounded = p.char.GetGroundState() === api.EGroundState_OnGround
 
+    // T60 — in-water detection: capsule center inside a water cell = swim.
+    // (Feet-only contact = wading; normal locomotion applies.)
+    const water = phys.water
+    const capsuleHeight = p.crouching ? CROUCH_HEIGHT : PLAYER_HEIGHT
+    const centerY = p.py + capsuleHeight * 0.5
+    const wasSwimming = p.swimming
+    const swimming = water !== null && waterLevelAtPoint(water, p.px, centerY, p.pz) > 0
+    p.swimming = swimming
+    if (swimming !== wasSwimming) {
+      const speed = Math.abs(p.vy)
+      if (speed >= SPLASH_MIN_SPEED && phys.onSplash) {
+        phys.onSplash({ playerId: pid, x: p.px, y: centerY, z: p.pz, speed, entering: swimming })
+      }
+    }
+
     // T44 — crouch transitions: shrink is unconditional, standing back up
     // needs headroom (voxel probe) AND a penetration-free shape swap (both
     // deterministic). Shape swap keeps the feet-origin convention.
-    const wantCrouch = (p.input & INPUT_CROUCH) !== 0
+    // While swimming the crouch bit means "sink", not "shrink" (T60).
+    const wantCrouch = (p.input & INPUT_CROUCH) !== 0 && !swimming
     if (wantCrouch !== p.crouching) {
       const target = wantCrouch ? p.crouchShape : p.standShape
       if (wantCrouch || standingHeadroomClear(sim, p)) {
@@ -413,12 +496,15 @@ export function updatePlayers(phys: PhysicsWorld, sim: Sim): void {
     let wz = 0
     if (lx !== 0 || lz !== 0) {
       const inv = 1 / Math.sqrt(lx * lx + lz * lz)
-      // T44 — crouch halves speed; sprint (ground only) multiplies it
-      const speed = p.crouching
-        ? CROUCH_SPEED
-        : p.input & INPUT_SPRINT && grounded
-          ? WALK_SPEED * SPRINT_MULT
-          : WALK_SPEED
+      // T44 — crouch halves speed; sprint (ground only) multiplies it.
+      // T60 — swimming caps horizontal speed at SWIM_SPEED (no sprint).
+      const speed = swimming
+        ? SWIM_SPEED
+        : p.crouching
+          ? CROUCH_SPEED
+          : p.input & INPUT_SPRINT && grounded
+            ? WALK_SPEED * SPRINT_MULT
+            : WALK_SPEED
       const c = Math.cos(p.yaw)
       const s = Math.sin(p.yaw)
       // rotate local (lx, lz) by yaw about Y (three.js YXZ convention)
@@ -427,7 +513,26 @@ export function updatePlayers(phys: PhysicsWorld, sim: Sim): void {
     }
 
     let vy: number
-    if (grounded) {
+    if (swimming) {
+      // T60 — buoyancy + drag as an exponential velocity controller:
+      // jump = swim up, crouch = sink, otherwise float toward the waterline
+      // (feet held FLOAT_DEPTH under the surface → eyes stay dry).
+      let targetVy: number
+      if (p.input & INPUT_JUMP) {
+        targetVy = SWIM_UP_SPEED
+      } else if (p.input & INPUT_CROUCH) {
+        targetVy = -SWIM_SINK_SPEED
+      } else {
+        const surface = waterSurfaceY(water!, p.px, centerY, p.pz)
+        const err = surface - FLOAT_DEPTH - p.py
+        targetVy = Math.max(-FLOAT_MAX_SPEED, Math.min(FLOAT_MAX_SPEED, err * FLOAT_GAIN))
+      }
+      const cur = p.char.GetLinearVelocity().GetY()
+      vy = cur + (targetVy - cur) * SWIM_ACCEL_K
+      // water drag also softens horizontal changes
+      wx = p.vx + (wx - p.vx) * SWIM_ACCEL_K
+      wz = p.vz + (wz - p.vz) * SWIM_ACCEL_K
+    } else if (grounded) {
       vy = p.input & INPUT_JUMP ? JUMP_SPEED : 0
     } else {
       vy = p.char.GetLinearVelocity().GetY() + GRAVITY_Y * DT
