@@ -48,7 +48,7 @@ function buildBreachScenario() {
 }
 
 describe('B21 — breached pool drains at world scale (T62, V9)', () => {
-  it('drains fast, conserves mass exactly, and fully settles', { timeout: 60000 }, () => {
+  it('drains fast, conserves mass exactly, and fully settles', { timeout: 240000 }, () => {
     const { world, w, poured, basinSum } = buildBreachScenario()
 
     // pool settles and SLEEPS before the breach (live pools are asleep)

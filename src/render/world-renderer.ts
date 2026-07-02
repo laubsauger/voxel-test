@@ -115,6 +115,11 @@ export class WorldRenderer {
    * `cycle.overrideHours` (fixed-time override, null = tick-driven).
    */
   readonly cycle = new DayCycle()
+
+  /** current day factor 0(night)..1(noon) — render-only consumers (birds T74) */
+  get dayFactor(): number {
+    return this.cycleState.dayF
+  }
   private readonly cycleState: CycleState = createCycleState()
   /** displayed time follows the target exponentially (T65: a slider jump or
    * override toggle glides over ~0.3 s instead of popping CSM/exposure) */

@@ -19,6 +19,9 @@ import { PlayerVisuals } from './render/player-visuals'
 import { SpectatorCam } from './render/spectator-cam'
 import { WaterSurface } from './render/water/surface'
 import { BodyMeshes } from './render/body-meshes'
+import { Birds } from './render/birds'
+import { Flashlight } from './render/flashlight'
+import { UnderwaterOverlay } from './render/water/underwater'
 import { FxSystem } from './render/fx/fx-system'
 import { ProjectileMeshes } from './render/projectile-meshes'
 import { FixedStepDriver, Sim } from './sim/loop'
@@ -84,6 +87,9 @@ export class Game {
   private readonly waterSurface: WaterSurface
   private readonly bodyMeshes: BodyMeshes
   private readonly fx: FxSystem
+  private readonly birds = new Birds()
+  readonly flashlight: Flashlight
+  private readonly underwater = new UnderwaterOverlay()
   private readonly projectileMeshes: ProjectileMeshes
   /** sim event tap for audio (main.ts) — called with the frame's drained events */
   onSimEvents: ((events: ReturnType<Sim['drainEvents']>) => void) | null = null
@@ -124,6 +130,10 @@ export class Game {
     this.scene.add(this.fx.group)
     // T54 — bomb projectile visuals (reads phys.projectiles, trails via fx)
     this.projectileMeshes = new ProjectileMeshes(this.scene, this.fx)
+    // T74 birds + T75 flashlight + T60 underwater tint (all render-only, V6)
+    this.scene.add(this.birds.group)
+    this.flashlight = new Flashlight(this.cam.camera)
+    this.scene.add(this.flashlight.group)
     this.spectator = new SpectatorCam(this.cam.camera, this.input)
     this.hudEl = document.getElementById('hud')
 
@@ -279,6 +289,9 @@ export class Game {
       this.bodyMeshes.update(this.phys.bodies)
       this.fx.update(dt, fxEvents, this.cam.camera)
       this.projectileMeshes.update(this.phys.projectiles, dt)
+      this.birds.update(dt, this.world.dayFactor)
+      this.flashlight.update(dt)
+      this.underwater.update(this.cam.camera.position, this.water)
       this.waterSurface.update(this.water, this.sim.world)
 
       frames++

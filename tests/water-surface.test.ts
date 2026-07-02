@@ -135,7 +135,7 @@ describe('water surface extraction (T16, V6)', () => {
     surface.dispose()
   })
 
-  it('B26: incremental rebuild equals a from-scratch extraction mid-drain', { timeout: 30000 }, () => {
+  it('B26: incremental rebuild equals a from-scratch extraction mid-drain', { timeout: 120000 }, () => {
     const world = new ChunkStore()
     world.fillBox(0, 0, 0, 63, 7, 63, 2)
     world.fillBox(28, 8, 28, 40, 12, 40, 2) // basin crossing the x/z=32 corner

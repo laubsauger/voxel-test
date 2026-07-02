@@ -18,7 +18,7 @@ beforeAll(async () => {
 }, 30000)
 
 /**
- * Deep pool directly under the spawn column (spawn ~52.2m → voxel 522).
+ * Deep pool directly under the spawn column (T50 spawn 103.4m → voxel 1034).
  * Without the pillar the player spawns at the pool FLOOR (inside the water);
  * with it they spawn on a diving post above the surface (splash test).
  */
@@ -26,19 +26,19 @@ async function makeSwimSim(divingPillar = false) {
   const sim = new Sim(9)
   registerEditOps(sim)
   // ground shell around the pool, floor for the neighborhood
-  sim.world.fillBox(480, 0, 480, 560, 7, 560, 3)
-  // pool basin: interior x/z 500..540, water y 8..37 (3m deep — deep water)
-  sim.world.fillBox(496, 8, 496, 544, 38, 544, 3)
-  sim.world.fillBox(500, 8, 500, 540, 38, 540, 0)
+  sim.world.fillBox(992, 0, 992, 1072, 7, 1072, 3)
+  // pool basin: interior x/z 1012..1052, water y 8..37 (3m deep — deep water)
+  sim.world.fillBox(1008, 8, 1008, 1056, 38, 1056, 3)
+  sim.world.fillBox(1012, 8, 1012, 1052, 38, 1052, 0)
   if (divingPillar) {
     // 3×3 post under the spawn column, top above the waterline
-    sim.world.fillBox(521, 8, 511, 523, 45, 513, 3)
+    sim.world.fillBox(1033, 8, 1023, 1035, 45, 1025, 3)
   }
   const water = attachWaterSim(sim)
   sim.world.onVoxelChanged = (x, y, z) => water.notifyVoxelChanged(x, y, z)
   for (let y = 8; y <= 37; y++)
-    for (let z = 500; z <= 540; z++)
-      for (let x = 500; x <= 540; x++) water.addWater(x, y, z, MAX_LEVEL)
+    for (let z = 1012; z <= 1052; z++)
+      for (let x = 1012; x <= 1052; x++) water.addWater(x, y, z, MAX_LEVEL)
   const phys = await createPhysics(sim)
   attachBuoyancy(sim, phys, water)
   return { sim, phys, water }

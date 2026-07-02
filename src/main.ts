@@ -160,11 +160,6 @@ game.addFrameHook((dt) => {
   )
 })
 
-game.addFrameHook(() => {
-  const p = game.phys.players.get(LOCAL_PLAYER)
-  if (p) map.update(p.px, p.pz, p.yaw)
-})
-
 // --- settings wiring (I.settings — live apply, render-layer only, V6) --------
 const applyControls = () => {
   game.input.sensitivity = store.get('controls.sensitivity')
@@ -192,8 +187,15 @@ store.subscribe('dev.cycleSpeed', applyCycleSpeed)
 // T70 — map + minimap (layout regenerated: pure fn of seed, cheap vs restamping)
 const map = new MapSystem(adaptLayout(generateLayout(boot.seed)), { vx: WORLD_VX, vz: WORLD_VZ })
 map.attach(root)
+map.setVisible(false) // hidden until play (user nit: no minimap over the menu)
+game.addFrameHook(() => {
+  map.setVisible(game.state === 'play')
+  const p = game.phys.players.get(LOCAL_PLAYER)
+  if (p && game.state === 'play') map.update(p.px, p.pz, p.yaw)
+})
 document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM' && game.state === 'play' && !settings.visible) map.toggleFullscreen()
+  if (e.code === 'KeyL' && game.state === 'play') game.flashlight.toggle() // T75
 })
 
 const dev = new DevOverlay(game)
@@ -227,6 +229,12 @@ const tools = new ToolController(game, hud, (e) => {
 })
 hud.onSelect = () => void sfxPlay('ui-hotbar')
 // T54 — bomb detonations happen ticks after the throw: audio rides sim events
+game.phys.onSplash = (e) => {
+  void sfxPlay(e.speed > 5 ? 'splash-large' : 'splash-small', {
+    position: { x: e.x, y: e.y, z: e.z },
+    volume: Math.min(1, 0.4 + e.speed * 0.08),
+  })
+}
 game.onSimEvents = (events) => {
   for (const e of events) {
     if (e.kind === 'explosion') gameAudio.onExplosion(e.x, e.y, e.z, e.power)
