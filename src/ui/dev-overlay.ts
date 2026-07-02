@@ -1,14 +1,15 @@
 /**
- * T32 — profiling overlay: stats-gl (fps/cpu/gpu) + renderer.info panel
- * (draw calls, triangles, geometries, textures) + the classic hud stats line.
+ * T32 — profiling: three r185's built-in Inspector addon (profiler, FPS,
+ * renderer stats, scene inspection) + a small renderer.info summary line and
+ * the classic hud stats line as supplements.
  * Enabled by ?dev=1 (I.boot) or the Dev settings toggle (I.settings).
  * Render-layer only (V6) — reads renderer counters, never sim state.
  */
-import Stats from 'stats-gl'
+import { Inspector } from 'three/addons/inspector/Inspector.js'
 import type { Game } from '../game'
 
 export class DevOverlay {
-  private stats: Stats | null = null
+  private inspector: Inspector | null = null
   private panel: HTMLElement | null = null
   private enabled = false
   private accum = 0
@@ -26,7 +27,7 @@ export class DevOverlay {
     } else {
       this.removeHook?.()
       this.removeHook = null
-      if (this.stats) this.stats.dom.style.display = 'none'
+      this.inspector?.hide()
       if (this.panel) this.panel.style.display = 'none'
     }
   }
@@ -34,7 +35,7 @@ export class DevOverlay {
   private mount(): void {
     if (this.panel) {
       this.panel.style.display = ''
-      if (this.stats) this.stats.dom.style.display = ''
+      this.inspector?.show()
       return
     }
     this.panel = document.createElement('div')
@@ -42,19 +43,15 @@ export class DevOverlay {
     document.body.appendChild(this.panel)
 
     try {
-      this.stats = new Stats({ trackGPU: true, horizontal: true })
-      // stats-gl supports WebGPURenderer via init()
-      void this.stats.init(this.game.renderer)
-      document.body.appendChild(this.stats.dom)
-      this.stats.dom.style.cssText = 'position:fixed;top:10px;right:10px;left:auto;z-index:30;'
+      this.inspector = new Inspector()
+      this.game.renderer.inspector = this.inspector
     } catch (e) {
-      console.warn('[dev] stats-gl init failed:', e)
-      this.stats = null
+      console.warn('[dev] three Inspector init failed:', e)
+      this.inspector = null
     }
   }
 
   private frame(dt: number): void {
-    this.stats?.update()
     this.accum += dt
     if (this.accum < 0.5 || !this.panel) return
     this.accum = 0
