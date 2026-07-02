@@ -2,9 +2,60 @@
  * T33 — main menu + pause menu. Full-screen DOM overlays over the live
  * scene (the game keeps rendering its cinematic orbit behind the menu).
  * Title 'BLOCKBURB' is a working-title placeholder (see INTEGRATION-ui.md).
+ *
+ * T52 — both menus carry quick-access icon buttons: mute (drives
+ * settings.audio.muted so the Audio tab stays consistent) and fullscreen
+ * (live document state, transient — see fullscreen.ts).
  */
 
-export interface MainMenuHooks {
+const ICON_SOUND_ON =
+  '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/>'
+const ICON_SOUND_OFF = '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="m16.5 9.5 5 5M21.5 9.5l-5 5"/>'
+const ICON_FS_ENTER =
+  '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'
+const ICON_FS_EXIT =
+  '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>'
+
+export interface QuickAccessHooks {
+  onToggleMute: () => void
+  onToggleFullscreen: () => void
+}
+
+/** shared quick-access strip (mute + fullscreen icon buttons) */
+class QuickAccess {
+  readonly el: HTMLElement
+  private readonly muteBtn: HTMLButtonElement
+  private readonly fsBtn: HTMLButtonElement
+
+  constructor(hooks: QuickAccessHooks) {
+    this.el = document.createElement('div')
+    this.el.className = 'bb-quick'
+    this.el.innerHTML = `
+      <button class="bb-icon-btn" data-act="mute" title="Mute" aria-label="Mute">
+        <svg viewBox="0 0 24 24" aria-hidden="true">${ICON_SOUND_ON}</svg>
+      </button>
+      <button class="bb-icon-btn" data-act="fullscreen" title="Fullscreen" aria-label="Fullscreen">
+        <svg viewBox="0 0 24 24" aria-hidden="true">${ICON_FS_ENTER}</svg>
+      </button>`
+    this.muteBtn = this.el.querySelector('[data-act="mute"]') as HTMLButtonElement
+    this.fsBtn = this.el.querySelector('[data-act="fullscreen"]') as HTMLButtonElement
+    this.muteBtn.addEventListener('click', hooks.onToggleMute)
+    this.fsBtn.addEventListener('click', hooks.onToggleFullscreen)
+  }
+
+  setMuted(muted: boolean): void {
+    this.muteBtn.classList.toggle('bb-off', muted)
+    this.muteBtn.title = muted ? 'Unmute' : 'Mute'
+    this.muteBtn.querySelector('svg')!.innerHTML = muted ? ICON_SOUND_OFF : ICON_SOUND_ON
+  }
+
+  setFullscreen(active: boolean): void {
+    this.fsBtn.title = active ? 'Exit fullscreen' : 'Fullscreen'
+    this.fsBtn.querySelector('svg')!.innerHTML = active ? ICON_FS_EXIT : ICON_FS_ENTER
+  }
+}
+
+export interface MainMenuHooks extends QuickAccessHooks {
   seed: number
   onPlay: () => void
   onSettings: () => void
@@ -12,6 +63,7 @@ export interface MainMenuHooks {
 
 export class MainMenu {
   private readonly el: HTMLElement
+  private readonly quick: QuickAccess
 
   constructor(root: HTMLElement, hooks: MainMenuHooks) {
     this.el = document.createElement('div')
@@ -45,7 +97,18 @@ export class MainMenu {
       </div>`
     this.el.querySelector('[data-act="play"]')!.addEventListener('click', hooks.onPlay)
     this.el.querySelector('[data-act="settings"]')!.addEventListener('click', hooks.onSettings)
+    this.quick = new QuickAccess(hooks)
+    this.quick.el.classList.add('bb-quick-screen')
+    this.el.appendChild(this.quick.el)
     root.appendChild(this.el)
+  }
+
+  setMuted(muted: boolean): void {
+    this.quick.setMuted(muted)
+  }
+
+  setFullscreen(active: boolean): void {
+    this.quick.setFullscreen(active)
   }
 
   show(): void {
@@ -57,7 +120,7 @@ export class MainMenu {
   }
 }
 
-export interface PauseMenuHooks {
+export interface PauseMenuHooks extends QuickAccessHooks {
   onResume: () => void
   onSettings: () => void
   onQuit: () => void
@@ -65,6 +128,7 @@ export interface PauseMenuHooks {
 
 export class PauseMenu {
   private readonly el: HTMLElement
+  private readonly quick: QuickAccess
 
   constructor(root: HTMLElement, hooks: PauseMenuHooks) {
     this.el = document.createElement('div')
@@ -80,7 +144,18 @@ export class PauseMenu {
     this.el.querySelector('[data-act="resume"]')!.addEventListener('click', hooks.onResume)
     this.el.querySelector('[data-act="settings"]')!.addEventListener('click', hooks.onSettings)
     this.el.querySelector('[data-act="quit"]')!.addEventListener('click', hooks.onQuit)
+    this.quick = new QuickAccess(hooks)
+    this.quick.el.classList.add('bb-quick-panel')
+    this.el.querySelector('.bb-pause-panel')!.appendChild(this.quick.el)
     root.appendChild(this.el)
+  }
+
+  setMuted(muted: boolean): void {
+    this.quick.setMuted(muted)
+  }
+
+  setFullscreen(active: boolean): void {
+    this.quick.setFullscreen(active)
   }
 
   get visible(): boolean {

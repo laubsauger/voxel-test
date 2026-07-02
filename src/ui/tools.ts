@@ -11,8 +11,20 @@ import type { Game } from '../game'
 import { LOCAL_PLAYER } from '../game'
 import { nextSeq } from '../render/command-seq'
 import { MAT_CONCRETE } from '../sim/materials'
-import { raycastWorld } from './raycast'
+import { raycastWorld, type ToolHit } from './raycast'
 import type { Hud } from './hud'
+import { VOXEL_SIZE } from '../world/chunks'
+
+/**
+ * T52 — tool fire notifications for the audio wiring (render-layer feedback
+ * at the command call site; positions in world meters). Not a sim hook (V6).
+ */
+export type ToolFireEvent =
+  | { kind: 'dig' | 'place'; x: number; y: number; z: number; mat: number }
+  | { kind: 'shoot'; hit: { x: number; y: number; z: number; mat: number } | null }
+  | { kind: 'explode'; x: number; y: number; z: number; power: number }
+
+const hitMeters = (hit: ToolHit) => ({ x: hit.mx, y: hit.my, z: hit.mz, mat: hit.mat })
 
 /** reach for dig/build, meters */
 export const EDIT_RANGE = 9
@@ -37,6 +49,7 @@ export class ToolController {
   constructor(
     private readonly game: Game,
     private readonly hud: Hud,
+    private readonly onFire?: (e: ToolFireEvent) => void,
   ) {
     document.addEventListener('keydown', (e) => {
       if (game.state !== 'play') return
@@ -83,6 +96,7 @@ export class ToolController {
         if (!hit) return
         push({ kind: 'dig', x: hit.x, y: hit.y, z: hit.z, r: 4 })
         hud.hitmarker()
+        this.onFire?.({ kind: 'dig', ...hitMeters(hit) })
         break
       }
       case 'build': {
@@ -91,13 +105,22 @@ export class ToolController {
         // build against the hit face — the sphere grows out of the surface
         push({ kind: 'place', x: hit.px, y: hit.py, z: hit.pz, r: 3, mat: MAT_CONCRETE })
         hud.hitmarker()
+        this.onFire?.({
+          kind: 'place',
+          x: (hit.px + 0.5) * VOXEL_SIZE,
+          y: (hit.py + 0.5) * VOXEL_SIZE,
+          z: (hit.pz + 0.5) * VOXEL_SIZE,
+          mat: MAT_CONCRETE,
+        })
         break
       }
       case 'gun': {
         // hitscan resolved in the sim (src/sim/shoot-op.ts) — deterministic
         push({ kind: 'shoot', ox: o.x, oy: o.y, oz: o.z, dx: d.x, dy: d.y, dz: d.z })
         // render-side raycast only for feedback (same DDA as the sim handler)
-        if (raycastWorld(game.sim.world, o.x, o.y, o.z, d.x, d.y, d.z, 120)) hud.hitmarker()
+        const shotHit = raycastWorld(game.sim.world, o.x, o.y, o.z, d.x, d.y, d.z, 120)
+        if (shotHit) hud.hitmarker()
+        this.onFire?.({ kind: 'shoot', hit: shotHit ? hitMeters(shotHit) : null })
         break
       }
       case 'bomb': {
@@ -105,6 +128,7 @@ export class ToolController {
         if (!hit) return
         push({ kind: 'explode', x: hit.x, y: hit.y, z: hit.z, r: 14, power: 4 })
         hud.hitmarker()
+        this.onFire?.({ kind: 'explode', x: hit.mx, y: hit.my, z: hit.mz, power: 4 })
         break
       }
     }
