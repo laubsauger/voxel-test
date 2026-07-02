@@ -42,6 +42,7 @@ describe('generated audio manifest (I.audio)', () => {
     expect(count('ambience')).toBe(3)
     expect(count('ui')).toBe(5)
     expect(count('player')).toBe(4)
+    expect(count('vehicle')).toBe(13) // T64 cars + T76 bicycle/scooter loops
     expect(count('music')).toBe(2) // T38: menu + in-game bed
   })
 

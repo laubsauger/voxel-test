@@ -34,6 +34,16 @@ import { registerPlayerOps, updatePlayers, type PlayerEntity, type SplashEvent }
 import { registerProjectileOps, tickProjectiles, type Projectile } from './projectiles'
 import { attachEditPhysics } from './edit-ops'
 import type { WaterSim } from './water/water-sim'
+import {
+  damageVehiclesSphere,
+  disposeVehicles,
+  hashVehicles,
+  registerVehicleOps,
+  tickVehiclesPlow,
+  tickVehiclesPostStep,
+  tickVehiclesPreStep,
+  type VehicleEntity,
+} from './vehicle'
 
 type JoltApi = typeof Jolt
 
@@ -226,8 +236,17 @@ export class PhysicsWorld {
    */
   onSplash: ((e: SplashEvent) => void) | null = null
 
+  /** T64 drivable vehicles keyed by entity id (V8) — see vehicle.ts */
+  readonly vehicles = new Map<number, VehicleEntity>()
+
   /** total bodies removed by the kill plane — hashed sim state (T40, V3) */
   removedBodies = 0
+
+  /** T64 — vehicles fully despawned (kill plane / emptied); hashed sim state */
+  removedVehicles = 0
+
+  /** sim back-reference for vehicle damage inside blast handling (set in createPhysics) */
+  simRef: Sim | null = null
 
   private readonly settings: Jolt.JoltSettings
   /** shared gravity vector for character updates (matches physics system gravity) */
@@ -308,8 +327,11 @@ export class PhysicsWorld {
 
   /** Sim system body: structural updates, then the fixed Jolt step (V2: DT only). */
   tick(sim: Sim): void {
+    tickVehiclesPlow(sim, this) // T64 — carve weak materials BEFORE collider rebuild
     this.structuralPass(sim)
+    tickVehiclesPreStep(this) // T64 — driver input → Jolt controller
     this.joltInterface.Step(DT, 1)
+    tickVehiclesPostStep(sim, this) // T64 — readback, crash damage, seat sync
     updatePlayers(this, sim) // character controllers, fixed order (T21)
     tickProjectiles(sim, this) // T54 — bomb arcs/fuses; detonation spawns ejecta this tick
     this.readbackBodies()
@@ -736,6 +758,10 @@ export class PhysicsWorld {
    * Coordinates in meters.
    */
   damageBodiesSphere(wx: number, wy: number, wz: number, rMeters: number, power: number, onlyIds?: number[]): void {
+    // T64 — blasts chew voxels off vehicle chassis too (per-material rule)
+    if (this.simRef && this.vehicles.size > 0) {
+      damageVehiclesSphere(this.simRef, this, wx, wy, wz, rMeters, power)
+    }
     const ids = onlyIds ?? [...this.bodies.keys()] // snapshot: despawn mutates the map
     for (const id of ids) {
       const b = this.bodies.get(id)
@@ -777,11 +803,28 @@ export class PhysicsWorld {
       b.body.AddImpulse(imp)
       api.destroy(imp)
     }
+    // T64 — shockwave shoves vehicles too (deterministic id order)
+    for (const v of this.vehicles.values()) {
+      const p = v.body.GetPosition()
+      const dx = p.GetX() - cx
+      const dy = p.GetY() - cy
+      const dz = p.GetZ() - cz
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      if (dist >= radius) continue
+      const falloff = 1 - dist / radius
+      const inv = dist > 1e-6 ? 1 / dist : 0
+      const mag = strength * falloff
+      const imp = new api.Vec3(dx * inv * mag, dist > 1e-6 ? dy * inv * mag : mag, dz * inv * mag)
+      this.bodyInterface.ActivateBody(v.body.GetID())
+      v.body.AddImpulse(imp)
+      api.destroy(imp)
+    }
   }
 
   /** Free Jolt-side resources (tests). The WASM module itself stays loaded. */
   dispose(): void {
     const api = this.api
+    disposeVehicles(this) // T64 — constraints/listeners must go before bodies
     for (const body of this.chunkBodies.values()) {
       this.bodyInterface.RemoveBody(body.GetID())
       this.bodyInterface.DestroyBody(body.GetID())
@@ -842,11 +885,16 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.u32(p.flags)
     // T44/T47 — capsule height + noclip are sim state (V3)
     h.u32((p.crouching ? 1 : 0) | (p.noclip ? 2 : 0))
+    // T64 — seat state is sim state (V3)
+    h.u32(p.seatedVehicle)
+    h.u32(p.seat)
     for (const seg of p.segments) {
       h.u32(seg.count)
       h.bytes(seg.grid)
     }
   }
+  // T64 — vehicles are sim state (V3)
+  hashVehicles(h, phys)
   return h.value
 }
 
@@ -861,6 +909,8 @@ export async function createPhysics(sim: Sim): Promise<PhysicsWorld> {
   registerDestructionOps(sim, phys)
   registerPlayerOps(sim, phys)
   registerProjectileOps(sim, phys) // T54 — 'throw' op; integration runs in phys.tick
+  registerVehicleOps(sim, phys) // T64 — vehicle_spawn/enter/exit ops
+  phys.simRef = sim // T64 — blast → vehicle damage path needs the sim
   attachEditPhysics(sim, phys) // B17 — dig pushes rubble
 
   phys.initStatic(sim.world)

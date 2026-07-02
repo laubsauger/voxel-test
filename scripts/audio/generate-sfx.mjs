@@ -209,6 +209,64 @@ const SFX_GROUPS = [
     promptFor: (n) => `A chunk of masonry crumbling and breaking apart, rocks and rubble tumbling briefly then settling${n === 2 ? ', drier smaller pieces' : ''}, ${OUTDOOR}, ${FOLEY}`,
   },
 
+  // --- vehicles (T64) --------------------------------------------------------
+  {
+    group: 'engine-idle-loop',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 8, loop: true, volume: 0.55, positional: true,
+    promptFor: () => 'Compact sedan car engine idling steadily, warm smooth four-cylinder combustion purr at low RPM, constant speed, seamless loop, exterior perspective, no music, no voices, AAA game vehicle sound design',
+  },
+  {
+    group: 'engine-rev-loop',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 8, loop: true, volume: 0.7, positional: true,
+    promptFor: () => 'Compact sedan car engine running steadily at mid-high RPM while driving, smooth constant four-cylinder tone with light exhaust rasp, constant speed, no gear changes, seamless loop, exterior perspective, no music, no voices, AAA game vehicle sound design',
+  },
+  {
+    group: 'skid-loop',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 4, loop: true, volume: 0.8, positional: true,
+    promptFor: () => 'Car tires skidding and screeching on asphalt during a hard drift, sustained rubber squeal at constant intensity, seamless loop, no engine, no music, no voices, AAA game vehicle sound design',
+  },
+  {
+    group: 'car-crash-small',
+    category: 'vehicle', dir: 'vehicle', count: 2, duration: 1.5, loop: false, volume: 0.85, positional: true,
+    promptFor: (n) => `Car bumping into an obstacle at low speed, dull sheet metal thump with a small rattle of parts${n === 2 ? ', slightly harder hit with a hubcap wobble' : ''}, single impact, ${OUTDOOR}, ${FOLEY}`,
+  },
+  {
+    group: 'car-crash-large',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 2.5, loop: false, volume: 1.0, positional: true,
+    promptFor: () => 'Violent car crash into a brick wall: heavy metal crunch, buckling body panels, glass shattering, debris clattering onto pavement, short settling tail, single impact, no music, no voices, cinematic AAA game vehicle crash sound design',
+  },
+  {
+    group: 'car-door-open',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 0.8, loop: false, volume: 0.6, positional: true,
+    promptFor: () => `Car door handle click and door swinging open with a soft hinge creak, ${OUTDOOR}, ${FOLEY}`,
+  },
+  {
+    group: 'car-door-close',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 0.8, loop: false, volume: 0.65, positional: true,
+    promptFor: () => `Car door slamming shut with a solid reassuring thunk, ${OUTDOOR}, ${FOLEY}`,
+  },
+  {
+    group: 'car-horn',
+    category: 'vehicle', dir: 'vehicle', count: 2, duration: 1.2, loop: false, volume: 0.85, positional: true,
+    promptFor: (n) => `Car horn honking ${n === 2 ? 'twice quickly, short double beep' : 'once, single medium-length honk'}, classic sedan dual-tone horn, ${OUTDOOR}, ${FOLEY}`,
+  },
+  // T76 two-wheelers
+  {
+    group: 'bicycle-freewheel-loop',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 6, loop: true, volume: 0.5, positional: true,
+    promptFor: () => 'Bicycle freewheel hub clicking rapidly while coasting, steady even ratchet ticking, constant speed, seamless loop, no voices, no music, AAA game vehicle foley',
+  },
+  {
+    group: 'bicycle-chain-loop',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 6, loop: true, volume: 0.5, positional: true,
+    promptFor: () => 'Bicycle being pedaled steadily: soft chain whir over sprockets with light mechanical rattle, constant cadence, seamless loop, no voices, no music, AAA game vehicle foley',
+  },
+  {
+    group: 'scooter-engine-loop',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 8, loop: true, volume: 0.6, positional: true,
+    promptFor: () => 'Small 50cc moped scooter engine running steadily, high-pitched buzzy two-stroke drone at constant mid RPM, seamless loop, exterior perspective, no voices, no music, AAA game vehicle sound design',
+  },
+
   // --- water --------------------------------------------------------------------
   {
     group: 'splash-small',

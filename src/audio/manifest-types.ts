@@ -16,6 +16,7 @@ export const SOUND_CATEGORIES = [
   'ambience',
   'ui',
   'player',
+  'vehicle', // T64 — engine loops, skid, crashes, doors, horns
   'music',
 ] as const
 
