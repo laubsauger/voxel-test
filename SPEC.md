@@ -87,6 +87,7 @@ T35|.|[R] draw-call batching: 2437 chunk meshes × CSM passes = 23fps settled. B
 T36|.|[A] SFX asset pipeline: ElevenLabs gen (I.audio) — footsteps×surface, shoot, impacts×material, explosions, water, ambience, UI, hurt. Rich AAA set, manifest|T31|I.audio,§C
 T37|.|[A] runtime audio engine: WebAudio buses (master/music/sfx), positional SFX, footstep surface detect, event hooks from sim/render, volumes via I.settings|T36|I.audio,I.settings,V6
 T38|.|[A] music: menu + ambient in-game track(s) via ElevenLabs music API, crossfade menu↔game, music bus|T36|I.audio
+T39|.|[R] transparency pass: second mesh pass per chunk for transparent mats (glass, water-solid), no cull vs transparent neighbors, sorted blend|T35|B5,I.mat
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 
@@ -95,3 +96,6 @@ Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T
 id|date|cause|fix
 B1|2026-07-02|parallel track agents (C, R, P) each defined I.mat table, divergent id assignments (R: 3=sand,8=wood,11=metal; P: 3=stone,7=metal,9=flesh vs canonical 3=asphalt,6=wood,9=metal) — merge-time discovery, would have corrupted stamped worlds|V13; render derives from sim table; P merge kept canonical ids + P strength scale
 B2|2026-07-02|per-chunk meshes: suburb = 2437 draws × (main + 3 CSM cascades) ≈ 10k draws/frame → 23fps settled, misses §C 60fps. Found by CDP smoke settle gate|T35 batching; smoke fps gate stays red until fixed
+B3|2026-07-02|user smoke feedback: chunk mesh-in slow at load + visible pop-in when moving fast (12/frame dispatch+apply budgets conservative, priority near-camera only)|T35 scope extended: initial-load fast path + movement-directed prefetch + budget tuning
+B4|2026-07-02|user smoke feedback: light leaks at roof/wall joins (CSM bias/normalBias vs voxel-thin walls)|T35 scope extended: shadow bias/normal-bias/cascade tuning to kill leaks
+B5|2026-07-02|user smoke feedback: glass windows render opaque (known R-track v1 limitation, single opaque mesh pass)|T39
