@@ -100,7 +100,7 @@ export class VehicleMeshes {
       entry.group.position.set(v.px, v.py, v.pz)
       entry.group.quaternion.set(v.qx, v.qy, v.qz, v.qw)
 
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < entry.wheels.length; i++) {
         const w = v.wheels[i]
         const mesh = entry.wheels[i]
         mesh.visible = !w.broken
@@ -230,7 +230,7 @@ function toGeometry(a: Accum): BufferGeometry {
 // dev controls (T64.7) — testable NOW without gen changes
 // ---------------------------------------------------------------------------
 
-const DEV_ARCHETYPES = ['sedan1', 'sedan0', 'sedan2', 'pickup0', 'pickup1', 'van0']
+const DEV_ARCHETYPES = ['sedan1', 'scooter', 'bicycle', 'sedan0', 'sedan2', 'pickup0', 'pickup1', 'van0']
 
 /**
  * Dev-gated vehicle keys (game.ts wires this; see INTEGRATION-vehicles.md):

@@ -244,19 +244,144 @@ const SEAT_DEFS: Record<string, Seat[]> = {
 const archetypeBase = (archetype: string): string => archetype.replace(/\d+$/, '')
 
 let propCache: Record<string, VoxelGrid> | undefined
-function carGrid(archetype: string): VoxelGrid {
-  propCache ??= placeholderProps()
-  const g = propCache[archetype]
-  if (!g || !SEAT_DEFS[archetypeBase(archetype)]) {
-    throw new Error(`vehicle_spawn: unknown car archetype '${archetype}'`)
-  }
-  return g
-}
 
 interface WheelPos {
   x: number
   y: number
   z: number
+}
+
+/** per-wheel physical spec (meters, corner-origin local frame) */
+export interface WheelDef extends WheelPos {
+  radius: number
+  width: number
+  steerable: boolean
+  handbrake: boolean
+}
+
+/**
+ * Resolved archetype: chassis grid (NO wheel voxels), physics wheels, seats
+ * and drivetrain tuning. Cars derive from the gen/props grids; two-wheelers
+ * (T76: bicycle, scooter) are authored here — gen/** stays untouched.
+ */
+export interface VehicleArchetype {
+  grid: VoxelGrid
+  wheels: WheelDef[]
+  seats: Seat[]
+  mass: number
+  engineTorque: number
+  maxRpm: number
+  /** body linear velocity clamp = arcade top speed */
+  maxSpeed: number
+  /** MotorcycleController + lean assist instead of the 4-wheel controller */
+  twoWheel: boolean
+  suspMin: number
+  suspMax: number
+}
+
+// ---- T76 two-wheelers: authored voxel frames (wheels are physics-only) -----
+
+function makeGrid(sx: number, sy: number, sz: number): VoxelGrid {
+  return { sx, sy, sz, mats: new Uint8Array(sx * sy * sz) }
+}
+
+function gfill(g: VoxelGrid, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, m: number): void {
+  for (let y = y0; y <= y1; y++)
+    for (let z = z0; z <= z1; z++)
+      for (let x = x0; x <= x1; x++) g.mats[x + z * g.sx + y * g.sx * g.sz] = m
+}
+
+/** bicycle: thin metal frame, saddle + handlebar (0.4 × 1.3 × 1.8 m) */
+function buildBicycle(): VoxelGrid {
+  const g = makeGrid(4, 13, 18)
+  gfill(g, 1, 4, 2, 2, 8, 3, MAT_METAL) // head tube / fork column
+  gfill(g, 1, 8, 2, 2, 9, 4, MAT_METAL) // stem
+  gfill(g, 0, 9, 2, 3, 9, 3, MAT_ASPHALT) // handlebar grips
+  gfill(g, 1, 4, 4, 2, 5, 14, MAT_METAL) // top/down tube spine
+  gfill(g, 1, 6, 12, 2, 8, 13, MAT_METAL) // seat post
+  gfill(g, 0, 9, 12, 3, 9, 14, MAT_ASPHALT) // saddle
+  gfill(g, 1, 4, 14, 2, 6, 15, MAT_METAL) // rear stay
+  return g
+}
+
+/** delivery scooter: step-through frame + big rear topbox (0.6 × 1.4 × 2.0 m) */
+function buildScooter(): VoxelGrid {
+  const g = makeGrid(6, 14, 20)
+  const body = 12 // MAT_ROOFTILE — moped red
+  gfill(g, 1, 3, 1, 4, 4, 18, MAT_METAL) // floorboard / spine
+  gfill(g, 1, 4, 1, 4, 10, 3, body) // front apron
+  gfill(g, 2, 6, 1, 3, 6, 1, 13) // MAT_LAMP headlight
+  gfill(g, 0, 10, 1, 5, 10, 3, MAT_ASPHALT) // handlebar
+  gfill(g, 1, 5, 9, 4, 7, 14, body) // seat base
+  gfill(g, 0, 7, 9, 5, 8, 14, MAT_ASPHALT) // saddle
+  gfill(g, 0, 4, 15, 5, 9, 19, 7) // MAT_PLASTER — delivery topbox
+  return g
+}
+
+let twoWheelCache: Record<string, VoxelGrid> | undefined
+
+/** resolve an archetype name to its full spec (cached grids, pure data — V2) */
+export function resolveArchetype(archetype: string): VehicleArchetype {
+  const base = archetypeBase(archetype)
+  if (base === 'bicycle' || base === 'scooter') {
+    twoWheelCache ??= { bicycle: buildBicycle(), scooter: buildScooter() }
+    if (base === 'bicycle') {
+      return {
+        grid: twoWheelCache.bicycle,
+        wheels: [
+          { x: 0.2, y: 0.45, z: 0.3, radius: 0.22, width: 0.1, steerable: true, handbrake: false },
+          { x: 0.2, y: 0.45, z: 1.5, radius: 0.22, width: 0.1, steerable: false, handbrake: true },
+        ],
+        seats: [{ x: 0.2, y: 1.0, z: 1.3 }],
+        mass: 140, // frame + rider — keeps the lean controller planted
+        engineTorque: 70, // pedal power (arcade-generous)
+        maxRpm: 6000,
+        maxSpeed: 7,
+        twoWheel: true,
+        suspMin: 0.06,
+        suspMax: 0.2,
+      }
+    }
+    return {
+      grid: twoWheelCache.scooter,
+      wheels: [
+        { x: 0.3, y: 0.45, z: 0.35, radius: 0.22, width: 0.12, steerable: true, handbrake: false },
+        { x: 0.3, y: 0.45, z: 1.65, radius: 0.22, width: 0.12, steerable: false, handbrake: true },
+      ],
+      seats: [{ x: 0.3, y: 0.95, z: 1.2 }],
+      mass: 180,
+      engineTorque: 140,
+      maxRpm: 9000,
+      maxSpeed: 13,
+      twoWheel: true,
+      suspMin: 0.06,
+      suspMax: 0.22,
+    }
+  }
+  // cars: grid from gen/props (read-only import), wheels derived
+  propCache ??= placeholderProps()
+  const src = propCache[archetype]
+  const seats = SEAT_DEFS[base]
+  if (!src || !seats) throw new Error(`vehicle_spawn: unknown archetype '${archetype}'`)
+  const { grid, wheels } = stripWheels(src)
+  return {
+    grid: { sx: src.sx, sy: src.sy, sz: src.sz, mats: grid },
+    wheels: wheels.map((w, i) => ({
+      ...w,
+      radius: WHEEL_RADIUS,
+      width: WHEEL_WIDTH,
+      steerable: i < 2,
+      handbrake: i >= 2, // rear handbrake = drifty
+    })),
+    seats,
+    mass: VEHICLE_MASS[base] ?? DEFAULT_VEHICLE_MASS,
+    engineTorque: ENGINE_TORQUE,
+    maxRpm: ENGINE_MAX_RPM,
+    maxSpeed: VEHICLE_MAX_SPEED,
+    twoWheel: false,
+    suspMin: SUSPENSION_MIN,
+    suspMax: SUSPENSION_MAX,
+  }
 }
 
 /**
@@ -353,8 +478,8 @@ export function vehicleSpawnClear(
   cz: number,
   yaw: number,
 ): boolean {
-  const g = carGrid(archetype)
-  const { sx, sy, sz } = g
+  const spec = resolveArchetype(archetype)
+  const { sx, sy, sz } = spec.grid
   const cos = Math.cos(yaw)
   const sin = Math.sin(yaw)
   // sample the chassis band (above wheel height) every 2 voxels, rotated
@@ -373,8 +498,7 @@ export function vehicleSpawnClear(
     }
   }
   // ground under each wheel footprint corner
-  const { wheels } = stripWheels(g)
-  for (const w of wheels) {
+  for (const w of spec.wheels) {
     const lx = w.x - (sx * VOXEL_SIZE) / 2
     const lz = w.z - (sz * VOXEL_SIZE) / 2
     const wx = cx + lx * cos + lz * sin
@@ -408,9 +532,10 @@ export function spawnVehicle(
   yaw: number,
 ): VehicleEntity {
   const api = phys.api
-  const src = carGrid(archetype)
-  const { sx, sy, sz } = src
-  const { grid, wheels } = stripWheels(src)
+  const spec = resolveArchetype(archetype)
+  const { sx, sy, sz } = spec.grid
+  const grid = spec.grid.mats.slice() // entity owns (and dents) its grid
+  const wheels = spec.wheels
 
   let count = 0
   const matCounts = new Uint32Array(256)
@@ -428,7 +553,7 @@ export function spawnVehicle(
       mat = m
     }
   }
-  const mass = VEHICLE_MASS[archetypeBase(archetype)] ?? DEFAULT_VEHICLE_MASS
+  const mass = spec.mass
 
   // chassis shape: greedy-box compound (corner-origin), COM lowered for feel
   const boxes = greedyBoxes(grid, sx, sy, sz)
@@ -456,8 +581,8 @@ export function spawnVehicle(
   bcs.mMassPropertiesOverride.mMass = mass
   bcs.mFriction = 0.3
   bcs.mRestitution = 0.05
-  bcs.mAngularDamping = 0.3
-  bcs.mMaxLinearVelocity = VEHICLE_MAX_SPEED
+  bcs.mAngularDamping = spec.twoWheel ? 1.5 : 0.3 // bikes: damp the lean wobble
+  bcs.mMaxLinearVelocity = spec.maxSpeed
   bcs.mMaxAngularVelocity = VEHICLE_MAX_ANGULAR
   const body = phys.bodyInterface.CreateBody(bcs)
   phys.bodyInterface.AddBody(body.GetID(), api.EActivation_Activate)
@@ -465,19 +590,23 @@ export function spawnVehicle(
   api.destroy(pos)
   api.destroy(rot)
 
-  // --- vehicle constraint: 4 cast-cylinder wheels, 4WD, auto transmission ---
+  // --- vehicle constraint: cast-cylinder wheels; 4-wheel (4WD, auto box) or
+  // --- two-wheel MotorcycleController with lean assist (T76) ---------------
   const settings = new api.VehicleConstraintSettings()
   const up = new api.Vec3(0, 1, 0)
   const fwd = new api.Vec3(0, 0, -1) // archetype grille at local z = 0
   settings.mUp = up
   settings.mForward = fwd
-  settings.mMaxPitchRollAngle = MAX_PITCH_ROLL
+  // two-wheelers keep a VERY tight clamp: the constraint IS the
+  // kickstand/balance. A freely-leaning voxel bike falls at rest and then
+  // 'skates' on the clamp torque; at ~7° the residual lateral force is below
+  // tire friction, so it stands still and corners flat (arcade tradeoff).
+  settings.mMaxPitchRollAngle = spec.twoWheel ? 0.12 : MAX_PITCH_ROLL
 
   const suspDir = new api.Vec3(0, -1, 0)
   const steerAxis = new api.Vec3(0, 1, 0)
   const wheelUp = new api.Vec3(0, 1, 0)
-  for (let i = 0; i < 4; i++) {
-    const w = wheels[i]
+  for (const w of wheels) {
     const ws = new api.WheelSettingsWV()
     const wpos = new api.Vec3(w.x, w.y, w.z)
     ws.mPosition = wpos
@@ -485,46 +614,60 @@ export function spawnVehicle(
     ws.mSteeringAxis = steerAxis
     ws.mWheelUp = wheelUp
     ws.mWheelForward = fwd
-    ws.mSuspensionMinLength = SUSPENSION_MIN
-    ws.mSuspensionMaxLength = SUSPENSION_MAX
+    ws.mSuspensionMinLength = spec.suspMin
+    ws.mSuspensionMaxLength = spec.suspMax
     ws.mSuspensionSpring.mFrequency = SUSPENSION_FREQUENCY
     ws.mSuspensionSpring.mDamping = SUSPENSION_DAMPING
-    ws.mRadius = WHEEL_RADIUS
-    ws.mWidth = WHEEL_WIDTH
-    ws.mMaxSteerAngle = i < 2 ? MAX_STEER_ANGLE : 0
-    ws.mMaxBrakeTorque = BRAKE_TORQUE
-    ws.mMaxHandBrakeTorque = i < 2 ? 0 : HANDBRAKE_TORQUE // rear handbrake = drifty
+    ws.mRadius = w.radius
+    ws.mWidth = w.width
+    ws.mMaxSteerAngle = w.steerable ? MAX_STEER_ANGLE : 0
+    ws.mMaxBrakeTorque = spec.twoWheel ? BRAKE_TORQUE * 0.2 : BRAKE_TORQUE
+    ws.mMaxHandBrakeTorque = w.handbrake ? HANDBRAKE_TORQUE * (spec.twoWheel ? 0.15 : 1) : 0
     settings.mWheels.push_back(ws)
     api.destroy(wpos)
   }
-  // anti-roll bars front + rear
-  for (const [l, r] of [
-    [0, 1],
-    [2, 3],
-  ]) {
-    const bar = new api.VehicleAntiRollBar()
-    bar.mLeftWheel = l
-    bar.mRightWheel = r
-    bar.mStiffness = 1000
-    settings.mAntiRollBars.push_back(bar) // copied by value
-    api.destroy(bar)
+  if (!spec.twoWheel) {
+    // anti-roll bars front + rear
+    for (const [l, r] of [
+      [0, 1],
+      [2, 3],
+    ]) {
+      const bar = new api.VehicleAntiRollBar()
+      bar.mLeftWheel = l
+      bar.mRightWheel = r
+      bar.mStiffness = 1000
+      settings.mAntiRollBars.push_back(bar) // copied by value
+      api.destroy(bar)
+    }
   }
 
-  const controllerSettings = new api.WheeledVehicleControllerSettings()
-  controllerSettings.mEngine.mMaxTorque = ENGINE_TORQUE
+  const controllerSettings = spec.twoWheel
+    ? new api.MotorcycleControllerSettings()
+    : new api.WheeledVehicleControllerSettings()
+  controllerSettings.mEngine.mMaxTorque = spec.engineTorque
   controllerSettings.mEngine.mMinRPM = 1000
-  controllerSettings.mEngine.mMaxRPM = ENGINE_MAX_RPM
-  // 4WD: two differentials, half the torque each — foolproof on voxel curbs
-  for (const [l, r] of [
-    [0, 1],
-    [2, 3],
-  ]) {
+  controllerSettings.mEngine.mMaxRPM = spec.maxRpm
+  if (spec.twoWheel) {
+    // rear-wheel drive (wheel 1); -1 = unconnected side
     const diff = new api.VehicleDifferentialSettings()
-    diff.mLeftWheel = l
-    diff.mRightWheel = r
-    diff.mEngineTorqueRatio = 0.5
-    controllerSettings.mDifferentials.push_back(diff) // copied by value
+    diff.mLeftWheel = -1
+    diff.mRightWheel = 1
+    diff.mDifferentialRatio = 6
+    controllerSettings.mDifferentials.push_back(diff)
     api.destroy(diff)
+  } else {
+    // 4WD: two differentials, half the torque each — foolproof on voxel curbs
+    for (const [l, r] of [
+      [0, 1],
+      [2, 3],
+    ]) {
+      const diff = new api.VehicleDifferentialSettings()
+      diff.mLeftWheel = l
+      diff.mRightWheel = r
+      diff.mEngineTorqueRatio = 0.5
+      controllerSettings.mDifferentials.push_back(diff) // copied by value
+      api.destroy(diff)
+    }
   }
   settings.mController = controllerSettings
 
@@ -535,6 +678,10 @@ export function spawnVehicle(
   const stepListener = new api.VehicleConstraintStepListener(constraint)
   phys.physicsSystem.AddStepListener(stepListener)
   const controller = api.castObject(constraint.GetController(), api.WheeledVehicleController)
+  if (spec.twoWheel) {
+    // balance assist: the lean controller keeps the bike upright while driven
+    api.castObject(constraint.GetController(), api.MotorcycleController).EnableLeanController(true)
+  }
 
   api.destroy(settings)
   api.destroy(up)
@@ -565,19 +712,19 @@ export function spawnVehicle(
     version: 0,
     archetype,
     initialCount: count,
-    seats: SEAT_DEFS[archetypeBase(archetype)],
-    occupants: SEAT_DEFS[archetypeBase(archetype)].map(() => 0),
+    seats: spec.seats,
+    occupants: spec.seats.map(() => 0),
     wheels: wheels.map((w) => ({
       x: w.x,
       y: w.y,
       z: w.z,
-      radius: WHEEL_RADIUS,
-      width: WHEEL_WIDTH,
+      radius: w.radius,
+      width: w.width,
       hits: 0,
       broken: false,
       rotation: 0,
       steer: 0,
-      suspension: SUSPENSION_MAX,
+      suspension: spec.suspMax,
       angularVelocity: 0,
       slip: 0,
     })),
@@ -919,7 +1066,7 @@ export function tickVehiclesPostStep(sim: Sim, phys: PhysicsWorld): void {
     v.vz = vel.GetZ()
     v.rpm = v.controller.GetEngine().GetCurrentRPM()
 
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < v.wheels.length; i++) {
       const w = v.wheels[i]
       const jw = phys.api.castObject(v.constraint.GetWheel(i), phys.api.WheelWV)
       w.rotation = jw.GetRotationAngle()
@@ -1072,7 +1219,7 @@ function handleCrash(
     const [lx, ly, lz] = worldToLocal(v, hx, hy, hz)
     let nearest = -1
     let nd = 1.4
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < v.wheels.length; i++) {
       const w = v.wheels[i]
       if (w.broken) continue
       const d = Math.sqrt((w.x - lx) ** 2 + (w.y - ly) ** 2 + (w.z - lz) ** 2)

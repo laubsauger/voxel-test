@@ -758,6 +758,33 @@
       "roundRobin": "car-horn"
     },
     {
+      "id": "bicycle-freewheel-loop-1",
+      "path": "/audio/sfx/vehicle/bicycle-freewheel-loop-1.mp3",
+      "category": "vehicle",
+      "loop": true,
+      "volume": 0.5,
+      "positional": true,
+      "roundRobin": "bicycle-freewheel-loop"
+    },
+    {
+      "id": "bicycle-chain-loop-1",
+      "path": "/audio/sfx/vehicle/bicycle-chain-loop-1.mp3",
+      "category": "vehicle",
+      "loop": true,
+      "volume": 0.5,
+      "positional": true,
+      "roundRobin": "bicycle-chain-loop"
+    },
+    {
+      "id": "scooter-engine-loop-1",
+      "path": "/audio/sfx/vehicle/scooter-engine-loop-1.mp3",
+      "category": "vehicle",
+      "loop": true,
+      "volume": 0.6,
+      "positional": true,
+      "roundRobin": "scooter-engine-loop"
+    },
+    {
       "id": "splash-small-1",
       "path": "/audio/sfx/water/splash-small-1.mp3",
       "category": "water",

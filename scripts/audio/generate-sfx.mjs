@@ -244,6 +244,22 @@ const SFX_GROUPS = [
     category: 'vehicle', dir: 'vehicle', count: 2, duration: 1.2, loop: false, volume: 0.85, positional: true,
     promptFor: (n) => `Car horn honking ${n === 2 ? 'twice quickly, short double beep' : 'once, single medium-length honk'}, classic sedan dual-tone horn, ${OUTDOOR}, ${FOLEY}`,
   },
+  // T76 two-wheelers
+  {
+    group: 'bicycle-freewheel-loop',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 6, loop: true, volume: 0.5, positional: true,
+    promptFor: () => 'Bicycle freewheel hub clicking rapidly while coasting, steady even ratchet ticking, constant speed, seamless loop, no voices, no music, AAA game vehicle foley',
+  },
+  {
+    group: 'bicycle-chain-loop',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 6, loop: true, volume: 0.5, positional: true,
+    promptFor: () => 'Bicycle being pedaled steadily: soft chain whir over sprockets with light mechanical rattle, constant cadence, seamless loop, no voices, no music, AAA game vehicle foley',
+  },
+  {
+    group: 'scooter-engine-loop',
+    category: 'vehicle', dir: 'vehicle', count: 1, duration: 8, loop: true, volume: 0.6, positional: true,
+    promptFor: () => 'Small 50cc moped scooter engine running steadily, high-pitched buzzy two-stroke drone at constant mid RPM, seamless loop, exterior perspective, no voices, no music, AAA game vehicle sound design',
+  },
 
   // --- water --------------------------------------------------------------------
   {

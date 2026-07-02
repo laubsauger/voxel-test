@@ -100,6 +100,15 @@ on this track; the runtime shape is already JSON-plain and correct).
 | `vehicle_wheel_loss` | x,y,z | `car-crash-small` + `impact-metal` layered |
 | `vehicle_plow` | removedByMat pairs, sample [vx,vy,vz,mat,…] | fence smash: `impact-wood`/`chunk-crumble` by dominant mat; glass in removedByMat → `glass-pane-shatter`. FX: spawn debris particles from `sample` (voxel coords) |
 
+T76 two-wheelers (`bicycle`, `scooter` archetypes — same ops, same crash
+machinery, MotorcycleController with lean assist):
+- scooter: `scooter-engine-loop` instead of the car engine pair, playbackRate
+  0.8 + 0.7·(speed/13).
+- bicycle: NO engine — `bicycle-chain-loop` while throttle held (pedaling),
+  `bicycle-freewheel-loop` while coasting at speed > 1 (playbackRate
+  0.8 + 0.5·(speed/7)).
+- pick by `v.archetype` (`'bicycle'`/`'scooter'`) or `v.wheels.length === 2`.
+
 Horn: not an op (render-only flair) — bind a key (e.g. H while seated) to
 `gameAudio`-style positional play of `car-horn` at the vehicle position.
 If multiplayer-visible horns are wanted later, promote it to an op.

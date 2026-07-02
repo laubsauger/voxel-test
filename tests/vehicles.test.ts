@@ -324,6 +324,68 @@ describe('momentum-scaled mutual damage: through fences, stopped by walls (T64.3
   }, 60000)
 })
 
+describe('T76 two-wheelers: bicycle + delivery scooter (MotorcycleController)', () => {
+  // WHY: two-wheel vehicles use a different Jolt controller (lean-assisted
+  // MotorcycleController) — they must stand upright unattended (no phantom
+  // 'kickstand skating'), ride at their archetype speeds, and share the
+  // enter/drive/exit + hash machinery with cars.
+
+  for (const [arch, minSpeed, maxSpeed] of [
+    ['bicycle', 2.5, 7.5],
+    ['scooter', 5, 13.5],
+  ] as const) {
+    it(`${arch}: stands unattended, rides upright at archetype speed`, async () => {
+      const sim = makeSim(51)
+      const phys = await createPhysics(sim)
+      sim.queue.push(cmd(0, { kind: 'spawn' }))
+      sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: arch, x: 102.4, y: GROUND_Y, z: 104, yaw: 0 }, 1, 1))
+      for (let i = 0; i < 60; i++) sim.step()
+      const v = [...phys.vehicles.values()][0]
+      expect(v.wheels).toHaveLength(2)
+      // unattended: upright and NOT moving (phantom-thrust regression gate)
+      expect(1 - 2 * (v.qx * v.qx + v.qz * v.qz)).toBeGreaterThan(0.95)
+      expect(Math.hypot(v.vx, v.vy, v.vz)).toBeLessThan(0.3)
+
+      sim.queue.push(cmd(sim.tick, { kind: 'vehicle_enter' }))
+      sim.step()
+      expect(phys.players.get(1)!.seatedVehicle).toBe(v.id)
+      for (let i = 0; i < 360; i++) {
+        sim.queue.push(cmd(sim.tick, { kind: 'move', input: INPUT_FWD, yaw: 0, pitch: 0 }, 1, 100 + i))
+        sim.step()
+      }
+      const speed = Math.hypot(v.vx, v.vy, v.vz)
+      expect(speed).toBeGreaterThan(minSpeed)
+      expect(speed).toBeLessThan(maxSpeed) // archetype top-speed clamp
+      expect(1 - 2 * (v.qx * v.qx + v.qz * v.qz)).toBeGreaterThan(0.9) // still upright
+      phys.dispose()
+    }, 60000)
+  }
+
+  it('scooter two-run hash determinism (drive + steer)', async () => {
+    async function run() {
+      const sim = makeSim(52)
+      const phys = await createPhysics(sim)
+      sim.queue.push(cmd(0, { kind: 'spawn' }))
+      sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'scooter', x: 102.4, y: GROUND_Y, z: 104, yaw: 0.2 }, 1, 1))
+      sim.queue.push(cmd(15, { kind: 'vehicle_enter' }, 1, 2))
+      for (let t = 16; t < 150; t++) {
+        const steer = t % 50 < 25 ? INPUT_LEFT : 0
+        sim.queue.push(cmd(t, { kind: 'move', input: INPUT_FWD | steer, yaw: 0, pitch: 0 }, 1, 100 + t))
+      }
+      const hashes: number[] = []
+      for (let i = 0; i < 170; i++) {
+        sim.step()
+        hashes.push(hashSim(sim) ^ hashPhysics(phys))
+      }
+      phys.dispose()
+      return hashes
+    }
+    const a = await run()
+    const b = await run()
+    expect(b).toEqual(a)
+  }, 120000)
+})
+
 describe('determinism (V2/V3): full vehicle lifecycle, two-run hash equality', () => {
   async function run(seed: number, ticks: number) {
     const sim = makeSim(seed)
