@@ -8,8 +8,6 @@
  */
 import { Vector3 } from 'three/webgpu'
 import type { Game } from '../game'
-import { LOCAL_PLAYER } from '../game'
-import { nextSeq } from '../render/command-seq'
 import { MAT_CONCRETE } from '../sim/materials'
 import { raycastWorld, type ToolHit } from './raycast'
 import type { Hud, ToolId } from './hud'
@@ -51,19 +49,19 @@ export class ToolController {
   private readonly fwd = new Vector3()
 
   constructor(
-    private readonly game: Game,
+    private game: Game,
     private readonly hud: Hud,
     private readonly onFire?: (e: ToolFireEvent) => void,
   ) {
     document.addEventListener('keydown', (e) => {
-      if (game.state !== 'play') return
+      if (this.game.state !== 'play') return
       const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code)
       if (n >= 0) hud.select(n)
     })
     document.addEventListener(
       'wheel',
       (e) => {
-        if (game.state !== 'play' || !this.locked()) return
+        if (this.game.state !== 'play' || !this.locked()) return
         hud.select(hud.selected + (e.deltaY > 0 ? 1 : -1))
       },
       { passive: true },
@@ -71,7 +69,7 @@ export class ToolController {
     // hold-to-fire: mousedown starts, per-tool cooldown paces via the rAF
     // poller in fire(); mouseup/lock-loss/blur stop
     document.addEventListener('mousedown', (e) => {
-      if (e.button !== 0 || game.state !== 'play' || !this.locked()) return
+      if (e.button !== 0 || this.game.state !== 'play' || !this.locked()) return
       this.held = true
       this.fire()
     })
@@ -83,10 +81,16 @@ export class ToolController {
       if (!this.locked()) this.held = false
     })
     const pump = () => {
-      if (this.held && game.state === 'play' && this.locked()) this.fire()
+      if (this.held && this.game.state === 'play' && this.locked()) this.fire()
       requestAnimationFrame(pump)
     }
     requestAnimationFrame(pump)
+  }
+
+  /** T71 — an MP session replaces the Game instance; retarget the controller */
+  setGame(game: Game): void {
+    this.game = game
+    this.held = false
   }
 
   private held = false
@@ -113,8 +117,10 @@ export class ToolController {
     const d = this.fwd
     hud.pulseCrosshair()
 
-    const push = (op: Parameters<typeof game.sim.queue.push>[0]['op']) =>
-      game.sim.queue.push({ tick: game.sim.tick, playerId: LOCAL_PLAYER, seq: nextSeq(), op })
+    // T71 — Game.pushOp is the session-aware sink: solo → sim.queue at the
+    // current tick; MP → lockstep submitLocal (applies at tick+delay on all
+    // peers, stamped with the session playerId)
+    const push = (op: Parameters<Game['pushOp']>[0]) => game.pushOp(op)
 
     switch (hud.tool.id) {
       case 'dig': {

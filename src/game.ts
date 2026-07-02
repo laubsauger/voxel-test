@@ -22,6 +22,8 @@ import { BodyMeshes } from './render/body-meshes'
 import { FxSystem } from './render/fx/fx-system'
 import { ProjectileMeshes } from './render/projectile-meshes'
 import { FixedStepDriver, Sim } from './sim/loop'
+import type { Op } from './sim/commands'
+import type { LockstepDriver, LockstepNode } from './net/lockstep'
 import { registerEditOps } from './sim/edit-ops'
 import { registerShootOp } from './sim/shoot-op'
 import { createPhysics, loadJolt, type PhysicsWorld } from './sim/physics'
@@ -33,8 +35,16 @@ import { placeholderProps } from './sim/gen/props'
 import { nextSeq } from './render/command-seq'
 import { VOXEL_SIZE, WORLD_VX, WORLD_VZ } from './world/chunks'
 import type { Settings } from './ui/settings-store'
+import { PlayerMesh } from './render/player-mesh'
 
+/** solo default. In MP the session assigns Game.localPlayerId (host=1, guests 2..4). */
 export const LOCAL_PLAYER = 1
+
+/** T71 — lockstep session handle: the loop advances via the tick barrier */
+export interface NetSession {
+  node: LockstepNode
+  driver: LockstepDriver
+}
 
 export type GameState = 'orbit' | 'play'
 export type StageId = 'world' | 'physics' | 'renderer' | 'meshing'
@@ -74,6 +84,8 @@ export class Game {
   readonly world: WorldRenderer
 
   state: GameState = 'orbit'
+  /** T71 — this client's sim identity. Solo: always 1. MP: host-assigned. */
+  localPlayerId = LOCAL_PLAYER
   /** T45 fly/spectator mode (only meaningful in 'play') */
   flying = false
   onFlyChange: ((flying: boolean) => void) | null = null
@@ -81,6 +93,15 @@ export class Game {
   onPlayerDamaged: (() => void) | null = null
 
   private readonly driver = new FixedStepDriver()
+  /** T71 — non-null while a lockstep session is live; the loop then advances
+   *  ONLY host-released ticks (tick barrier) and local ops go over the wire. */
+  private net: NetSession | null = null
+  /** MP: one move op per stepped frame (avoids unbounded pile-up at a stall) */
+  private movePending = false
+  /** T71 — remote player bodies (playerId → mesh); local player uses playerVisuals */
+  private readonly remoteMeshes = new Map<number, PlayerMesh>()
+  private disposed = false
+  private readonly onResize: () => void
   private readonly waterSurface: WaterSurface
   private readonly bodyMeshes: BodyMeshes
   private readonly fx: FxSystem
@@ -128,15 +149,58 @@ export class Game {
     this.hudEl = document.getElementById('hud')
 
     document.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyF' && this.state === 'play') this.toggleFly()
+      if (e.code === 'KeyF' && this.state === 'play' && !this.disposed) this.toggleFly()
     })
 
-    addEventListener('resize', () => {
+    this.onResize = () => {
       this.cam.camera.aspect = innerWidth / innerHeight
       this.cam.camera.updateProjectionMatrix()
       this.renderer.setSize(innerWidth, innerHeight)
       this.world.resize()
-    })
+    }
+    addEventListener('resize', this.onResize)
+  }
+
+  /**
+   * T71 — attach a live lockstep session. From here on the frame loop
+   * advances only released ticks and pushOp routes over the wire.
+   * Must be called before enterPlay so the spawn op ships via lockstep.
+   */
+  attachNet(net: NetSession): void {
+    if (this.net) throw new Error('game: net session already attached')
+    if (net.node.sim !== this.sim) throw new Error('game: lockstep node drives a different sim')
+    this.net = net
+  }
+
+  /**
+   * T71 — the sanctioned op path for UI/tools (V1). Solo: straight into
+   * sim.queue at the current tick. MP: LockstepNode.submitLocal — the op
+   * applies at tick+inputDelay on EVERY peer simultaneously; pushing into
+   * sim.queue directly in MP would desync (only this client would see it).
+   */
+  pushOp(op: Op): void {
+    if (this.net) this.net.node.submitLocal(op)
+    else this.sim.queue.push({ tick: this.sim.tick, playerId: this.localPlayerId, seq: nextSeq(), op })
+  }
+
+  /**
+   * T71 — stop this Game instance (MP session start replaces the menu-orbit
+   * backdrop game with a fresh seed-synced one). The old instance's document
+   * listeners stay registered but are inert (state stays 'orbit', canvas is
+   * detached). The Jolt world is NOT destroyed — one physics world leaks per
+   * session start (safe: WASM heap, reclaimed on page unload; teardown of a
+   * live Jolt world while another boots is riskier than the leak).
+   */
+  dispose(): void {
+    this.disposed = true
+    this.renderer.setAnimationLoop(null)
+    removeEventListener('resize', this.onResize)
+    this.renderer.domElement.remove()
+    try {
+      this.renderer.dispose()
+    } catch (e) {
+      console.warn('[game] renderer dispose failed:', e)
+    }
   }
 
   /** per-frame render-layer hook (tools, dev overlay). Returns unsubscribe. */
@@ -149,7 +213,7 @@ export class Game {
   enterPlay(defaultCamMode: 'fp' | 'tp'): void {
     if (!this.spawned) {
       this.spawned = true
-      this.sim.queue.push({ tick: this.sim.tick, playerId: LOCAL_PLAYER, seq: nextSeq(), op: { kind: 'spawn' } })
+      this.pushOp({ kind: 'spawn' })
     }
     this.cam.mode = defaultCamMode
     this.state = 'play'
@@ -158,7 +222,7 @@ export class Game {
 
   /** T47 — dev noclip toggle (deterministic op; UI gates behind dev mode) */
   toggleNoclip(): void {
-    this.sim.queue.push({ tick: this.sim.tick, playerId: LOCAL_PLAYER, seq: nextSeq(), op: { kind: 'noclip' } })
+    this.pushOp({ kind: 'noclip' })
   }
 
   /** back to the cinematic orbit (quit to menu) */
@@ -247,18 +311,36 @@ export class Game {
       last = now
       const dt = dtMs / 1000
 
-      // local input → command queue (lockstep swaps this for the net queue, M5)
-      if (this.spawned) {
-        // flying: spectator cam roams, capsule stays put → empty move bits (T45)
-        this.sim.queue.push(
-          this.input.moveCommand(this.sim.tick, LOCAL_PLAYER, this.flying ? 0 : undefined),
-        )
+      if (this.net) {
+        // T71 — lockstep: local move ships via submitLocal (applies at
+        // tick+inputDelay everywhere). One move per stepped frame: at a
+        // barrier stall we stop submitting so a 30s stall doesn't dump
+        // thousands of stale moves into one bundle on release.
+        if (this.spawned && !this.movePending) {
+          this.net.node.submitLocal({
+            kind: 'move',
+            input: this.flying ? 0 : this.input.inputBits(),
+            yaw: this.input.yaw,
+            pitch: this.input.pitch,
+          })
+          this.movePending = true
+        }
+        // advance ONLY released ticks (tick barrier, V2) — never free-run
+        if (this.net.driver.advance(dtMs, this.net.node) > 0) this.movePending = false
+      } else {
+        // solo: local input → command queue directly
+        if (this.spawned) {
+          // flying: spectator cam roams, capsule stays put → empty move bits (T45)
+          this.sim.queue.push(
+            this.input.moveCommand(this.sim.tick, this.localPlayerId, this.flying ? 0 : undefined),
+          )
+        }
+        this.driver.advance(dtMs, this.sim) // fixed-tick sim (V11)
       }
-      this.driver.advance(dtMs, this.sim) // fixed-tick sim (V11)
       const fxEvents = this.sim.drainEvents() // T53 — sim → render outbox (once per frame)
       this.onSimEvents?.(fxEvents)
 
-      const player = this.phys.players.get(LOCAL_PLAYER)
+      const player = this.phys.players.get(this.localPlayerId)
       if (!this.playerVisuals) this.playerVisuals = new PlayerVisuals(this.scene, this.cam.camera)
       const camMode = this.state !== 'play' ? 'orbit' : this.flying ? 'fly' : this.cam.mode
       this.playerVisuals.update(dt, player, camMode, this.equippedTool?.() ?? 'dig')
@@ -270,6 +352,19 @@ export class Game {
         for (const seg of player.segments) dmg += seg.version
         if (dmg > this.lastDamageSum) this.onPlayerDamaged?.()
         this.lastDamageSum = dmg
+      }
+
+      // T71 — remote players: full third-person bodies for every spawned
+      // player that isn't the camera-driving local one (read-only, V6)
+      for (const [pid, p] of this.phys.players) {
+        if (pid === this.localPlayerId) continue
+        let mesh = this.remoteMeshes.get(pid)
+        if (!mesh) {
+          mesh = new PlayerMesh(p)
+          this.remoteMeshes.set(pid, mesh)
+          this.scene.add(mesh.group)
+        }
+        mesh.update(p, dt)
       }
 
       if (this.state === 'orbit') this.orbitUpdate(now, dt)

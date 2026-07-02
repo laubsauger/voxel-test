@@ -1,15 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { bootUrl, DEFAULT_SEED, parseBootParams } from '../src/ui/boot-params'
+import { bootUrl, DEFAULT_SEED, DEFAULT_SIGNAL_URL, parseBootParams } from '../src/ui/boot-params'
 
 // T31 — I.boot routing is a pure function of the URL search string.
 
 describe('parseBootParams (I.boot)', () => {
   it('defaults to menu mode with the fixed smoke seed', () => {
-    expect(parseBootParams('')).toEqual({ mode: 'menu', seed: DEFAULT_SEED, dev: false })
+    expect(parseBootParams('')).toEqual({
+      mode: 'menu',
+      seed: DEFAULT_SEED,
+      dev: false,
+      signalUrl: DEFAULT_SIGNAL_URL,
+    })
   })
 
   it('?boot=game&seed=N routes straight into gameplay (CDP smoke path)', () => {
-    expect(parseBootParams('?boot=game&seed=1337')).toEqual({ mode: 'game', seed: 1337, dev: false })
+    const cfg = parseBootParams('?boot=game&seed=1337')
+    expect(cfg.mode).toBe('game')
+    expect(cfg.seed).toBe(1337)
+  })
+
+  it('T71 — ?signal=ws://... overrides the signaling server (mp-e2e per-process ports)', () => {
+    expect(parseBootParams('?signal=ws%3A%2F%2Flocalhost%3A9911').signalUrl).toBe('ws://localhost:9911')
+    expect(parseBootParams('').signalUrl).toBe('ws://localhost:8081')
   })
 
   it('?dev=1 enables the profiling overlay flag', () => {
@@ -24,7 +36,7 @@ describe('parseBootParams (I.boot)', () => {
   })
 
   it('bootUrl round-trips through parseBootParams', () => {
-    const cfg = { mode: 'game' as const, seed: 42, dev: true }
+    const cfg = { mode: 'game' as const, seed: 42, dev: true, signalUrl: DEFAULT_SIGNAL_URL }
     const url = bootUrl('http://localhost:5173', cfg)
     expect(parseBootParams(new URL(url).search)).toEqual(cfg)
   })
