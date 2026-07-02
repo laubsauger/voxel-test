@@ -84,9 +84,9 @@ T32|.|[UI] profiling from get-go: stats-gl (WebGPU) + renderer.info panel, toggl
 T33|.|[UI] main menu AAA: slick styled, live in-game scene as background (slow orbit cam over suburb), play/join/settings entries|T31,T20|§C,I.boot
 T34|.|[UI] settings screens: graphics/audio/controls/gameplay + dev settings, I.settings store, localStorage persist, applies live|T33|I.settings,V6
 T35|.|[R] draw-call batching: 2437 chunk meshes × CSM passes = 23fps settled. BatchedMesh or region merge + shadow pass reduction. Exit: settled suburb ≥60fps smoke gate|T9|§C,B2
-T36|.|[A] SFX asset pipeline: ElevenLabs gen (I.audio) — footsteps×surface, shoot, impacts×material, explosions, water, ambience, UI, hurt. Rich AAA set, manifest|T31|I.audio,§C
-T37|.|[A] runtime audio engine: WebAudio buses (master/music/sfx), positional SFX, footstep surface detect, event hooks from sim/render, volumes via I.settings|T36|I.audio,I.settings,V6
-T38|.|[A] music: menu + ambient in-game track(s) via ElevenLabs music API, crossfade menu↔game, music bus|T36|I.audio
+T36|x|[A] SFX asset pipeline: ElevenLabs gen (I.audio) — footsteps×surface, shoot, impacts×material, explosions, water, ambience, UI, hurt. Rich AAA set, manifest|T31|I.audio,§C
+T37|x|[A] runtime audio engine: WebAudio buses (master/music/sfx), positional SFX, footstep surface detect, event hooks from sim/render, volumes via I.settings|T36|I.audio,I.settings,V6
+T38|x|[A] music: menu + ambient in-game track(s) via ElevenLabs music API, crossfade menu↔game, music bus|T36|I.audio
 T39|.|[R] transparency pass: second mesh pass per chunk for transparent mats (glass, water-solid), no cull vs transparent neighbors, sorted blend|T35|B5,I.mat
 T40|.|[P] physics feel: density-true impulse response, per-material friction/restitution, max lin/ang velocity clamps, sleep tuning, kill plane despawn, buoyancy coupling (FloatingBodyAdapter per INTEGRATION-water.md §4)|T13,T17|B7,V2,V12
 T41|.|[C] stairs: multi-story houses get interior stairs + floor openings, walkable slope for char controller|T20|B6
