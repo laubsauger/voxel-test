@@ -79,12 +79,49 @@ learned the hard way; do not rediscover them.
 
 ## Two-browser multiplayer (T72 harness)
 
-- `scripts/mp-e2e.mjs` (once MP lands): starts `server/signal.mjs` on a free
-  port, one vite, TWO `browser = await puppeteer.launch(...)` instances
-  (separate processes = real cross-process determinism test), host drives
-  menu UI to create a room, guest joins by code, mirrored scripted inputs,
-  assert identical `window.__bbNet.lastHashes` sequences + zero console
-  errors on both pages.
+- `scripts/mp-e2e.mjs` (LANDED, `npm run mp-e2e`): starts `server/signal.mjs`
+  on a free port, one vite, TWO `browser = await puppeteer.launch(...)`
+  instances (separate processes = real cross-process determinism test), host
+  drives menu UI to create a room, guest joins by code, mirrored scripted
+  inputs, assert identical `window.__bbNet.lastHashes` sequences + bit-exact
+  `__bbNet.playersState()` + zero console errors on both pages.
+- Walk = real keyboard (`page.keyboard.down('KeyW')` hits document listeners
+  without pointer lock). Mouse tools can't fire headless (no pointer lock) —
+  inject at the same layer via `__bbNet.submitOp(op)` → `Game.pushOp`.
+- Extra launch flags beyond WebGPU: `--disable-background-timer-throttling
+  --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`
+  (a throttled page stalls the lockstep tick barrier for EVERYONE).
+
+## WebRTC under CDP (learned the hard way, T72)
+
+- **mDNS candidate obfuscation**: Chrome hides host ICE candidates behind
+  `.local` mDNS names; headless/automation contexts can resolve them flakily
+  or not at all. ALWAYS add `--disable-features=WebRtcHideLocalIpsWithMdns`
+  to BOTH launches for loopback WebRTC tests (test-only; real users
+  unaffected). No STUN/TURN needed on loopback once this is off. With the
+  flag, ICE completed instantly and reliably in every T72 run.
+- **rAF STARVATION masquerades as transport death — check it FIRST.** Two
+  headless Chromes contending for one GPU routinely gap rAF by 0.6-1.5s and
+  occasionally 30s+. Anything pumped only from `setAnimationLoop` (the
+  lockstep input sender!) silently stops during a gap: one peer starves at
+  the tick barrier, the other stalls, then drops it — with pcs 'connected',
+  zero errors, timers still firing. T72 misdiagnosed this as "~10% silent
+  WebRTC SCTP death" until the identical failure reproduced over a plain
+  WebSocket relay. Fixes: (a) product — `Game.startLoop` background interval
+  pump feeds the lockstep barrier when rAF is silent >250ms (also fixes real
+  backgrounded tabs); (b) diagnosis — expose a rAF heartbeat + max-gap on
+  the debug handle (`__bbNet.frames` / `maxRafGapMs`) and print it in every
+  harness run.
+- **Transport triage kit** (keep using it): per-channel `sent`/`received`
+  counters + `dc.bufferedAmount` + `readyState` on `DataChannelAdapter`,
+  surfaced via `__bbNet.channelStats`; pc/ice/dc state breadcrumbs in
+  `src/net/signaling.ts` as `console.warn('[net] …')` — harnesses echo
+  `[net]` warnings for live triage but do NOT count them as failures.
+- **Transport-isolation mode**: `npm run mp-e2e -- --ws` runs lockstep over
+  the signaling server relay (`?transport=ws`, `SignalingClient.relayChannel`)
+  instead of WebRTC. If default (WebRTC) fails and `--ws` passes → suspect
+  WebRTC/env; if both fail identically → it's sim/app code. Default gate =
+  real WebRTC path; both modes green since the pump fix.
 
 ## Frame profiling
 

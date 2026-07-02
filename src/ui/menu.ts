@@ -60,6 +60,10 @@ class QuickAccess {
 export interface MainMenuHooks extends QuickAccessHooks {
   seed: number
   onPlay: () => void
+  /** T71 — host a co-op session (creates a room on the signaling server) */
+  onHost: () => void
+  /** T71 — join a co-op session by room code */
+  onJoin: () => void
   onSettings: () => void
 }
 
@@ -78,10 +82,9 @@ export class MainMenu {
       </div>
       <nav class="bb-menu-items">
         <button class="bb-menu-item" data-act="play"><span class="bb-mi-index">01</span>Play</button>
-        <button class="bb-menu-item" data-act="join" disabled>
-          <span class="bb-mi-index">02</span>Join Game<span class="bb-mi-tag">Soon</span>
-        </button>
-        <button class="bb-menu-item" data-act="settings"><span class="bb-mi-index">03</span>Settings</button>
+        <button class="bb-menu-item" data-act="host"><span class="bb-mi-index">02</span>Host Game<span class="bb-mi-tag">Co-op</span></button>
+        <button class="bb-menu-item" data-act="join"><span class="bb-mi-index">03</span>Join Game</button>
+        <button class="bb-menu-item" data-act="settings"><span class="bb-mi-index">04</span>Settings</button>
       </nav>
       <div class="bb-menu-footer">
         <div class="bb-social-slot"></div>
@@ -99,6 +102,8 @@ export class MainMenu {
         </div>
       </div>`
     this.el.querySelector('[data-act="play"]')!.addEventListener('click', hooks.onPlay)
+    this.el.querySelector('[data-act="host"]')!.addEventListener('click', hooks.onHost)
+    this.el.querySelector('[data-act="join"]')!.addEventListener('click', hooks.onJoin)
     this.el.querySelector('[data-act="settings"]')!.addEventListener('click', hooks.onSettings)
     this.quick = new QuickAccess(hooks)
     this.quick.el.classList.add('bb-quick-screen')
@@ -144,6 +149,7 @@ export class PauseMenu {
         <button class="bb-pause-item" data-act="resume">Resume</button>
         <button class="bb-pause-item" data-act="settings">Settings</button>
         <button class="bb-pause-item" data-act="quit">Quit to Menu</button>
+        <div class="bb-pause-mp-note">Co-op session — the world keeps ticking for everyone while you sit here.</div>
       </div>`
     this.el.querySelector('[data-act="resume"]')!.addEventListener('click', hooks.onResume)
     this.el.querySelector('[data-act="settings"]')!.addEventListener('click', hooks.onSettings)
@@ -155,6 +161,7 @@ export class PauseMenu {
     pauseSocial.classList.add('bb-social-pause')
     this.el.appendChild(pauseSocial)
     root.appendChild(this.el)
+    this.setMpSession(false)
   }
 
   setMuted(muted: boolean): void {
@@ -163,6 +170,11 @@ export class PauseMenu {
 
   setFullscreen(active: boolean): void {
     this.quick.setFullscreen(active)
+  }
+
+  /** T71 — in MP, pausing only unlocks the cursor; the sim keeps ticking */
+  setMpSession(on: boolean): void {
+    ;(this.el.querySelector('.bb-pause-mp-note') as HTMLElement).style.display = on ? '' : 'none'
   }
 
   get visible(): boolean {

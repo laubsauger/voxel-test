@@ -1,12 +1,13 @@
 /**
  * T24 — signaling server (I.net). WebRTC handshake relay only: rooms by
  * join code, SDP/ICE forwarding. No game logic, stateless beyond room
- * membership. Run: `npm run signal` (PORT env overrides, default 8787).
+ * membership. Run: `npm run signal` (PORT env overrides, default 8081 —
+ * matches the client's DEFAULT_SIGNAL_URL in src/ui/boot-params.ts).
  */
 import { WebSocketServer } from 'ws'
 import { RoomManager } from './rooms.mjs'
 
-const port = Number(process.env.PORT ?? 8787)
+const port = Number(process.env.PORT ?? 8081)
 const wss = new WebSocketServer({ port })
 const manager = new RoomManager()
 const sockets = new Map()

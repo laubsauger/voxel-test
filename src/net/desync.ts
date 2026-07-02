@@ -67,6 +67,8 @@ export class DesyncReporter {
     private readonly playerId: number,
     private readonly channel: Channel,
     readonly interval: number = DEFAULT_HASH_INTERVAL,
+    /** T71 — session hash fn (combined sim+physics+water); defaults to hashSim */
+    private readonly hashFn: (sim: Sim) => number = hashSim,
   ) {
     channel.onMessage((raw) => {
       const msg = parseDesync(raw)
@@ -83,7 +85,7 @@ export class DesyncReporter {
 
   afterStep(): void {
     if (this.sim.tick % this.interval !== 0) return
-    const msg: HashMsg = { t: 'dd/hash', playerId: this.playerId, tick: this.sim.tick, hash: hashSim(this.sim) }
+    const msg: HashMsg = { t: 'dd/hash', playerId: this.playerId, tick: this.sim.tick, hash: this.hashFn(this.sim) }
     this.channel.send(JSON.stringify(msg))
   }
 }
@@ -107,6 +109,9 @@ export class DesyncDetectorHost {
     private readonly sim: Sim,
     private readonly hostPlayerId = 1,
     readonly interval: number = DEFAULT_HASH_INTERVAL,
+    /** T71 — session hash fn (combined sim+physics+water); defaults to hashSim.
+     *  MUST be the same function on host and every reporter. */
+    private readonly hashFn: (sim: Sim) => number = hashSim,
   ) {
     this.playerIds.add(hostPlayerId)
   }
@@ -132,7 +137,7 @@ export class DesyncDetectorHost {
   /** call after every host sim step (e.g. via LockstepNode.onStep) */
   afterStep(): void {
     if (this.sim.tick % this.interval !== 0) return
-    this.record(this.hostPlayerId, this.sim.tick, hashSim(this.sim))
+    this.record(this.hostPlayerId, this.sim.tick, this.hashFn(this.sim))
   }
 
   private record(playerId: number, tick: number, hash: number): void {
