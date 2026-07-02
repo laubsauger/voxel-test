@@ -38,6 +38,10 @@ export interface Settings {
   dev: {
     /** profiling overlay (stats-gl + renderer.info) */
     profiling: boolean
+    /** T65 — fixed time of day 0-24h; -1 = live tick-driven cycle */
+    timeOfDay: number
+    /** T65 — day-cycle speed multiplier (1 = 20min/day) */
+    cycleSpeed: number
   }
 }
 
@@ -46,7 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   audio: { master: 80, music: 60, sfx: 80, muted: false },
   controls: { sensitivity: 1.0, invertY: false },
   gameplay: { camera: 'fp' },
-  dev: { profiling: false },
+  dev: { profiling: false, timeOfDay: -1, cycleSpeed: 1 },
 }
 
 export type SettingsPath = {

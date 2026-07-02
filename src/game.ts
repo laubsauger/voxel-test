@@ -275,7 +275,7 @@ export class Game {
       if (this.state === 'orbit') this.orbitUpdate(now, dt)
       else if (this.flying) this.spectator.update(dt)
 
-      this.world.update(dt) // remesh budget, debris, CSM (V7)
+      this.world.update(dt, this.sim.tick) // remesh budget, debris, CSM, day cycle (V7/T58)
       this.bodyMeshes.update(this.phys.bodies)
       this.fx.update(dt, fxEvents, this.cam.camera)
       this.projectileMeshes.update(this.phys.projectiles, dt)

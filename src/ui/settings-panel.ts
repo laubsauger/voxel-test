@@ -259,6 +259,17 @@ export class SettingsPanel {
   private dev(): void {
     this.section('Profiling')
     this.row('Profiling overlay', this.toggle('dev.profiling'))
+    this.section('Time of day') // T65 — drives the T58 day/night cycle live
+    {
+      const [input, value] = this.slider('dev.timeOfDay', -1, 24, 0.25, (v) =>
+        v < 0 ? 'live cycle' : `${String(Math.floor(v)).padStart(2, '0')}:${String(Math.round((v % 1) * 60)).padStart(2, '0')}`,
+      )
+      this.row('Time', input, value)
+      const [speed, speedVal] = this.slider('dev.cycleSpeed', 0, 8, 0.25, (v) =>
+        v === 0 ? 'paused' : `${v}×`,
+      )
+      this.row('Cycle speed', speed, speedVal)
+    }
     this.section('Scene')
     const seed = document.createElement('span')
     seed.className = 'bb-set-value'
