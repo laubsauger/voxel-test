@@ -3,15 +3,16 @@
  * Voxel = 1 byte material id, 0 = air (V5). Chunk 32³.
  * Chunk states: empty | uniform(mat) | dense(Uint8Array 32768).
  *
- * Voxel coords: integer, x∈[0,1024) y∈[0,512) z∈[0,1024). World meters = voxel * 0.1.
+ * Voxel coords: integer, x∈[0,2048) y∈[0,768) z∈[0,2048). World meters = voxel * 0.1.
+ * (T50/B11: expanded from 1024×512×1024 — ~205×77×205 m arena.)
  */
 
 export const VOXEL_SIZE = 0.1
 export const CHUNK = 32
 export const CHUNK_VOL = CHUNK * CHUNK * CHUNK
-export const WORLD_CX = 32
-export const WORLD_CY = 16
-export const WORLD_CZ = 32
+export const WORLD_CX = 64
+export const WORLD_CY = 24
+export const WORLD_CZ = 64
 export const WORLD_VX = WORLD_CX * CHUNK
 export const WORLD_VY = WORLD_CY * CHUNK
 export const WORLD_VZ = WORLD_CZ * CHUNK

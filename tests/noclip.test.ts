@@ -15,9 +15,9 @@ beforeAll(async () => {
 async function makeSim(): Promise<{ sim: Sim; phys: PhysicsWorld }> {
   const sim = new Sim(9)
   registerEditOps(sim)
-  sim.world.fillBox(400, 0, 400, 640, 7, 640, 3) // ground, top y=0.8m
-  // solid wall across the walking path: z 48.0..48.5m, floor to 3.1m
-  sim.world.fillBox(500, 8, 480, 544, 30, 484, 4)
+  sim.world.fillBox(912, 0, 912, 1152, 7, 1152, 3) // ground, top y=0.8m
+  // solid wall across the walking path: z 99.2..99.7m, floor to 3.1m
+  sim.world.fillBox(1012, 8, 992, 1056, 30, 996, 4)
   const phys = await createPhysics(sim)
   return { sim, phys }
 }
@@ -33,11 +33,11 @@ describe('noclip (T47, I.cmd, V1, V2)', () => {
   it('walking is wall-blocked; noclip flies through; toggle off restores collision', async () => {
     const { sim, phys } = await makeSim()
     sim.queue.push({ tick: 0, playerId: 1, seq: 0, op: { kind: 'spawn' } })
-    // 1) normal walk into the wall: blocked at ~48.5+0.3
+    // 1) normal walk into the wall: blocked at ~99.7+0.3
     let t = pushMoves(sim, 1, 120, INPUT_FWD)
     while (sim.tick < t) sim.step()
     const p = phys.players.get(1)!
-    expect(p.pz).toBeGreaterThan(48.6) // never crossed the wall
+    expect(p.pz).toBeGreaterThan(99.8) // never crossed the wall
     expect(p.noclip).toBe(false)
 
     // 2) toggle noclip, fly forward through the wall (10 m/s × 1s = 10m)
@@ -45,7 +45,7 @@ describe('noclip (T47, I.cmd, V1, V2)', () => {
     t = pushMoves(sim, t, 60, INPUT_FWD)
     while (sim.tick < t) sim.step()
     expect(p.noclip).toBe(true)
-    expect(p.pz).toBeLessThan(47.9) // through the wall
+    expect(p.pz).toBeLessThan(99.1) // through the wall
     const flownY = p.py
     expect(flownY).toBeCloseTo(0.81, 1) // level flight, no gravity in noclip
 
@@ -54,7 +54,7 @@ describe('noclip (T47, I.cmd, V1, V2)', () => {
     t = pushMoves(sim, t, 120, INPUT_BACK) // walk back toward the wall
     while (sim.tick < t) sim.step()
     expect(p.noclip).toBe(false)
-    expect(p.pz).toBeLessThan(47.9) // wall blocks from this side too (48.0 − 0.3)
+    expect(p.pz).toBeLessThan(99.1) // wall blocks from this side too (99.2 − 0.3)
     expect(p.py).toBeCloseTo(0.8, 1) // standing on the ground again
     phys.dispose()
   }, 30000)
