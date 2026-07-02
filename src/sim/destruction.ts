@@ -1,11 +1,29 @@
 /**
- * T13 [P] — explode op handler (I.cmd). This IS the command path (V1):
- * sphere-destroy voxels strength-scaled by material, then connectivity check
- * (island extraction), then radial impulse to nearby dynamic bodies.
- * Registered by createPhysics().
+ * T13/T55 [P] — explode op handler (I.cmd). This IS the command path (V1).
+ *
+ * T55 (B14/B16): graduated falloff zones by q = falloff·power/strength,
+ * falloff = 1 − dist/r:
+ *   CORE   q ≥ VAPORIZE_RATIO — voxel vaporizes (dust only). Kept MINIMAL
+ *          (B16): crumble is the default, vaporization reads as cheap.
+ *   MID    1 ≤ q < VAPORIZE_RATIO — voxel is removed and becomes EJECTA:
+ *          deterministic clumps (sim.prng) spawned as dynamic bodies with
+ *          radial velocity FROM the blast center (+ upward bias), capped at
+ *          MAX_EJECTA_BODIES per explosion; the rest are reported in the
+ *          explosion event so render spawns matching ballistic particles.
+ *   OUTER  LOOSEN_RATIO ≤ q < 1 — probabilistic (sim.prng) single-voxel
+ *          knockouts on air-exposed voxels, tapering with distance
+ *          (cracked-edge look). These join the ejecta report.
+ * Then the existing radial shockwave impulse hits all dynamic bodies —
+ * including the fresh ejecta (they are in phys.bodies before the impulse).
+ * Impulse response is mass-divided by Jolt (AddImpulse), so heavy materials
+ * budge less by construction (T40).
+ *
+ * Deterministic (V2): all randomness via sim.prng, iteration order fixed
+ * (y→z→x scan, ordered clump selection). Emits an ExplosionEvent into the
+ * sim → render outbox (see events.ts).
  */
 import type { Sim } from './loop'
-import { VOXEL_SIZE } from '../world/chunks'
+import { VOXEL_SIZE, WORLD_VX, WORLD_VZ } from '../world/chunks'
 import { material } from './materials'
 import { damagePlayersSphere } from './player'
 import type { PhysicsWorld } from './physics'
@@ -15,9 +33,53 @@ export const IMPULSE_PER_POWER = 50
 /** impulse reach relative to the destruction radius */
 export const IMPULSE_RADIUS_SCALE = 2
 
+// --- T55 falloff zone tuning (B14/B16) ---------------------------------------
+/** q at/above which a voxel vaporizes outright. High on purpose (B16): for a
+ *  bomb (power 5) into brick (strength 3) q peaks at 1.67 → NOTHING vaporizes,
+ *  everything removed survives as ejecta/particles. Only soft materials
+ *  (dirt/plaster, strength 1) near the core vaporize. */
+export const VAPORIZE_RATIO = 3
+/** q at which loosening starts; knockout probability ramps 0 → LOOSEN_MAX_P
+ *  between LOOSEN_RATIO and 1 */
+export const LOOSEN_RATIO = 0.55
+export const LOOSEN_MAX_P = 0.5
+/** ejecta body cap per explosion (B16: rubble piles are the fantasy) */
+export const MAX_EJECTA_BODIES = 40
+/** clump size range (voxels) for ejecta bodies */
+export const EJECTA_CLUMP_MIN = 2
+export const EJECTA_CLUMP_MAX = 16
+/** max removed-voxel positions sampled into the explosion event */
+export const EXPLOSION_SAMPLE_CAP = 128
+
+/** bomb detonation parameters (T54) — shared by the projectile fuse */
+export const BOMB_RADIUS = 14
+export const BOMB_POWER = 5
+
+export interface ExplosionStats {
+  /** total voxels removed from the world */
+  removed: number
+  /** voxels vaporized in the core (no debris) */
+  vaporized: number
+  /** ejecta bodies spawned */
+  ejectaBodies: number
+  /** voxels living on in ejecta bodies */
+  ejectaVoxels: number
+}
+
+interface RemovedVoxel {
+  x: number
+  y: number
+  z: number
+  mat: number
+}
+
+const voxKey = (x: number, y: number, z: number): number => x + WORLD_VX * (z + WORLD_VZ * y)
+
+const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
+
 /**
- * Destroy voxels in a sphere, harder materials surviving the outer radius:
- * a voxel dies when falloff·power ≥ strength, falloff = 1 − dist/r.
+ * T13-era simple destruction (kept for the gun's small impact craters,
+ * src/sim/shoot-op.ts): voxel dies when falloff·power ≥ strength.
  * Deterministic iteration order (y→z→x), integer voxel coords (V2).
  */
 export function destroySphere(sim: Sim, cx: number, cy: number, cz: number, r: number, power: number): void {
@@ -40,21 +102,236 @@ export function destroySphere(sim: Sim, cx: number, cy: number, cz: number, r: n
   }
 }
 
+/**
+ * T55 — zoned explosion. Removes voxels per the zone rules above, spawns
+ * ejecta bodies, emits the ExplosionEvent. Does NOT run connectivity or the
+ * shockwave impulse — callers use runExplosion() for the full pipeline.
+ */
+export function explodeSphere(
+  sim: Sim,
+  phys: PhysicsWorld,
+  cx: number,
+  cy: number,
+  cz: number,
+  r: number,
+  power: number,
+): ExplosionStats {
+  const x0 = Math.floor(cx - r), x1 = Math.ceil(cx + r)
+  const y0 = Math.floor(cy - r), y1 = Math.ceil(cy + r)
+  const z0 = Math.floor(cz - r), z1 = Math.ceil(cz + r)
+  const r2 = r * r
+  const removedByMat = new Uint32Array(256)
+  const mid: RemovedVoxel[] = []
+  const loose: RemovedVoxel[] = []
+  let vaporized = 0
+
+  // fixed scan order y→z→x (V2). Exposure checks read the store mid-scan:
+  // earlier removals expose deeper voxels — deterministic, and exactly the
+  // crumble-inward look we want at the crater rim.
+  for (let y = y0; y <= y1; y++) {
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) {
+        const mat = sim.world.getVoxel(x, y, z)
+        if (mat === 0) continue
+        const dx = x + 0.5 - cx, dy = y + 0.5 - cy, dz = z + 0.5 - cz
+        const d2 = dx * dx + dy * dy + dz * dz
+        if (d2 > r2) continue
+        const q = ((1 - Math.sqrt(d2) / r) * power) / material(mat).strength
+        if (q >= VAPORIZE_RATIO) {
+          sim.world.setVoxel(x, y, z, 0)
+          removedByMat[mat]++
+          vaporized++
+        } else if (q >= 1) {
+          sim.world.setVoxel(x, y, z, 0)
+          removedByMat[mat]++
+          mid.push({ x, y, z, mat })
+        } else if (q >= LOOSEN_RATIO) {
+          // OUTER: knock exposed voxels loose with distance-tapered probability
+          const exposed =
+            sim.world.getVoxel(x - 1, y, z) === 0 ||
+            sim.world.getVoxel(x + 1, y, z) === 0 ||
+            sim.world.getVoxel(x, y - 1, z) === 0 ||
+            sim.world.getVoxel(x, y + 1, z) === 0 ||
+            sim.world.getVoxel(x, y, z - 1) === 0 ||
+            sim.world.getVoxel(x, y, z + 1) === 0
+          if (!exposed) continue
+          const p = (LOOSEN_MAX_P * (q - LOOSEN_RATIO)) / (1 - LOOSEN_RATIO)
+          if (sim.prng.next() < p) {
+            sim.world.setVoxel(x, y, z, 0)
+            removedByMat[mat]++
+            loose.push({ x, y, z, mat })
+          }
+        }
+      }
+    }
+  }
+
+  // MID → ejecta clumps (deterministic prng selection, capped)
+  const used = spawnEjecta(sim, phys, mid, cx, cy, cz, r, power)
+
+  // explosion event: non-body removed voxels, evenly sampled up to the cap
+  const nonBody: RemovedVoxel[] = []
+  for (let i = 0; i < mid.length; i++) if (!used.flags[i]) nonBody.push(mid[i])
+  for (const v of loose) nonBody.push(v)
+  const sample: number[] = []
+  const stride = Math.max(1, Math.ceil(nonBody.length / EXPLOSION_SAMPLE_CAP))
+  for (let i = 0; i < nonBody.length; i += stride) {
+    const v = nonBody[i]
+    sample.push(v.x, v.y, v.z, v.mat)
+  }
+  const rbm: number[] = []
+  let removed = 0
+  for (let m = 1; m < 256; m++) {
+    if (removedByMat[m] > 0) {
+      rbm.push(m, removedByMat[m])
+      removed += removedByMat[m]
+    }
+  }
+  sim.emit({
+    kind: 'explosion',
+    x: cx * VOXEL_SIZE,
+    y: cy * VOXEL_SIZE,
+    z: cz * VOXEL_SIZE,
+    r: r * VOXEL_SIZE,
+    power,
+    removedByMat: rbm,
+    sample,
+  })
+
+  return { removed, vaporized, ejectaBodies: used.bodies, ejectaVoxels: used.voxels }
+}
+
+/**
+ * Partition MID voxels into small contiguous clumps and spawn them as dynamic
+ * bodies flying FROM the blast center. Selection order: prng-picked seed
+ * index (linear probe over the fixed mid array), prng clump size, BFS growth
+ * over 6-neighbors within the mid pool — fully deterministic (V2).
+ */
+function spawnEjecta(
+  sim: Sim,
+  phys: PhysicsWorld,
+  mid: RemovedVoxel[],
+  cx: number,
+  cy: number,
+  cz: number,
+  r: number,
+  power: number,
+): { flags: Uint8Array; bodies: number; voxels: number } {
+  const flags = new Uint8Array(mid.length)
+  let bodies = 0
+  let voxels = 0
+  if (mid.length === 0) return { flags, bodies, voxels }
+
+  const pool = new Map<number, number>()
+  for (let i = 0; i < mid.length; i++) pool.set(voxKey(mid[i].x, mid[i].y, mid[i].z), i)
+
+  let remaining = mid.length
+  const clump: RemovedVoxel[] = []
+  const frontier: number[] = []
+  while (bodies < MAX_EJECTA_BODIES && remaining > 0) {
+    let i = sim.prng.nextInt(mid.length)
+    while (flags[i]) i = (i + 1) % mid.length
+    const target = EJECTA_CLUMP_MIN + sim.prng.nextInt(EJECTA_CLUMP_MAX - EJECTA_CLUMP_MIN + 1)
+    clump.length = 0
+    frontier.length = 0
+    clump.push(mid[i])
+    frontier.push(i)
+    flags[i] = 1
+    remaining--
+    while (clump.length < target && frontier.length > 0) {
+      const c = mid[frontier.pop()!]
+      for (let n = 0; n < 6 && clump.length < target; n++) {
+        const nx = c.x + ((n === 0 ? -1 : n === 1 ? 1 : 0) as number)
+        const ny = c.y + (n === 2 ? -1 : n === 3 ? 1 : 0)
+        const nz = c.z + (n === 4 ? -1 : n === 5 ? 1 : 0)
+        const j = pool.get(voxKey(nx, ny, nz))
+        if (j === undefined || flags[j]) continue
+        flags[j] = 1
+        remaining--
+        clump.push(mid[j])
+        frontier.push(j)
+      }
+    }
+
+    const body = phys.spawnDebrisBody(sim, clump)
+    // radial velocity FROM the blast center at the clump centroid, upward
+    // bias, density-scaled (heavy lobs, light flies) — B13's fix for
+    // "particles rain up/down instead of radiating from the blast".
+    let mx = 0, my = 0, mz = 0
+    for (const v of clump) {
+      mx += v.x + 0.5
+      my += v.y + 0.5
+      mz += v.z + 0.5
+    }
+    mx /= clump.length
+    my /= clump.length
+    mz /= clump.length
+    let dx = mx - cx, dy = my - cy, dz = mz - cz
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz)
+    if (len < 1e-4) {
+      dx = 0; dy = 1; dz = 0
+    } else {
+      dx /= len; dy /= len; dz /= len
+    }
+    const density = material(body.mat).density
+    const speed =
+      (4 + 4 * sim.prng.next()) *
+      clamp(1.7 - len / r, 0.6, 1.7) *
+      clamp(Math.sqrt(1200 / density), 0.55, 1.5) *
+      clamp(power / 4, 0.6, 2)
+    const vy = dy * speed + 1.5 + 2 * sim.prng.next()
+    phys.setBodyVelocity(
+      body,
+      dx * speed,
+      vy,
+      dz * speed,
+      (sim.prng.next() - 0.5) * 10,
+      (sim.prng.next() - 0.5) * 10,
+      (sim.prng.next() - 0.5) * 10,
+    )
+    bodies++
+    voxels += clump.length
+  }
+  return { flags, bodies, voxels }
+}
+
+/**
+ * Full explosion pipeline: zoned destruction + ejecta (T55), player segment
+ * damage (T22), connectivity/island extraction (T11/T12), then the radial
+ * shockwave impulse — which also shoves the fresh ejecta bodies. Shared by
+ * the 'explode' op and the bomb projectile fuse (T54).
+ * Coordinates in voxels.
+ */
+export function runExplosion(
+  sim: Sim,
+  phys: PhysicsWorld,
+  x: number,
+  y: number,
+  z: number,
+  r: number,
+  power: number,
+): ExplosionStats {
+  // B17 — blasts chew voxels off PRE-EXISTING dynamic bodies too, not just
+  // impulse them. Snapshot ids first: the ejecta explodeSphere spawns below
+  // sit inside the blast radius and must NOT be instantly re-destroyed.
+  const preIds = [...phys.bodies.keys()]
+  const stats = explodeSphere(sim, phys, x, y, z, r, power)
+  damagePlayersSphere(phys, x, y, z, r, power)
+  phys.damageBodiesSphere(x * VOXEL_SIZE, y * VOXEL_SIZE, z * VOXEL_SIZE, r * VOXEL_SIZE, power, preIds)
+  phys.structuralPass(sim)
+  phys.applyRadialImpulse(
+    x * VOXEL_SIZE,
+    y * VOXEL_SIZE,
+    z * VOXEL_SIZE,
+    r * VOXEL_SIZE * IMPULSE_RADIUS_SCALE,
+    power * IMPULSE_PER_POWER,
+  )
+  return stats
+}
+
 export function registerDestructionOps(sim: Sim, phys: PhysicsWorld): void {
   sim.onOp('explode', (s, cmd) => {
     const { x, y, z, r, power } = cmd.op
-    destroySphere(s, x, y, z, r, power)
-    // T22: explode overlap damages player body segments (same strength rule)
-    damagePlayersSphere(phys, x, y, z, r, power)
-    // synchronous connectivity + island extraction on the affected region (T11/T12)
-    phys.structuralPass(s)
-    // radial impulse to nearby dynamic bodies — including islands spawned above
-    phys.applyRadialImpulse(
-      x * VOXEL_SIZE,
-      y * VOXEL_SIZE,
-      z * VOXEL_SIZE,
-      r * VOXEL_SIZE * IMPULSE_RADIUS_SCALE,
-      power * IMPULSE_PER_POWER,
-    )
+    runExplosion(s, phys, x, y, z, r, power)
   })
 }

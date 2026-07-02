@@ -23,6 +23,8 @@ export const SHOOT_RANGE_VOX = 1200
 export const SHOOT_RADIUS = 1.5
 /** destruction power — kills soft materials (strength ≤ 3 near center), dents nothing structural */
 export const SHOOT_POWER = 3
+/** B17 — impulse (kg·m/s) a shot puts into a hit dynamic body */
+export const SHOOT_BODY_IMPULSE = 120
 
 export interface VoxelHit {
   /** hit voxel coords (integer) */
@@ -131,10 +133,70 @@ export function registerShootOp(sim: Sim, phys: PhysicsWorld): void {
       dz,
       SHOOT_RANGE_VOX,
     )
-    if (!hit) return
+    // T53 — shot event for render FX (tracer/muzzle/impact); see events.ts
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1
+    const nx = dx / len, ny = dy / len, nz = dz / len
+
+    // B17 — the ray also tests dynamic island bodies; nearest hit wins.
+    // Ray length is capped at the world hit, so a returned body hit is
+    // strictly in front of any voxel surface.
+    const rayLenM = (hit ? hit.dist : SHOOT_RANGE_VOX) * VOXEL_SIZE
+    const bodyHit = phys.castRayBody(ox, oy, oz, nx, ny, nz, rayLenM)
+    if (bodyHit) {
+      s.emit({
+        kind: 'shot',
+        ox, oy, oz,
+        dx: nx, dy: ny, dz: nz,
+        hit: 1,
+        x: bodyHit.px, y: bodyHit.py, z: bodyHit.pz,
+        nx: bodyHit.nx, ny: bodyHit.ny, nz: bodyHit.nz,
+        mat: bodyHit.body.mat,
+      })
+      phys.impulseBodyAt(
+        bodyHit.body,
+        nx * SHOOT_BODY_IMPULSE, ny * SHOOT_BODY_IMPULSE, nz * SHOOT_BODY_IMPULSE,
+        bodyHit.px, bodyHit.py, bodyHit.pz,
+      )
+      // damage center: nudged INTO the entered voxel along the ray, then
+      // snapped to that voxel's center (same rule as the world path — a
+      // sphere centered on the surface point would only graze the grid)
+      phys.damageBodySphere(
+        bodyHit.body,
+        bodyHit.px + nx * VOXEL_SIZE * 0.6,
+        bodyHit.py + ny * VOXEL_SIZE * 0.6,
+        bodyHit.pz + nz * VOXEL_SIZE * 0.6,
+        SHOOT_RADIUS * VOXEL_SIZE,
+        SHOOT_POWER,
+        true,
+      )
+      return
+    }
+
+    if (!hit) {
+      const range = SHOOT_RANGE_VOX * VOXEL_SIZE
+      s.emit({
+        kind: 'shot',
+        ox, oy, oz,
+        dx: nx, dy: ny, dz: nz,
+        hit: 0,
+        x: ox + nx * range, y: oy + ny * range, z: oz + nz * range,
+        nx: 0, ny: 0, nz: 0,
+        mat: 0,
+      })
+      return
+    }
     const cx = hit.x + 0.5
     const cy = hit.y + 0.5
     const cz = hit.z + 0.5
+    s.emit({
+      kind: 'shot',
+      ox, oy, oz,
+      dx: nx, dy: ny, dz: nz,
+      hit: 1,
+      x: cx * VOXEL_SIZE, y: cy * VOXEL_SIZE, z: cz * VOXEL_SIZE,
+      nx: hit.nx, ny: hit.ny, nz: hit.nz,
+      mat: hit.mat,
+    })
     destroySphere(s, cx, cy, cz, SHOOT_RADIUS, SHOOT_POWER)
     damagePlayersSphere(phys, cx, cy, cz, SHOOT_RADIUS, SHOOT_POWER)
     // same connectivity/island path explode uses (T11/T12)
