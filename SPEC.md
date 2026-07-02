@@ -96,13 +96,13 @@ T44|x|[PL] sprint (input bit 64, speed mult) + functional crouch (capsule shrink
 T45|x|[PL] fly/spectator mode: quick toggle (F), free camera detached from player (render-only, lockstep-safe), speed tiers|T21|V6
 T46|x|[PL] player visual detail: segment-based colors (skin/shirt/pants/shoes), better proportions, damage-visible voxel body|T22|§C
 T47|x|[PL] noclip dev mode: 'noclip' toggle op, player skips collision + direct velocity integration, deterministic (command-driven), dev-gated in UI|T21|V1,V2
-T50|.|[C] world expansion (B11): 2048×2048×768 world. Districts: suburban core (spawn), rowhouse/denser blocks, commercial+highrise (5-15 story towers: concrete/glass/metal, elevator shafts/stairwells), parks (ponds=water, paths, tree clusters), parking lots. Deep procgen variety, deterministic|T20|B11,V2,§C
-T51|.|[C] house/lot detail (B11): interiors — rooms, interior doors, basic voxel furniture; garages, balconies, chimneys, varied rooflines; backyard variety|T50|B11,V2
+T50|x|[C] world expansion (B11): 2048×2048×768 world. Districts: suburban core (spawn), rowhouse/denser blocks, commercial+highrise (5-15 story towers: concrete/glass/metal, elevator shafts/stairwells), parks (ponds=water, paths, tree clusters), parking lots. Deep procgen variety, deterministic|T20|B11,V2,§C
+T51|x|[C] house/lot detail (B11): interiors — rooms, interior doors, basic voxel furniture; garages, balconies, chimneys, varied rooflines; backyard variety|T50|B11,V2
 T55|x|[P] explosion falloff zones (B14): core=vaporize, mid=voxels ejected as small debris bodies/ballistic ejecta (deterministic Prng-capped clumps) radiating from center, outer=loosened/cracked singles knocked free, shockwave impulse on bodies+ejecta, per-material scaling|T13|B14,V1,V2,V8
 T56|.|[P] structural support heuristic: after edits, weak necks (small connection cross-section vs supported mass, per-material strength) break → collapse. Walls cave, undermined buildings crumble progressively. Region-scoped, deterministic, budgeted per tick|T55|B15,V1,V2
 T57|-|[SPIKE] 5cm voxels: BENCHED 2026-07-02 by user — staying at 10cm (Teardown parity). Revisit only on explicit ask|T29,T30|§C
 T58|.|[R] day/night cycle: time from sim.tick (deterministic, MP-synced free), sun/moon orbit driving CSM light + sky uniforms, dusk/dawn palettes, night = lamps/emissive carry the scene (+ a few real point lights budget-tested), cloud height variation + sky interest (B22), culling re-audit|T30|B22,§C
-T59|.|[C] car upgrade: multiple voxel car archetypes (sedan/pickup/van), body colors, glass windows, metal trim, wheels — replace placeholder blobs|T20|B6
+T59|x|[C] car upgrade: multiple voxel car archetypes (sedan/pickup/van), body colors, glass windows, metal trim, wheels — replace placeholder blobs|T20|B6
 T60|.|[PL] player swimming: in-water detection, capsule buoyancy + drag, swim locomotion (deterministic), underwater camera tint/fog, splash events|T40|V1,V2
 T61|.|[W] water visuals v2: animated surface normals/ripples (threejs-water-optics), fresnel + depth tint tuning, disturbance ripples, side-face rendering fix (B20), pool must read as WATER|T16|B20,§C
 T62|.|[W] water CA v2: fix live mass loss/duplication (B21 — pool must drain when breached), lateral flow for falling water ('rolling' behavior, not pure up/down columns), faster settle|T15|B21,V9
