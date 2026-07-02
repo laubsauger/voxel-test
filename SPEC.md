@@ -44,10 +44,10 @@ Browser voxel sandbox: fully destructible suburban arena (terrain→player), str
 
 id|st|task|deps|cites
 T1|x|[CORE] scaffold: vite+ts+three WebGPURenderer, rAF render loop, fly cam, flat test ground plane||§C
-T2|.|[CORE] fixed-tick sim loop + I.cmd command queue + seeded PRNG|T1|V1,V2,V11
-T3|.|[CORE] sparse chunk store (I.chunk) + GPU mirror upload|T1|V5
-T4|.|[CORE] I.hash harness + replay determinism test|T2,T3|V3,V10
-T5|.|[CORE] edit ops: sphere dig/place via commands, dirty tracking|T2,T3|V1,I.cmd
+T2|x|[CORE] fixed-tick sim loop + I.cmd command queue + seeded PRNG|T1|V1,V2,V11
+T3|x|[CORE] sparse chunk store (I.chunk) + GPU mirror upload|T1|V5
+T4|x|[CORE] I.hash harness + replay determinism test|T2,T3|V3,V10
+T5|x|[CORE] edit ops: sphere dig/place via commands, dirty tracking|T2,T3|V1,I.cmd
 T6|.|[R] greedy mesher, CPU worker, per-chunk|T3|V7
 T7|.|[R] voxel AO per-vertex in mesher|T6|
 T8|.|[R] I.mat table + TSL PBR material, sun + CSM shadows, bloom|T6|I.mat
