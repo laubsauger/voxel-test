@@ -15,7 +15,7 @@ import { Color, Scene, WebGPURenderer, ACESFilmicToneMapping } from 'three/webgp
 import { WorldRenderer } from './render/world-renderer'
 import { PlayerCam } from './render/player-cam'
 import { PlayerInput } from './render/player-input'
-import { PlayerMesh } from './render/player-mesh'
+import { PlayerVisuals } from './render/player-visuals'
 import { SpectatorCam } from './render/spectator-cam'
 import { WaterSurface } from './render/water/surface'
 import { BodyMeshes } from './render/body-meshes'
@@ -83,7 +83,9 @@ export class Game {
   private readonly bodyMeshes: BodyMeshes
   private readonly spectator: SpectatorCam
   private readonly hudEl: HTMLElement | null
-  private playerMesh: PlayerMesh | undefined
+  private playerVisuals: PlayerVisuals | undefined
+  /** T49 — equipped hotbar tool id provider (wired by main.ts) */
+  equippedTool: (() => string) | null = null
   private spawned = false
   private lastDamageSum = 0
   private readonly frameHooks = new Set<(dt: number) => void>()
@@ -233,15 +235,11 @@ export class Game {
       this.driver.advance(dtMs, this.sim) // fixed-tick sim (V11)
 
       const player = this.phys.players.get(LOCAL_PLAYER)
+      if (!this.playerVisuals) this.playerVisuals = new PlayerVisuals(this.scene, this.cam.camera)
+      const camMode = this.state !== 'play' ? 'orbit' : this.flying ? 'fly' : this.cam.mode
+      this.playerVisuals.update(dt, player, camMode, this.equippedTool?.() ?? 'dig')
       if (player) {
-        if (!this.playerMesh) {
-          this.playerMesh = new PlayerMesh(player)
-          this.scene.add(this.playerMesh.group)
-        }
-        this.playerMesh.update(player)
         if (this.state === 'play' && !this.flying) this.cam.update(player, this.sim.world)
-        // FP: don't render inside own head; fly/orbit see the body
-        this.playerMesh.group.visible = this.state !== 'play' || this.flying || this.cam.mode === 'tp'
 
         // T28 hit feedback: segment damage → HUD flash
         let dmg = 0

@@ -182,7 +182,7 @@ syncDev()
 
 // --- HUD + tools (T28) --------------------------------------------------------
 const hud = new Hud(root)
-new ToolController(game, hud, (e) => {
+const tools = new ToolController(game, hud, (e) => {
   // T52 — tool feedback → material-aware impact/explosion sounds
   switch (e.kind) {
     case 'dig':
@@ -199,6 +199,7 @@ new ToolController(game, hud, (e) => {
   }
 })
 hud.onSelect = () => void sfxPlay('ui-hotbar')
+game.equippedTool = () => tools.equipped // T49 — FP viewmodel reads the hotbar
 game.onFlyChange = (f) => hud.setFly(f)
 game.onPlayerDamaged = () => {
   hud.damageFlash()

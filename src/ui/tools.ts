@@ -12,7 +12,7 @@ import { LOCAL_PLAYER } from '../game'
 import { nextSeq } from '../render/command-seq'
 import { MAT_CONCRETE } from '../sim/materials'
 import { raycastWorld, type ToolHit } from './raycast'
-import type { Hud } from './hud'
+import type { Hud, ToolId } from './hud'
 import { VOXEL_SIZE } from '../world/chunks'
 
 /**
@@ -86,6 +86,11 @@ export class ToolController {
   }
 
   private held = false
+
+  /** T49 — equipped hotbar tool id (render-side read for the FP viewmodel) */
+  get equipped(): ToolId {
+    return this.hud.tool.id
+  }
 
   private locked(): boolean {
     return document.pointerLockElement === this.game.renderer.domElement
