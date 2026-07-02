@@ -290,6 +290,8 @@ export interface Lamp {
 export interface Mailbox {
   x: number
   z: number
+  /** T59 — 0 = wood post, 1 = brick pedestal */
+  style: 0 | 1
 }
 
 export interface Bin {
@@ -840,7 +842,7 @@ function makeCommercial(seed: number, districts: District[]): CommercialOut {
       for (let row = 0; row < 2; row++) {
         for (let i = 0; i < stalls; i++) {
           const roll = cp.nextInt(100)
-          const kind = `car${cp.nextInt(2)}`
+          const kind = `${CAR_ARCHS[cp.nextInt(3)]}${cp.nextInt(3)}` // T59 variety
           if (roll >= 45) continue
           const x = lot.x0 + 4 + i * STALL_W + 4
           const z = row === 0 ? lot.z0 + 4 : lot.z1 - 4 - PROP_DIMS[kind][1] + 1
@@ -1140,10 +1142,31 @@ export function generateLayout(seed: number): Layout {
       if (fits && !(garage && rectsTouch(cand, garage))) patio = cand
     }
 
+    // T59 — lived-in touches: garage door state, mailbox style, worn lawn
+    // patches (draws unconditional for stream stability)
+    const garageOpen = t51.nextInt(2) === 0
+    const mailStyle: 0 | 1 = t51.nextInt(4) === 0 ? 1 : 0
+    const wornPatches: { x: number; z: number; r: number }[] = []
+    const nPatches = t51.nextInt(3)
+    for (let i = 0; i < 2; i++) {
+      const px = lot.rect.x0 + 8 + t51.nextInt(Math.max(1, lotW - 16))
+      const pz = frontZneg
+        ? lot.rect.z0 + 8 + t51.nextInt(Math.max(1, rect.z0 - lot.rect.z0 - 14))
+        : rect.z1 + 6 + t51.nextInt(Math.max(1, lot.rect.z1 - rect.z1 - 14))
+      const pr = 3 + t51.nextInt(4)
+      if (i >= nPatches || isVilla) continue // villa lawn stays manicured
+      const prect: Rect = { x0: px - pr, z0: pz - pr, x1: px + pr, z1: pz + pr }
+      if (rectsTouch(prect, driveway) || rectsTouch(prect, path)) continue
+      if (porch && rectsTouch(prect, porch)) continue
+      if (garage && rectsTouch(prect, garage)) continue
+      wornPatches.push({ x: px, z: pz, r: pr })
+    }
+
     const house: House = {
       lotId: lot.id, rect, ell, floors, storyH: STORY_H, wallMat, roof, ridgeAxis,
       door, windows, driveway, stairs, roofMat, driveMat, porch, shutters, path,
-      garage, balcony, balconyDoor, chimney, partitions: [], patio, gardens: [], shed: null,
+      garage, garageOpen, wornPatches, balcony, balconyDoor, chimney,
+      partitions: [], patio, gardens: [], shed: null,
     }
     // T51 — interior rooms + furniture from a dedicated stream
     const interior = new Prng((seed ^ 0x1b873593 ^ Math.imul(lot.id + 1, 0x9e3779b9)) >>> 0)
@@ -1271,7 +1294,7 @@ export function generateLayout(seed: number): Layout {
     // T43 — mailbox on the street side of every driveway, in the grass strip
     const mbx = driveLeft ? driveway.x0 - 3 : driveway.x1 + 3
     const mbz = frontZneg ? lot.rect.z0 - 3 : lot.rect.z1 + 3
-    mailboxes.push({ x: mbx, z: mbz })
+    mailboxes.push({ x: mbx, z: mbz, style: mailStyle })
 
     // T43 — trash bin beside ~40% of driveways, near the house corner
     if (detail.nextInt(10) < 4) {
@@ -1420,7 +1443,11 @@ export function generateLayout(seed: number): Layout {
       const tx = road.axis === 'x' ? a : perp
       const tz = road.axis === 'x' ? perp : a
       const canopy: Rect = { x0: tx - canopyR, z0: tz - canopyR, x1: tx + 1 + canopyR, z1: tz + 1 + canopyR }
+      const trunkR: Rect = { x0: tx - 1, z0: tz - 1, x1: tx + 2, z1: tz + 2 }
       if (houses.some((h) => rectsTouch(canopy, growRect(h.driveway, 4)) || rectsTouch(canopy, h.rect))) continue
+      // trunks never sprout through parkway path strips or mailboxes
+      if (houses.some((h) => rectsTouch(trunkR, growRect(h.path, 2)))) continue
+      if (mailboxes.some((m) => rectsTouch(trunkR, { x0: m.x - 2, z0: m.z - 2, x1: m.x + 2, z1: m.z + 2 }))) continue
       if (structureKeep.some((s) => rectsTouch(canopy, s))) continue
       trees.push({ x: tx, z: tz, trunkH, canopyR, seed: treeSeed })
     }
@@ -1443,6 +1470,27 @@ export function generateLayout(seed: number): Layout {
         z: road.axis === 'x' ? perp : along,
         dir,
       })
+    }
+  }
+
+  // T59 — curb-parked cars along residential streets (~1 in 4 slots), tucked
+  // against the asphalt edge, clear of intersections. Own derived stream.
+  const curb = new Prng((seed ^ 0x0badcafe) >>> 0)
+  for (const road of roads) {
+    if (road.kind !== 'res') continue
+    const c = road.center
+    for (let along = 80; along < WORLD_VX - 130; along += 160) {
+      const roll = curb.nextInt(100)
+      const side = curb.nextInt(2) === 0 ? 1 : -1
+      const kind = `${CAR_ARCHS[curb.nextInt(3)]}${curb.nextInt(3)}`
+      const jitter = curb.nextInt(41)
+      if (roll >= 25) continue
+      const a = along + jitter
+      const len = PROP_DIMS[kind][1]
+      if (ROAD_CENTERS.some((c2) => a + len >= c2 - ART_EXTENT - 16 && a <= c2 + ART_EXTENT + 16)) continue
+      const perp = c + side * (ROAD_HALF_RES - 12) - 9 // 18-wide body hugs the curb
+      if (road.axis === 'x') props.push({ kind, x: a, y: GROUND_Y, z: perp, rot: 1 })
+      else props.push({ kind, x: perp, y: GROUND_Y, z: a, rot: 0 })
     }
   }
 

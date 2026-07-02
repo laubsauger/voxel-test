@@ -321,6 +321,20 @@ function stampHouse(store: ChunkStore, layout: Layout, h: House): void {
   const r = h.rect
   const wallTop = g + h.floors * h.storyH - 1
 
+  // T59 — worn lawn patches first (everything else overwrites them)
+  for (const wp of h.wornPatches) {
+    const r2 = wp.r * wp.r
+    for (let z = wp.z - wp.r; z <= wp.z + wp.r; z++) {
+      for (let x = wp.x - wp.r; x <= wp.x + wp.r; x++) {
+        const dx = x - wp.x
+        const dz = z - wp.z
+        if (dx * dx + dz * dz > r2) continue
+        if ((hash3(x, 3, z, 0x5eed1) & 3) === 0) continue // ragged edge
+        if (store.getVoxel(x, g - 1, z) === MAT_GRASS) store.setVoxel(x, g - 1, z, MAT_DIRT)
+      }
+    }
+  }
+
   // driveway first (under any car prop later); paver variant gets subtle
   // accent tiles on the surface voxel (B12)
   store.fillBox(h.driveway.x0, g - WALK_DEPTH, h.driveway.z0, h.driveway.x1, g - 1, h.driveway.z1, MAT_CONCRETE)
@@ -370,8 +384,9 @@ function stampHouse(store: ChunkStore, layout: Layout, h: House): void {
     stampWalls(store, ga, g + 1, gTop, h.wallMat)
     store.fillBox(ga.x0, gTop + 1, ga.z0, ga.x1, gTop + 2, ga.z1, MAT_CONCRETE)
     const frontZneg = h.door.side === 'z-'
-    // roll-door opening + metal lintel on the street face
-    wallOpening(store, ga, frontZneg ? 'z-' : 'z+', 4, 20, g + 1, g + 18, MAT_AIR)
+    // roll-door bay + metal lintel on the street face; ~half the doors are
+    // down (T59 lived-in): a metal panel fills the bay instead of air
+    wallOpening(store, ga, frontZneg ? 'z-' : 'z+', 4, 20, g + 1, g + 18, h.garageOpen ? MAT_AIR : MAT_METAL)
     wallOpening(store, ga, frontZneg ? 'z-' : 'z+', 4, 20, g + 19, g + 20, MAT_METAL)
     // connecting door through the shared garage/house wall pair
     const doorZ = frontZneg ? r.z0 + 6 : r.z1 - 13
@@ -778,18 +793,21 @@ function stampVilla(store: ChunkStore, layout: Layout): void {
 /**
  * T43 — picket fence along an axis-aligned line: posts every 16 voxels,
  * 1-wide pickets every other voxel, two rails bridging the picket gaps.
- * All wood — collapses beautifully.
+ * All wood — collapses beautifully. ~1 in 4 fences is "worn" (T59): a few
+ * pickets missing, position-hashed so it never reshuffles anything.
  */
 function stampFence(store: ChunkStore, f: FenceLine, g: number): void {
   const alongX = f.z0 === f.z1
   const len = (alongX ? f.x1 - f.x0 : f.z1 - f.z0) + 1
   if (len < 4) return
+  const worn = (hash3(f.x0, 7, f.z0, 0x77aa77) & 3) === 0
   for (let t = 0; t < len; t++) {
     const x = alongX ? f.x0 + t : f.x0
     const z = alongX ? f.z0 : f.z0 + t
     if (t % 16 === 0 || t === len - 1) {
       store.fillBox(x, g, z, x, g + 10, z, MAT_WOOD) // post
     } else if (t % 2 === 0) {
+      if (worn && hash3(x, 1, z, 0x77aa77) % 5 === 0) continue // missing picket
       store.fillBox(x, g, z, x, g + 8, z, MAT_WOOD) // picket
     } else {
       store.setVoxel(x, g + 3, z, MAT_WOOD) // lower rail
@@ -809,9 +827,13 @@ function stampLampPost(store: ChunkStore, l: Lamp, g: number): void {
   store.fillBox(Math.min(hx, hx + dx), g + 21, Math.min(hz, hz + dz), Math.max(hx, hx + dx), g + 22, Math.max(hz, hz + dz), MAT_LAMP)
 }
 
-/** T43 — mailbox: wood post + metal box */
+/** T43/T59 — mailbox: wood post (style 0) or brick pedestal (style 1) + metal box */
 function stampMailbox(store: ChunkStore, m: Mailbox, g: number): void {
-  store.fillBox(m.x, g, m.z, m.x, g + 9, m.z, MAT_WOOD)
+  if (m.style === 1) {
+    store.fillBox(m.x - 1, g, m.z - 1, m.x + 1, g + 9, m.z + 1, MAT_BRICK)
+  } else {
+    store.fillBox(m.x, g, m.z, m.x, g + 9, m.z, MAT_WOOD)
+  }
   store.fillBox(m.x - 1, g + 10, m.z - 1, m.x + 1, g + 12, m.z + 1, MAT_METAL)
 }
 

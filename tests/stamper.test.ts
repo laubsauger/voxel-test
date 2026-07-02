@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ChunkStore, ChunkKind, CHUNK_COUNT, WORLD_VX, WORLD_VZ } from '../src/world/chunks'
 import { Fnv } from '../src/sim/hash'
-import { generateLayout, DOOR_W, STAIR_W, STAIR_TREAD, STAIR_STEPS, WALL_T, type House, type Layout, type Opening } from '../src/sim/gen/layout'
+import { generateLayout, isCarKind, DOOR_W, STAIR_W, STAIR_TREAD, STAIR_STEPS, WALL_T, type House, type Layout, type Opening } from '../src/sim/gen/layout'
 import { stampScene } from '../src/sim/gen/stamper'
 import { placeholderProps } from '../src/sim/gen/props'
 import {
@@ -161,10 +161,11 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
   })
 
   it('car props are stamped (metal body on the driveway/stall)', () => {
-    const car = layout.props.find((p) => p.kind.startsWith('car'))!
+    const car = layout.props.find((p) => isCarKind(p.kind))!
     expect(car).toBeTruthy()
-    // body spans nearly the whole footprint at y+5 for rot 0 and 2
-    expect(store.getVoxel(car.x + 5, car.y + 5, car.z + 5)).toBe(MAT_METAL)
+    // body spans nearly the whole footprint at y+5 for rot 0 and 2 (T59:
+    // painted bodies come in metal / rooftile-red / plaster-white)
+    expect([MAT_METAL, MAT_ROOFTILE, MAT_PLASTER]).toContain(store.getVoxel(car.x + 5, car.y + 5, car.z + 5))
   })
 
   it('stairs: solid treads with capsule headroom and a carved ceiling opening (T41)', () => {
@@ -223,7 +224,8 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     const { store: st, h } = found!
     const ga = h.garage!
     const frontZ = h.door.side === 'z-' ? ga.z0 : ga.z1
-    expect(st.getVoxel(ga.x0 + 10, g + 5, frontZ), 'roll-door opening').toBe(MAT_AIR)
+    // T59 — the roll door is up (air) or down (metal panel), per layout state
+    expect(st.getVoxel(ga.x0 + 10, g + 5, frontZ), 'roll-door bay').toBe(h.garageOpen ? MAT_AIR : MAT_METAL)
     expect(st.getVoxel(ga.x0 + 10, g + 19, frontZ), 'metal lintel').toBe(MAT_METAL)
     expect(st.getVoxel(ga.x0 + 10, g + 24, (ga.z0 + ga.z1) >> 1), 'flat roof').toBe(MAT_CONCRETE)
     expect(st.getVoxel(ga.x0, g + 5, (ga.z0 + ga.z1) >> 1), 'side wall').toBe(h.wallMat)
@@ -269,8 +271,9 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
       expect(store.getVoxel(x0 + 1, top, stairZ), `tower tread ${i}`).toBe(MAT_CONCRETE)
       expect(store.getVoxel(x0 + 1, top + 10, stairZ), `air above tread ${i}`).toBe(MAT_AIR)
     }
-    // slab above the stair run is carved open (you can actually ascend)
-    expect(store.getVoxel(t.stairs.x1 - 1, g + t.storyH, stairZ), 'stairwell opening').toBe(MAT_AIR)
+    // slab above the stair run is carved open (you can actually ascend);
+    // probe over tread 0 — the TOP tread is intentionally flush with the slab
+    expect(store.getVoxel(t.stairs.x0 + 1, g + t.storyH, stairZ), 'stairwell opening').toBe(MAT_AIR)
   })
 
   it('T50 rowhouse: party walls, doors + stoops, windows, switchback stairs, stepped roofs', () => {
@@ -305,7 +308,7 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     expect(store.getVoxel(lot.x0 + 4, g - 1, lot.z0 + 5)).toBe(MAT_PAINT)
     // some cars stand in commercial stalls
     const carsInLots = layout.props.filter(
-      (p) => p.kind.startsWith('car') && p.x >= lot.x0 && p.x <= lot.x1 && p.z >= lot.z0 && p.z <= lot.z1,
+      (p) => isCarKind(p.kind) && p.x >= lot.x0 && p.x <= lot.x1 && p.z >= lot.z0 && p.z <= lot.z1,
     )
     expect(carsInLots.length).toBeGreaterThan(0)
   })
@@ -424,7 +427,8 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     }
     expect(layout.mailboxes.length).toBe(layout.houses.length)
     for (const m of layout.mailboxes.slice(0, 6)) {
-      expect(store.getVoxel(m.x, g, m.z), 'mailbox post').toBe(MAT_WOOD)
+      // T59 — style 0 = wood post, style 1 = brick pedestal
+      expect(store.getVoxel(m.x, g, m.z), 'mailbox base').toBe(m.style === 1 ? MAT_BRICK : MAT_WOOD)
       expect(store.getVoxel(m.x, g + 11, m.z), 'mailbox box').toBe(MAT_METAL)
     }
     expect(layout.bins.length).toBeGreaterThan(0)

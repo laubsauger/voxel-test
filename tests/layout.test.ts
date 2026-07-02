@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   generateLayout,
+  isCarKind,
   GROUND_Y,
   propRect,
   SPAWN_VX,
@@ -43,7 +44,7 @@ describe('town layout generator (T19/T50, V2)', () => {
     expect(l.lots.length).toBeGreaterThanOrEqual(8)
     expect(l.houses.length).toBe(l.lots.length) // one house per lot
     expect(l.pools.length).toBeGreaterThan(0)
-    expect(l.props.some((p) => p.kind.startsWith('car'))).toBe(true)
+    expect(l.props.some((p) => isCarKind(p.kind))).toBe(true)
     expect(l.groundY).toBe(GROUND_Y)
     expect(GROUND_Y).toBeGreaterThanOrEqual(40)
     expect(GROUND_Y).toBeLessThanOrEqual(64)
