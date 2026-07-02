@@ -113,6 +113,9 @@ T67|.|[C] power poles + wires: wooden poles along roads, catenary-sagging wires 
 T68|.|[C] hood district: rundown vibe — worn/boarded houses, chain-link fences, dumpsters, cracked asphalt+patches, faded paint, overgrown lots, corner store|T50|B6
 T69|.|[C+R] beach/ocean district: arena edge becomes sand beach + boardwalk, shallow CA water surf zone, infinite ocean visual plane beyond arena (horizon), palms|T50|B6,V9
 T70|x|[UI] map + minimap: Google-Maps-style styled map generated from layout data (roads/lots/districts/water/POI), minimap HUD w/ player arrow + heading, M = fullscreen pan/zoom map|T50|I.settings,§C
+T73|.|[W] weapons: rocket launcher (fast projectile, impact-detonated T55 explosion, backblast+trail FX, hotbar slot) + TNT (placeable block prop, interact-to-light fuse ~3s spark, BIG zoned boom, chainable), SFX via pipeline|T54,T55|V1,V2
+T74|.|[R] birds: occasional small flocks — simple boid-ish sprite/voxel birds, lazy loops over the town, day-only, render-only|T58|B22
+T75|.|[R] flashlight: toggleable spotlight (L), camera-anchored in FP, warm beam, night-useful, subtle battery-free v1|T58|§C
 T71|.|[N] MP integration v1: menu host/join flow (room code lobby, player list), lockstep driver wired into game loop (net queue swaps local, tick barrier gates FixedStepDriver), combined desync hash (sim+physics+water via existing hash fns), desync overlay (V10), same-seed boot only — late join deferred|T25,T27|I.net,V2,V3,V10
 T72|.|[N] 2-browser E2E harness: CDP script boots signaling + 2 Chromes, host+join, scripted inputs both sides, asserts synced hashes over N ticks + green desync detector — the real V3 proof|T71|V3,V10
 T63|x|[R/P] destruction stutter (B23): profile dig/explode frame spikes via CDP tracing, then fix — incremental region updates, spread/defer Jolt shape rebuilds, buffer reuse, no main-thread hitches >4ms. Exit: scripted dig+bomb with frame-time capture, p99 frame <20ms during destruction|T35,T55|B23,V7,§C
@@ -151,5 +154,6 @@ B23|2026-07-02|clear frame stutter on ANY destruction — even single shovel dig
 B24|2026-07-02|cars spawn partially inside houses (placement overlap); also user wants some cars ON roads, not all parked at home|T64 agent fixes placement + road cars
 B25|2026-07-02|streetlights + car light bars glow in bright daylight — emissive must follow time-of-day|sky-cycle agent
 B26|2026-07-02|WaterSurface re-extracts the ENTIRE pool surface on every dig anywhere (water-sim notifyVoxelChanged bumps version unconditionally) — 5.5-7.8ms/dig, found by T63 probe|water-v2 agent
+B27|2026-07-02|asphalt/street footsteps sound weirdly metallic — regenerate toned-down asphalt (+concrete check) footstep set|polish agent
 B8|2026-07-02|flat walls show per-voxel diagonal shading noise reading as broken AO (screenshot evidence) — per-voxel color hash interpolates across voxel + triangle diagonal seams; true AO must be uniform on coplanar faces, darken only real edges/corners|render-quality agent: flat-per-voxel variation sampling (voxel-center hash, no in-voxel gradient), verify AO uniformity on flat walls, GTAO radius > voxel size
 B5|2026-07-02|user smoke feedback: glass windows render opaque (known R-track v1 limitation, single opaque mesh pass)|T39
