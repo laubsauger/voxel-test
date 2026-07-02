@@ -46,7 +46,7 @@ import {
 } from '../../world/chunks'
 import { Fnv } from '../hash'
 import type { Sim } from '../loop'
-import { MAX_LEVEL, lateralNext, lateralPhase, verticalNext } from './rules'
+import { DonorMode, MAX_LEVEL, lateralNext, lateralPhase, verticalNext } from './rules'
 
 const CZ_STRIDE = WORLD_CX
 const CY_STRIDE = WORLD_CX * WORLD_CZ
@@ -328,21 +328,27 @@ export class WaterSim {
     const base = axis === 0 ? bx : bz
     const wrap = 31 * localStride
 
-    /** donor support using self-chunk fast paths; donor is always at local (vi, yl) of chunk `chunk` */
-    const supportedLocal = (vi: number, yl: number): boolean => {
-      if (yl > 0) {
-        const bvi = vi - LY
-        return solidAt(selfChunk, bvi) || self[bvi] === MAX_LEVEL
-      }
-      if (!hasBelow) return true // world floor
-      const bvi = vi + WRAP_Y
-      return solidAt(belowChunk!, bvi) || belowPage[bvi] === MAX_LEVEL
+    /** donor mode from a below-cell (solidity + previous-state water level) — rules.ts DonorMode */
+    const modeFromBelow = (belowSolid: boolean, belowLevel: number): DonorMode => {
+      if (belowSolid || belowLevel === MAX_LEVEL) return DonorMode.Supported
+      return belowLevel > 0 ? DonorMode.Splashing : DonorMode.Falling
     }
 
-    /** generic (cross-chunk) donor support at world coords */
-    const supportedWorld = (x: number, y: number, z: number): boolean => {
-      if (y === 0) return true
-      return this.world.getVoxel(x, y - 1, z) !== 0 || this.levelAt(x, y - 1, z) === MAX_LEVEL
+    /** donor mode using self-chunk fast paths; donor is at local (vi, yl) of this chunk */
+    const donorModeLocal = (vi: number, yl: number): DonorMode => {
+      if (yl > 0) {
+        const bvi = vi - LY
+        return modeFromBelow(solidAt(selfChunk, bvi), self[bvi])
+      }
+      if (!hasBelow) return DonorMode.Supported // world floor
+      const bvi = vi + WRAP_Y
+      return modeFromBelow(solidAt(belowChunk!, bvi), belowPage[bvi])
+    }
+
+    /** generic (cross-chunk) donor mode at world coords */
+    const donorModeWorld = (x: number, y: number, z: number): DonorMode => {
+      if (y === 0) return DonorMode.Supported
+      return modeFromBelow(this.world.getVoxel(x, y - 1, z) !== 0, this.levelAt(x, y - 1, z))
     }
 
     let changed = false
@@ -364,7 +370,10 @@ export class WaterSim {
             const partner = self[pvi]
             if (partner !== level) {
               const donorVi = level > partner ? vi : pvi
-              next = lateralNext(level, partner, supportedLocal(donorVi, yl))
+              const receiverVi = level > partner ? pvi : vi
+              const receiverUnsupported =
+                (level === 0 || partner === 0) && donorModeLocal(receiverVi, yl) !== DonorMode.Supported
+              next = lateralNext(level, partner, donorModeLocal(donorVi, yl), receiverUnsupported)
             }
           }
         } else if (isLeft ? cChunk + 1 < cMaxChunk : cChunk > 0) {
@@ -376,17 +385,21 @@ export class WaterSim {
             const nPage = this.pages.get(nci) ?? ZERO_PAGE
             const partner = nPage[pvi]
             if (partner !== level) {
-              let donorSupported: boolean
+              const xl = vi & 31
+              const zl = (vi >> 5) & 31
+              const px = axis === 0 ? (isLeft ? bx + 32 : bx - 1) : bx + xl
+              const pz = axis === 1 ? (isLeft ? bz + 32 : bz - 1) : bz + zl
+              let donorMode: DonorMode
+              let receiverUnsupported = false
               if (level > partner) {
-                donorSupported = supportedLocal(vi, yl)
+                donorMode = donorModeLocal(vi, yl)
+                receiverUnsupported =
+                  partner === 0 && donorModeWorld(px, by + yl, pz) !== DonorMode.Supported
               } else {
-                const xl = vi & 31
-                const zl = (vi >> 5) & 31
-                const px = axis === 0 ? (isLeft ? bx + 32 : bx - 1) : bx + xl
-                const pz = axis === 1 ? (isLeft ? bz + 32 : bz - 1) : bz + zl
-                donorSupported = supportedWorld(px, by + yl, pz)
+                donorMode = donorModeWorld(px, by + yl, pz)
+                receiverUnsupported = level === 0 && donorModeLocal(vi, yl) !== DonorMode.Supported
               }
-              next = lateralNext(level, partner, donorSupported)
+              next = lateralNext(level, partner, donorMode, receiverUnsupported)
             }
           }
         }
@@ -431,12 +444,23 @@ export function hashWater(water: WaterSim): number {
 }
 
 /**
+ * CA steps per sim tick (T62). Two: one lateral phase advances per CA step,
+ * so a single step/tick moves mass across N cells in O(N²·4) ticks —
+ * pool-scale draining read as static (B21). Two steps double fall speed to
+ * 12 m/s (reads right for water) and double lateral transport. Settled water
+ * still costs nothing (step() early-returns on an empty active set).
+ */
+export const WATER_STEPS_PER_TICK = 2
+
+/**
  * Wire the water CA into the sim loop as a system (runs once per tick after
  * command handlers). The returned WaterSim is the sim-side API for source/
  * sink ops (pool filling, future water commands).
  */
 export function attachWaterSim(sim: Sim): WaterSim {
   const water = new WaterSim(sim.world)
-  sim.addSystem(() => water.step())
+  sim.addSystem(() => {
+    for (let i = 0; i < WATER_STEPS_PER_TICK; i++) water.step()
+  })
   return water
 }

@@ -26,7 +26,7 @@
 
 import type { ComputeNode, Node, Renderer, StorageBufferNode } from 'three/webgpu'
 import { Fn, If, instanceIndex, instancedArray, select, uint, uniform } from 'three/tsl'
-import { MAX_LEVEL } from '../../sim/water/rules'
+import { LATERAL_DEADBAND, MAX_LEVEL } from '../../sim/water/rules'
 
 export interface WaterGpuRegion {
   /** region origin in voxel coords */
@@ -112,8 +112,14 @@ export class WaterGpuCa {
     /**
      * LATERAL kernel — mirrors rules.lateralNext() + lateralPhase():
      *   phase&1 selects axis (0=x, 1=z), phase>>1 the pairing offset.
-     *   pair equalizes: half = (L+Ln)>>1, remainder to the fuller cell,
-     *   only if donor (fuller cell) is supported (floor/solid/full below).
+     *   Donor = fuller cell; donor mode from its below-cell (rules.DonorMode):
+     *     SUPPORTED (floor/solid/full water below):
+     *       waterfall leg — empty receiver that is itself unsupported gets
+     *       EVERYTHING (donor → 0); else deadbanded equalization —
+     *       diff <= LATERAL_DEADBAND ⇒ no flow, else half = (L+Ln)>>1 with the
+     *       remainder to the fuller cell (B21 settle deadband).
+     *     SPLASHING (unsupported, 0 < below < MAX): quarter-diff spill (T62).
+     *     FALLING (below open+empty): no lateral flow.
      * NOTE: CPU pairing parity uses WORLD coords; region origin is baked in
      * below so both sides pair identically (region.x/z added to local coords).
      */
@@ -147,22 +153,47 @@ export class WaterGpuCa {
           () => {
             const partner = src.element(partnerIdx)
             If(partner.notEqual(level), () => {
-              // donor = fuller cell; supported = floor || solid below || full water below
+              // donor = fuller cell; mode from the donor's below-cell (same snapshot)
               const donorIdx = select(level.greaterThan(partner), i, partnerIdx)
               const donorBelowIdx = select(y.greaterThan(uint(0)), donorIdx.sub(SLICE), donorIdx)
+              const belowLevel = src.element(donorBelowIdx)
               const supported = y
                 .equal(uint(0))
                 .or(solids.element(donorBelowIdx).notEqual(uint(0)))
-                .or(src.element(donorBelowIdx).equal(MAX))
+                .or(belowLevel.equal(MAX))
+              const diff = select(level.greaterThan(partner), level.sub(partner), partner.sub(level))
               If(supported, () => {
-                const total = level.add(partner)
-                const half = total.shiftRight(uint(1))
-                const extra = select(
-                  total.bitAnd(uint(1)).equal(uint(1)).and(level.greaterThan(partner)),
-                  uint(1),
-                  uint(0),
-                )
-                next.assign(half.add(extra))
+                // waterfall leg: empty receiver about to fall gets everything
+                const receiverIdx = select(level.greaterThan(partner), partnerIdx, i)
+                const receiverBelowIdx = select(y.greaterThan(uint(0)), receiverIdx.sub(SLICE), receiverIdx)
+                const receiverUnsupported = y
+                  .greaterThan(uint(0))
+                  .and(solids.element(receiverBelowIdx).equal(uint(0)))
+                  .and(src.element(receiverBelowIdx).notEqual(MAX))
+                const receiverEmpty = uMin(level, partner).equal(uint(0))
+                If(receiverEmpty.and(receiverUnsupported), () => {
+                  next.assign(select(level.greaterThan(partner), uint(0), level.add(partner)))
+                }).Else(() => {
+                  // deadbanded equalization (rules.lateralNext, Supported leg)
+                  If(diff.greaterThan(uint(LATERAL_DEADBAND)), () => {
+                    const total = level.add(partner)
+                    const half = total.shiftRight(uint(1))
+                    const extra = select(
+                      total.bitAnd(uint(1)).equal(uint(1)).and(level.greaterThan(partner)),
+                      uint(1),
+                      uint(0),
+                    )
+                    next.assign(half.add(extra))
+                  })
+                })
+              }).Else(() => {
+                // splashing: unsupported donor landing on partial water — quarter-diff spill
+                If(y.greaterThan(uint(0)).and(belowLevel.greaterThan(uint(0))), () => {
+                  const t = diff.shiftRight(uint(2))
+                  If(t.greaterThan(uint(0)), () => {
+                    next.assign(select(level.greaterThan(partner), level.sub(t), level.add(t)))
+                  })
+                })
               })
             })
           },
