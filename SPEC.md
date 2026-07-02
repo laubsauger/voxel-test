@@ -25,6 +25,8 @@ Browser voxel sandbox: fully destructible suburban arena (terrain→player), str
 - I.jolt: Jolt WASM. Fixed 60Hz step, deterministic mode, single-thread. Bodies: world-static, dynamic islands, char capsule.
 - I.net: signaling (WS, handshake only) + WebRTC DataChannel lockstep transport. Host peer = session owner.
 - I.hash: sim state hash fn. Input: full sim state. Used by desync detector + determinism tests.
+- I.boot: URL params control boot path. `?boot=game&seed=N` = bypass menu straight into scene (agents/CDP smoke, dev iteration). `?dev=1` = dev settings + profiling HUD on. Default = preloader → menu.
+- I.settings: settings store. Graphics (quality tiers, post toggles), audio, controls, gameplay + dev section (profiling, debug draws, scene seed). Persist localStorage. Render-layer only, never sim state.
 
 ## §V invariants
 
@@ -74,6 +76,10 @@ T27|x|[N] desync detector: periodic hash exchange, loud fail|T25|V10
 T28|.|[CORE] tool UX: hotbar dig/place/gun/explode, crosshair, hit feedback|T5,T13|
 T29|.|[R] PBR texture pipeline: CC0 sets (ambientcg/freepbr) per I.mat entry, triplanar TSL mapping (albedo/normal/rough/ao), texture array|T8|I.mat,§C
 T30|.|[R] atmosphere polish: physical sky + sun disc, height/distance fog, exposure tuning, SSAO/GTAO, TAA or SMAA, post stack within 60fps budget|T8|§C
+T31|.|[UI] boot pipeline: preloader gate (WASM+assets+scene stamp+water fill done → then UI), I.boot URL params, dev bypass straight into scene||I.boot
+T32|.|[UI] profiling from get-go: stats-gl (WebGPU) + renderer.info panel, toggle via I.boot dev flag + I.settings dev section|T31|I.boot,I.settings
+T33|.|[UI] main menu AAA: slick styled, live in-game scene as background (slow orbit cam over suburb), play/join/settings entries|T31,T20|§C,I.boot
+T34|.|[UI] settings screens: graphics/audio/controls/gameplay + dev settings, I.settings store, localStorage persist, applies live|T33|I.settings,V6
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 
