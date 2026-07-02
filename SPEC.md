@@ -27,7 +27,8 @@ Browser voxel sandbox: fully destructible suburban arena (terrain→player), str
 - I.net: signaling (WS, handshake only) + WebRTC DataChannel lockstep transport. Host peer = session owner.
 - I.hash: sim state hash fn. Input: full sim state. Used by desync detector + determinism tests.
 - I.boot: URL params control boot path. `?boot=game&seed=N` = bypass menu straight into scene (agents/CDP smoke, dev iteration). `?dev=1` = dev settings + profiling HUD on. Default = preloader → menu.
-- I.settings: settings store. Graphics (quality tiers, post toggles), audio, controls, gameplay + dev section (profiling, debug draws, scene seed). Persist localStorage. Render-layer only, never sim state.
+- I.settings: settings store. Graphics (quality tiers, post toggles), audio (master/music/sfx volume 0-100), controls, gameplay + dev section (profiling, debug draws, scene seed). Persist localStorage. Render-layer only, never sim state.
+- I.audio: asset pipeline (node script, ElevenLabs API, key in .env.dev — NEVER committed/bundled/logged) → generated SFX+music in public/audio/ + manifest.json. Runtime: WebAudio engine, gain buses master→{music,sfx}, positional 3D SFX, surface-aware footsteps. Render layer (V6).
 
 ## §V invariants
 
@@ -53,24 +54,24 @@ T2|x|[CORE] fixed-tick sim loop + I.cmd command queue + seeded PRNG|T1|V1,V2,V11
 T3|x|[CORE] sparse chunk store (I.chunk) + GPU mirror upload|T1|V5
 T4|x|[CORE] I.hash harness + replay determinism test|T2,T3|V3,V10
 T5|x|[CORE] edit ops: sphere dig/place via commands, dirty tracking|T2,T3|V1,I.cmd
-T6|.|[R] greedy mesher, CPU worker, per-chunk|T3|V7
-T7|.|[R] voxel AO per-vertex in mesher|T6|
-T8|.|[R] I.mat table + TSL PBR material, sun + CSM shadows, bloom|T6|I.mat
-T9|.|[R] remesh scheduler: budget/frame, near-camera priority|T6|V7
-T10|.|[P] Jolt WASM integration, fixed step in sim tick, world-static body|T2|I.jolt,V2
-T11|.|[P] connectivity flood-fill worker, region-limited, deterministic order|T3,T5|V2
-T12|.|[P] island extraction → dynamic body: mini grid + greedy-box compound collider + own mesh|T10,T11|V8,V12
-T13|.|[P] explode op: sphere destroy + impulse to bodies|T5,T12|I.cmd
-T14|.|[R] debris/dust particles on destroy (render-only)|T6|V6
-T15|.|[W] water CA: integer level buffer, ping-pong TSL compute, solid blocking|T3,T4|V4,V9
-T16|.|[W] water surface extract + TSL water shading (refract, depth absorb)|T15|
-T17|.|[W] buoyancy: field readback → force on floats-flagged bodies|T15,T12|I.mat
+T6|x|[R] greedy mesher, CPU worker, per-chunk|T3|V7
+T7|x|[R] voxel AO per-vertex in mesher|T6|
+T8|x|[R] I.mat table + TSL PBR material, sun + CSM shadows, bloom|T6|I.mat
+T9|x|[R] remesh scheduler: budget/frame, near-camera priority|T6|V7
+T10|x|[P] Jolt WASM integration, fixed step in sim tick, world-static body|T2|I.jolt,V2
+T11|x|[P] connectivity flood-fill worker, region-limited, deterministic order|T3,T5|V2
+T12|x|[P] island extraction → dynamic body: mini grid + greedy-box compound collider + own mesh|T10,T11|V8,V12
+T13|x|[P] explode op: sphere destroy + impulse to bodies|T5,T12|I.cmd
+T14|x|[R] debris/dust particles on destroy (render-only)|T6|V6
+T15|x|[W] water CA: integer level buffer, ping-pong TSL compute, solid blocking|T3,T4|V4,V9
+T16|x|[W] water surface extract + TSL water shading (refract, depth absorb)|T15|
+T17|x|[W] buoyancy: field readback → force on floats-flagged bodies|T15,T12|I.mat
 T18|x|[C] .vox importer (I.vox) + material remap|T3|I.vox
 T19|x|[C] proc suburb layout: streets, lots, terrain, pool placement, from seed|T3|V2
 T20|x|[C] scene stamp: layout + .vox props → world, deterministic from seed|T18,T19|V2
-T21|.|[PL] Jolt char controller capsule + FP camera + walk via move commands|T10|I.jolt,V1
-T22|.|[PL] segmented voxel body: per-bone grids, damage removes voxels, segment-loss effects|T21|
-T23|.|[PL] TP camera toggle + sphere-cast collision vs world|T21|
+T21|x|[PL] Jolt char controller capsule + FP camera + walk via move commands|T10|I.jolt,V1
+T22|x|[PL] segmented voxel body: per-bone grids, damage removes voxels, segment-loss effects|T21|
+T23|x|[PL] TP camera toggle + sphere-cast collision vs world|T21|
 T24|x|[N] signaling server (WS) + WebRTC DataChannel pairing|T4|I.net
 T25|x|[N] lockstep transport: input delay buffer 2-3 ticks, tick barrier|T24|V2,V3
 T26|x|[N] join snapshot: serialize sim state, RLE chunks, fast-forward|T25|V3
@@ -82,10 +83,15 @@ T31|.|[UI] boot pipeline: preloader gate (WASM+assets+scene stamp+water fill don
 T32|.|[UI] profiling from get-go: stats-gl (WebGPU) + renderer.info panel, toggle via I.boot dev flag + I.settings dev section|T31|I.boot,I.settings
 T33|.|[UI] main menu AAA: slick styled, live in-game scene as background (slow orbit cam over suburb), play/join/settings entries|T31,T20|§C,I.boot
 T34|.|[UI] settings screens: graphics/audio/controls/gameplay + dev settings, I.settings store, localStorage persist, applies live|T33|I.settings,V6
+T35|.|[R] draw-call batching: 2437 chunk meshes × CSM passes = 23fps settled. BatchedMesh or region merge + shadow pass reduction. Exit: settled suburb ≥60fps smoke gate|T9|§C,B2
+T36|.|[A] SFX asset pipeline: ElevenLabs gen (I.audio) — footsteps×surface, shoot, impacts×material, explosions, water, ambience, UI, hurt. Rich AAA set, manifest|T31|I.audio,§C
+T37|.|[A] runtime audio engine: WebAudio buses (master/music/sfx), positional SFX, footstep surface detect, event hooks from sim/render, volumes via I.settings|T36|I.audio,I.settings,V6
+T38|.|[A] music: menu + ambient in-game track(s) via ElevenLabs music API, crossfade menu↔game, music bus|T36|I.audio
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 
 ## §B bugs
 
 id|date|cause|fix
-B1|2026-07-02|parallel track agents (C, R) each defined I.mat table, divergent id assignments (R: 3=sand,8=wood,11=metal vs canonical 3=asphalt,6=wood,9=metal) — merge-time discovery, would have corrupted stamped worlds|V13; render/materials.ts now derives from sim table
+B1|2026-07-02|parallel track agents (C, R, P) each defined I.mat table, divergent id assignments (R: 3=sand,8=wood,11=metal; P: 3=stone,7=metal,9=flesh vs canonical 3=asphalt,6=wood,9=metal) — merge-time discovery, would have corrupted stamped worlds|V13; render derives from sim table; P merge kept canonical ids + P strength scale
+B2|2026-07-02|per-chunk meshes: suburb = 2437 draws × (main + 3 CSM cascades) ≈ 10k draws/frame → 23fps settled, misses §C 60fps. Found by CDP smoke settle gate|T35 batching; smoke fps gate stays red until fixed
