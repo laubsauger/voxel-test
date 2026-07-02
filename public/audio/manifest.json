@@ -1,0 +1,851 @@
+{
+  "version": 1,
+  "sounds": [
+    {
+      "id": "footstep-walk-grass-1",
+      "path": "/audio/sfx/footsteps/footstep-walk-grass-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-grass"
+    },
+    {
+      "id": "footstep-walk-grass-2",
+      "path": "/audio/sfx/footsteps/footstep-walk-grass-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-grass"
+    },
+    {
+      "id": "footstep-walk-grass-3",
+      "path": "/audio/sfx/footsteps/footstep-walk-grass-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-grass"
+    },
+    {
+      "id": "footstep-run-grass-1",
+      "path": "/audio/sfx/footsteps/footstep-run-grass-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-grass"
+    },
+    {
+      "id": "footstep-run-grass-2",
+      "path": "/audio/sfx/footsteps/footstep-run-grass-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-grass"
+    },
+    {
+      "id": "footstep-run-grass-3",
+      "path": "/audio/sfx/footsteps/footstep-run-grass-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-grass"
+    },
+    {
+      "id": "footstep-walk-concrete-1",
+      "path": "/audio/sfx/footsteps/footstep-walk-concrete-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-concrete"
+    },
+    {
+      "id": "footstep-walk-concrete-2",
+      "path": "/audio/sfx/footsteps/footstep-walk-concrete-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-concrete"
+    },
+    {
+      "id": "footstep-walk-concrete-3",
+      "path": "/audio/sfx/footsteps/footstep-walk-concrete-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-concrete"
+    },
+    {
+      "id": "footstep-run-concrete-1",
+      "path": "/audio/sfx/footsteps/footstep-run-concrete-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-concrete"
+    },
+    {
+      "id": "footstep-run-concrete-2",
+      "path": "/audio/sfx/footsteps/footstep-run-concrete-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-concrete"
+    },
+    {
+      "id": "footstep-run-concrete-3",
+      "path": "/audio/sfx/footsteps/footstep-run-concrete-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-concrete"
+    },
+    {
+      "id": "footstep-walk-asphalt-1",
+      "path": "/audio/sfx/footsteps/footstep-walk-asphalt-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-asphalt"
+    },
+    {
+      "id": "footstep-walk-asphalt-2",
+      "path": "/audio/sfx/footsteps/footstep-walk-asphalt-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-asphalt"
+    },
+    {
+      "id": "footstep-walk-asphalt-3",
+      "path": "/audio/sfx/footsteps/footstep-walk-asphalt-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-asphalt"
+    },
+    {
+      "id": "footstep-run-asphalt-1",
+      "path": "/audio/sfx/footsteps/footstep-run-asphalt-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-asphalt"
+    },
+    {
+      "id": "footstep-run-asphalt-2",
+      "path": "/audio/sfx/footsteps/footstep-run-asphalt-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-asphalt"
+    },
+    {
+      "id": "footstep-run-asphalt-3",
+      "path": "/audio/sfx/footsteps/footstep-run-asphalt-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-asphalt"
+    },
+    {
+      "id": "footstep-walk-wood-1",
+      "path": "/audio/sfx/footsteps/footstep-walk-wood-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-wood"
+    },
+    {
+      "id": "footstep-walk-wood-2",
+      "path": "/audio/sfx/footsteps/footstep-walk-wood-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-wood"
+    },
+    {
+      "id": "footstep-walk-wood-3",
+      "path": "/audio/sfx/footsteps/footstep-walk-wood-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-wood"
+    },
+    {
+      "id": "footstep-run-wood-1",
+      "path": "/audio/sfx/footsteps/footstep-run-wood-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-wood"
+    },
+    {
+      "id": "footstep-run-wood-2",
+      "path": "/audio/sfx/footsteps/footstep-run-wood-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-wood"
+    },
+    {
+      "id": "footstep-run-wood-3",
+      "path": "/audio/sfx/footsteps/footstep-run-wood-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-wood"
+    },
+    {
+      "id": "footstep-walk-dirt-1",
+      "path": "/audio/sfx/footsteps/footstep-walk-dirt-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-dirt"
+    },
+    {
+      "id": "footstep-walk-dirt-2",
+      "path": "/audio/sfx/footsteps/footstep-walk-dirt-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-dirt"
+    },
+    {
+      "id": "footstep-walk-dirt-3",
+      "path": "/audio/sfx/footsteps/footstep-walk-dirt-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-dirt"
+    },
+    {
+      "id": "footstep-run-dirt-1",
+      "path": "/audio/sfx/footsteps/footstep-run-dirt-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-dirt"
+    },
+    {
+      "id": "footstep-run-dirt-2",
+      "path": "/audio/sfx/footsteps/footstep-run-dirt-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-dirt"
+    },
+    {
+      "id": "footstep-run-dirt-3",
+      "path": "/audio/sfx/footsteps/footstep-run-dirt-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-dirt"
+    },
+    {
+      "id": "footstep-walk-water-1",
+      "path": "/audio/sfx/footsteps/footstep-walk-water-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-water"
+    },
+    {
+      "id": "footstep-walk-water-2",
+      "path": "/audio/sfx/footsteps/footstep-walk-water-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-water"
+    },
+    {
+      "id": "footstep-walk-water-3",
+      "path": "/audio/sfx/footsteps/footstep-walk-water-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-walk-water"
+    },
+    {
+      "id": "footstep-run-water-1",
+      "path": "/audio/sfx/footsteps/footstep-run-water-1.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-water"
+    },
+    {
+      "id": "footstep-run-water-2",
+      "path": "/audio/sfx/footsteps/footstep-run-water-2.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-water"
+    },
+    {
+      "id": "footstep-run-water-3",
+      "path": "/audio/sfx/footsteps/footstep-run-water-3.mp3",
+      "category": "footsteps",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "footstep-run-water"
+    },
+    {
+      "id": "jump-takeoff-hard-1",
+      "path": "/audio/sfx/jump/jump-takeoff-hard-1.mp3",
+      "category": "jump",
+      "loop": false,
+      "volume": 0.65,
+      "positional": true,
+      "roundRobin": "jump-takeoff-hard"
+    },
+    {
+      "id": "jump-takeoff-hard-2",
+      "path": "/audio/sfx/jump/jump-takeoff-hard-2.mp3",
+      "category": "jump",
+      "loop": false,
+      "volume": 0.65,
+      "positional": true,
+      "roundRobin": "jump-takeoff-hard"
+    },
+    {
+      "id": "jump-takeoff-soft-1",
+      "path": "/audio/sfx/jump/jump-takeoff-soft-1.mp3",
+      "category": "jump",
+      "loop": false,
+      "volume": 0.6,
+      "positional": true,
+      "roundRobin": "jump-takeoff-soft"
+    },
+    {
+      "id": "jump-takeoff-soft-2",
+      "path": "/audio/sfx/jump/jump-takeoff-soft-2.mp3",
+      "category": "jump",
+      "loop": false,
+      "volume": 0.6,
+      "positional": true,
+      "roundRobin": "jump-takeoff-soft"
+    },
+    {
+      "id": "jump-land-hard-1",
+      "path": "/audio/sfx/jump/jump-land-hard-1.mp3",
+      "category": "jump",
+      "loop": false,
+      "volume": 0.8,
+      "positional": true,
+      "roundRobin": "jump-land-hard"
+    },
+    {
+      "id": "jump-land-hard-2",
+      "path": "/audio/sfx/jump/jump-land-hard-2.mp3",
+      "category": "jump",
+      "loop": false,
+      "volume": 0.8,
+      "positional": true,
+      "roundRobin": "jump-land-hard"
+    },
+    {
+      "id": "jump-land-soft-1",
+      "path": "/audio/sfx/jump/jump-land-soft-1.mp3",
+      "category": "jump",
+      "loop": false,
+      "volume": 0.75,
+      "positional": true,
+      "roundRobin": "jump-land-soft"
+    },
+    {
+      "id": "jump-land-soft-2",
+      "path": "/audio/sfx/jump/jump-land-soft-2.mp3",
+      "category": "jump",
+      "loop": false,
+      "volume": 0.75,
+      "positional": true,
+      "roundRobin": "jump-land-soft"
+    },
+    {
+      "id": "shot-pistol-1",
+      "path": "/audio/sfx/shoot/shot-pistol-1.mp3",
+      "category": "shoot",
+      "loop": false,
+      "volume": 0.9,
+      "positional": false,
+      "roundRobin": "shot-pistol"
+    },
+    {
+      "id": "shot-pistol-2",
+      "path": "/audio/sfx/shoot/shot-pistol-2.mp3",
+      "category": "shoot",
+      "loop": false,
+      "volume": 0.9,
+      "positional": false,
+      "roundRobin": "shot-pistol"
+    },
+    {
+      "id": "shot-echo-tail-1",
+      "path": "/audio/sfx/shoot/shot-echo-tail-1.mp3",
+      "category": "shoot",
+      "loop": false,
+      "volume": 0.5,
+      "positional": false,
+      "roundRobin": "shot-echo-tail"
+    },
+    {
+      "id": "impact-dirt-1",
+      "path": "/audio/sfx/impacts/impact-dirt-1.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.8,
+      "positional": true,
+      "roundRobin": "impact-dirt"
+    },
+    {
+      "id": "impact-dirt-2",
+      "path": "/audio/sfx/impacts/impact-dirt-2.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.8,
+      "positional": true,
+      "roundRobin": "impact-dirt"
+    },
+    {
+      "id": "impact-grass-1",
+      "path": "/audio/sfx/impacts/impact-grass-1.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.8,
+      "positional": true,
+      "roundRobin": "impact-grass"
+    },
+    {
+      "id": "impact-grass-2",
+      "path": "/audio/sfx/impacts/impact-grass-2.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.8,
+      "positional": true,
+      "roundRobin": "impact-grass"
+    },
+    {
+      "id": "impact-concrete-1",
+      "path": "/audio/sfx/impacts/impact-concrete-1.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "impact-concrete"
+    },
+    {
+      "id": "impact-concrete-2",
+      "path": "/audio/sfx/impacts/impact-concrete-2.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "impact-concrete"
+    },
+    {
+      "id": "impact-brick-1",
+      "path": "/audio/sfx/impacts/impact-brick-1.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "impact-brick"
+    },
+    {
+      "id": "impact-brick-2",
+      "path": "/audio/sfx/impacts/impact-brick-2.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "impact-brick"
+    },
+    {
+      "id": "impact-wood-1",
+      "path": "/audio/sfx/impacts/impact-wood-1.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "impact-wood"
+    },
+    {
+      "id": "impact-wood-2",
+      "path": "/audio/sfx/impacts/impact-wood-2.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "impact-wood"
+    },
+    {
+      "id": "impact-glass-1",
+      "path": "/audio/sfx/impacts/impact-glass-1.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 1,
+      "positional": true,
+      "roundRobin": "impact-glass"
+    },
+    {
+      "id": "impact-glass-2",
+      "path": "/audio/sfx/impacts/impact-glass-2.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 1,
+      "positional": true,
+      "roundRobin": "impact-glass"
+    },
+    {
+      "id": "impact-metal-1",
+      "path": "/audio/sfx/impacts/impact-metal-1.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "impact-metal"
+    },
+    {
+      "id": "impact-metal-2",
+      "path": "/audio/sfx/impacts/impact-metal-2.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "impact-metal"
+    },
+    {
+      "id": "impact-water-1",
+      "path": "/audio/sfx/impacts/impact-water-1.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.8,
+      "positional": true,
+      "roundRobin": "impact-water"
+    },
+    {
+      "id": "impact-water-2",
+      "path": "/audio/sfx/impacts/impact-water-2.mp3",
+      "category": "impact",
+      "loop": false,
+      "volume": 0.8,
+      "positional": true,
+      "roundRobin": "impact-water"
+    },
+    {
+      "id": "explosion-small-1",
+      "path": "/audio/sfx/explosions/explosion-small-1.mp3",
+      "category": "explosion",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "explosion-small"
+    },
+    {
+      "id": "explosion-medium-1",
+      "path": "/audio/sfx/explosions/explosion-medium-1.mp3",
+      "category": "explosion",
+      "loop": false,
+      "volume": 1,
+      "positional": true,
+      "roundRobin": "explosion-medium"
+    },
+    {
+      "id": "explosion-large-1",
+      "path": "/audio/sfx/explosions/explosion-large-1.mp3",
+      "category": "explosion",
+      "loop": false,
+      "volume": 1,
+      "positional": true,
+      "roundRobin": "explosion-large"
+    },
+    {
+      "id": "explosion-debris-rain-1",
+      "path": "/audio/sfx/explosions/explosion-debris-rain-1.mp3",
+      "category": "explosion",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "explosion-debris-rain"
+    },
+    {
+      "id": "explosion-distant-rumble-1",
+      "path": "/audio/sfx/explosions/explosion-distant-rumble-1.mp3",
+      "category": "explosion",
+      "loop": false,
+      "volume": 0.6,
+      "positional": false,
+      "roundRobin": "explosion-distant-rumble"
+    },
+    {
+      "id": "collapse-structure-1",
+      "path": "/audio/sfx/destruction/collapse-structure-1.mp3",
+      "category": "destruction",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "collapse-structure"
+    },
+    {
+      "id": "collapse-structure-2",
+      "path": "/audio/sfx/destruction/collapse-structure-2.mp3",
+      "category": "destruction",
+      "loop": false,
+      "volume": 0.9,
+      "positional": true,
+      "roundRobin": "collapse-structure"
+    },
+    {
+      "id": "glass-pane-shatter-1",
+      "path": "/audio/sfx/destruction/glass-pane-shatter-1.mp3",
+      "category": "destruction",
+      "loop": false,
+      "volume": 0.85,
+      "positional": true,
+      "roundRobin": "glass-pane-shatter"
+    },
+    {
+      "id": "glass-pane-shatter-2",
+      "path": "/audio/sfx/destruction/glass-pane-shatter-2.mp3",
+      "category": "destruction",
+      "loop": false,
+      "volume": 0.85,
+      "positional": true,
+      "roundRobin": "glass-pane-shatter"
+    },
+    {
+      "id": "chunk-crumble-1",
+      "path": "/audio/sfx/destruction/chunk-crumble-1.mp3",
+      "category": "destruction",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "chunk-crumble"
+    },
+    {
+      "id": "chunk-crumble-2",
+      "path": "/audio/sfx/destruction/chunk-crumble-2.mp3",
+      "category": "destruction",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "chunk-crumble"
+    },
+    {
+      "id": "splash-small-1",
+      "path": "/audio/sfx/water/splash-small-1.mp3",
+      "category": "water",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "splash-small"
+    },
+    {
+      "id": "splash-small-2",
+      "path": "/audio/sfx/water/splash-small-2.mp3",
+      "category": "water",
+      "loop": false,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "splash-small"
+    },
+    {
+      "id": "splash-large-1",
+      "path": "/audio/sfx/water/splash-large-1.mp3",
+      "category": "water",
+      "loop": false,
+      "volume": 0.85,
+      "positional": true,
+      "roundRobin": "splash-large"
+    },
+    {
+      "id": "splash-large-2",
+      "path": "/audio/sfx/water/splash-large-2.mp3",
+      "category": "water",
+      "loop": false,
+      "volume": 0.85,
+      "positional": true,
+      "roundRobin": "splash-large"
+    },
+    {
+      "id": "water-flow-loop-1",
+      "path": "/audio/sfx/water/water-flow-loop-1.mp3",
+      "category": "water",
+      "loop": true,
+      "volume": 0.5,
+      "positional": true,
+      "roundRobin": "water-flow-loop"
+    },
+    {
+      "id": "pool-lap-loop-1",
+      "path": "/audio/sfx/water/pool-lap-loop-1.mp3",
+      "category": "water",
+      "loop": true,
+      "volume": 0.35,
+      "positional": true,
+      "roundRobin": "pool-lap-loop"
+    },
+    {
+      "id": "ambience-suburb-day-1",
+      "path": "/audio/sfx/ambience/ambience-suburb-day-1.mp3",
+      "category": "ambience",
+      "loop": true,
+      "volume": 0.4,
+      "positional": false,
+      "roundRobin": "ambience-suburb-day"
+    },
+    {
+      "id": "wind-gust-1",
+      "path": "/audio/sfx/ambience/wind-gust-1.mp3",
+      "category": "ambience",
+      "loop": false,
+      "volume": 0.45,
+      "positional": false,
+      "roundRobin": "wind-gust"
+    },
+    {
+      "id": "wind-gust-2",
+      "path": "/audio/sfx/ambience/wind-gust-2.mp3",
+      "category": "ambience",
+      "loop": false,
+      "volume": 0.45,
+      "positional": false,
+      "roundRobin": "wind-gust"
+    },
+    {
+      "id": "ui-hover-1",
+      "path": "/audio/sfx/ui/ui-hover-1.mp3",
+      "category": "ui",
+      "loop": false,
+      "volume": 0.4,
+      "positional": false,
+      "roundRobin": "ui-hover"
+    },
+    {
+      "id": "ui-click-1",
+      "path": "/audio/sfx/ui/ui-click-1.mp3",
+      "category": "ui",
+      "loop": false,
+      "volume": 0.5,
+      "positional": false,
+      "roundRobin": "ui-click"
+    },
+    {
+      "id": "ui-back-1",
+      "path": "/audio/sfx/ui/ui-back-1.mp3",
+      "category": "ui",
+      "loop": false,
+      "volume": 0.5,
+      "positional": false,
+      "roundRobin": "ui-back"
+    },
+    {
+      "id": "ui-error-1",
+      "path": "/audio/sfx/ui/ui-error-1.mp3",
+      "category": "ui",
+      "loop": false,
+      "volume": 0.5,
+      "positional": false,
+      "roundRobin": "ui-error"
+    },
+    {
+      "id": "ui-hotbar-1",
+      "path": "/audio/sfx/ui/ui-hotbar-1.mp3",
+      "category": "ui",
+      "loop": false,
+      "volume": 0.45,
+      "positional": false,
+      "roundRobin": "ui-hotbar"
+    },
+    {
+      "id": "player-hurt-1",
+      "path": "/audio/sfx/player/player-hurt-1.mp3",
+      "category": "player",
+      "loop": false,
+      "volume": 0.7,
+      "positional": false,
+      "roundRobin": "player-hurt"
+    },
+    {
+      "id": "player-hurt-2",
+      "path": "/audio/sfx/player/player-hurt-2.mp3",
+      "category": "player",
+      "loop": false,
+      "volume": 0.7,
+      "positional": false,
+      "roundRobin": "player-hurt"
+    },
+    {
+      "id": "player-death-1",
+      "path": "/audio/sfx/player/player-death-1.mp3",
+      "category": "player",
+      "loop": false,
+      "volume": 0.8,
+      "positional": false,
+      "roundRobin": "player-death"
+    },
+    {
+      "id": "heartbeat-low-health-loop-1",
+      "path": "/audio/sfx/player/heartbeat-low-health-loop-1.mp3",
+      "category": "player",
+      "loop": true,
+      "volume": 0.6,
+      "positional": false,
+      "roundRobin": "heartbeat-low-health-loop"
+    },
+    {
+      "id": "music-menu",
+      "path": "/audio/music/music-menu.mp3",
+      "category": "music",
+      "loop": true,
+      "volume": 0.6,
+      "positional": false,
+      "roundRobin": "music-menu"
+    },
+    {
+      "id": "music-game-ambient",
+      "path": "/audio/music/music-game-ambient.mp3",
+      "category": "music",
+      "loop": true,
+      "volume": 0.5,
+      "positional": false,
+      "roundRobin": "music-game-ambient"
+    }
+  ]
+}
