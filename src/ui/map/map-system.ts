@@ -7,7 +7,7 @@
 
 import './map.css'
 import { MapProjection, type WorldDims } from './map-math'
-import { createBaseMap, type MapLayout } from './map-render'
+import { buildMapCommands, createBaseMap, executeCommands, type MapLayout } from './map-render'
 import { districtStyle } from './map-style'
 import { Minimap } from './minimap'
 import { MapPanel } from './map-panel'
@@ -28,8 +28,14 @@ export class MapSystem {
     this.layout = layout
     this.seed = layout.seed ?? 0
     this.proj = new MapProjection(dims)
-    // deterministic base map, drawn exactly once at boot
+    // deterministic base map, drawn exactly once at boot…
     this.base = createBaseMap(layout, dims)
+    // …plus one re-execute when Chakra Petch lands, so district labels never
+    // stay baked in the fallback font (same commands — still deterministic)
+    document.fonts?.ready.then(() => {
+      const ctx = this.base.getContext('2d')
+      if (ctx) executeCommands(ctx, buildMapCommands(layout, dims))
+    })
   }
 
   /** true while the fullscreen map is up — main.ts's pointerlockchange

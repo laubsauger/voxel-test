@@ -198,7 +198,7 @@ export function buildMapCommands(layout: MapLayout, dims: WorldDims): MapCommand
     const st = rectStyle(r)
     const b = px(proj, r)
     cmds.push({ op: 'rrect', x: b.x + shade * 0.4, y: b.y + shade, w: b.w, h: b.h, r: corner, fill: st.buildingShade, alpha: 0.5 })
-    cmds.push({ op: 'rrect', ...b, r: corner, fill: st.building })
+    cmds.push({ op: 'rrect', ...b, r: corner, fill: st.building, stroke: st.buildingShade, lineWidth: 1 })
   }
   for (const h of layout.houses ?? []) {
     if (h.ell) footprint(h.ell, 2 * s)
@@ -287,16 +287,23 @@ export function executeCommands(ctx: Ctx2D, list: MapCommandList): void {
         ctx.stroke()
         ctx.setLineDash([])
         break
-      case 'label':
+      case 'label': {
         ctx.font = `600 ${c.size}px 'Chakra Petch', 'Avenir Next Condensed', sans-serif`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         // letterSpacing is Chrome-only — fine, the game is WebGPU/Chrome-only (§C)
         ;(ctx as Ctx2D & { letterSpacing?: string }).letterSpacing = `${c.tracking}em`
+        const text = c.text.toUpperCase()
+        // paper-colored halo keeps labels legible over roads (Google-style)
+        ctx.strokeStyle = MAP_INK.labelHalo
+        ctx.lineWidth = Math.max(2, c.size / 5)
+        ctx.lineJoin = 'round'
+        ctx.strokeText(text, c.x, c.y)
         ctx.fillStyle = c.color
-        ctx.fillText(c.text.toUpperCase(), c.x, c.y)
+        ctx.fillText(text, c.x, c.y)
         ;(ctx as Ctx2D & { letterSpacing?: string }).letterSpacing = '0em'
         break
+      }
     }
   }
   ctx.globalAlpha = 1

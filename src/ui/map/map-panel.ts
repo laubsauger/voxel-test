@@ -32,7 +32,7 @@ export class MapPanel {
   private pz = 0
   private yaw = 0
   /** camera fov (rad) for the view cone — cosmetic, fixed default */
-  private readonly coneHalf = (75 / 2) * (Math.PI / 180)
+  private readonly coneHalf = (60 / 2) * (Math.PI / 180)
 
   constructor(root: HTMLElement, base: HTMLCanvasElement, proj: MapProjection, seed: number) {
     this.base = base
@@ -205,9 +205,10 @@ export class MapPanel {
     ctx.translate(sx, sy)
     ctx.rotate(a)
     // view-direction cone
-    const coneR = Math.max(34, view.pxPerMeter * 9)
-    const grad = ctx.createRadialGradient(0, 0, 2, 0, 0, coneR)
-    grad.addColorStop(0, 'rgba(255, 176, 60, 0.4)')
+    const coneR = Math.max(26, view.pxPerMeter * 6)
+    const grad = ctx.createRadialGradient(0, 0, 7, 0, 0, coneR)
+    grad.addColorStop(0, 'rgba(255, 176, 60, 0.32)')
+    grad.addColorStop(0.65, 'rgba(255, 176, 60, 0.1)')
     grad.addColorStop(1, 'rgba(255, 176, 60, 0)')
     ctx.beginPath()
     ctx.moveTo(0, 0)

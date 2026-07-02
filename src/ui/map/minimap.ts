@@ -30,10 +30,8 @@ export class Minimap {
     this.el = document.createElement('div')
     this.el.className = 'bb-minimap'
     this.el.innerHTML = `
-      <div class="bb-mm-frame">
-        <div class="bb-mm-north">N</div>
-        <canvas></canvas>
-      </div>
+      <div class="bb-mm-frame"><canvas></canvas></div>
+      <div class="bb-mm-north">N</div>
       <div class="bb-mm-foot"><span class="bb-mm-zone">—</span><b>M · Map</b></div>`
     this.canvas = this.el.querySelector('canvas') as HTMLCanvasElement
     this.canvas.width = CANVAS * this.dpr

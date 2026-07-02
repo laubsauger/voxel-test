@@ -22,31 +22,31 @@ export interface DistrictStyle {
 
 export const DISTRICT_STYLES: Record<string, DistrictStyle> = {
   suburban: {
-    ground: '#e6e4d8',
-    lot: '#dfe3d0',
-    building: '#d0ccbb',
-    buildingShade: '#b6b19d',
+    ground: '#e3e0d2',
+    lot: '#dae0c8',
+    building: '#bdb499',
+    buildingShade: '#94896c',
     label: 'SUBURBIA',
   },
   rowhouse: {
-    ground: '#e9dfcc',
-    lot: '#e3d7c0',
-    building: '#d4c5a8',
-    buildingShade: '#b9a988',
+    ground: '#e7dcc6',
+    lot: '#e0d3b8',
+    building: '#c2ad85',
+    buildingShade: '#9c855c',
     label: 'ROWHOUSES',
   },
   commercial: {
-    ground: '#e0e3e7',
-    lot: '#d8dce1',
-    building: '#c3c9d1',
-    buildingShade: '#a3abb6',
+    ground: '#dfe2e6',
+    lot: '#d5dade',
+    building: '#a9b2c0',
+    buildingShade: '#7e8a9c',
     label: 'DOWNTOWN',
   },
   park: {
-    ground: '#cde4c2',
-    lot: '#c5dfb8',
-    building: '#b2cfa2',
-    buildingShade: '#93b781',
+    ground: '#cbe2bf',
+    lot: '#c1dcb2',
+    building: '#9cbe89',
+    buildingShade: '#779c62',
     label: 'THE PARK',
   },
 }
@@ -71,8 +71,8 @@ export interface RoadStyle {
 }
 
 export const ROAD_STYLES: Record<string, RoadStyle> = {
-  default: { fill: '#ffffff', casing: '#cfccc0', casingPx: 1.5, centerLine: false },
-  arterial: { fill: '#fdf6df', casing: '#c9c3ae', casingPx: 2, centerLine: true },
+  default: { fill: '#fdfcf7', casing: '#aca489', casingPx: 4, centerLine: false },
+  arterial: { fill: '#fdf3d5', casing: '#a29a7e', casingPx: 4.5, centerLine: true },
 }
 
 export function roadStyle(kind: string | undefined): RoadStyle {
@@ -81,17 +81,19 @@ export function roadStyle(kind: string | undefined): RoadStyle {
 
 /** non-district palette entries */
 export const MAP_INK = {
-  sidewalk: '#eeece2',
-  driveway: '#e6e3d8',
-  path: '#efece0',
-  parking: '#dddcd4',
-  parkingStroke: '#c8c7bd',
-  waterFill: '#a4cee6',
-  waterStroke: '#7db3d2',
-  tree: '#a9cd94',
+  sidewalk: '#d9d6c4',
+  driveway: '#d8d4c2',
+  path: '#e9e6d6',
+  parking: '#d9d8cd',
+  parkingStroke: '#c2c1b4',
+  waterFill: '#92c4e2',
+  waterStroke: '#63a0c6',
+  tree: '#9cc487',
   treeAlpha: 0.55,
-  label: '#8f9382',
-  centerLine: '#e5ddba',
+  label: '#7e8371',
+  /** white halo behind labels (Google-style legibility over roads) */
+  labelHalo: '#f2f0e6',
+  centerLine: '#e3d9ac',
   /** void beyond the world edge (matches HUD glass) */
   void: '#10141a',
 } as const
