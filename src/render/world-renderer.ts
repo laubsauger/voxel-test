@@ -268,6 +268,8 @@ export class WorldRenderer {
       state: this.cycleState,
       info: this.renderer.info,
       lampCount: () => this.lampPositions.length,
+      regionCount: () => this.chunks.regionMeshCount,
+      sun: this.sun,
     }
 
     // post stack (T8 bloom, T30 GTAO): scene → AO → bloom → tonemap.

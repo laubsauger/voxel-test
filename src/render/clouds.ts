@@ -22,12 +22,13 @@ import type { CycleState } from './atmosphere'
 
 /** cloud cell size (m) — the blocky voxel scale of the sky layer */
 const CELL = 4
-const CLOUD_COUNT = 16
+const CLOUD_COUNT = 24
 /** altitude band (m): biased toward the low edge, big clouds pushed higher */
 const ALT_MIN = 58
 const ALT_RANGE = 52
-/** drift bounds (m) around the arena center; clouds wrap across */
-const WRAP = 340
+/** drift bounds (m) around the arena center; clouds wrap across. Tighter
+ * than v1 (340) so a useful number of clouds is actually overhead (B22). */
+const WRAP = 220
 /** per-cloud drift speed range (m/s) — lazy, but no longer lockstep */
 const DRIFT_MIN = 0.9
 const DRIFT_RANGE = 1.7
@@ -54,8 +55,8 @@ export class BlockyClouds {
     material.fog = false // the layer floats above the aerial haze
 
     for (let i = 0; i < CLOUD_COUNT; i++) {
-      // size scale 0.6..1.9 — wisps to slabs; altitude biased low, big high
-      const scale = 0.6 + rand() * rand() * 1.3 + rand() * 0.4
+      // size scale 0.7..2.2 — wisps to slabs; altitude biased low, big high
+      const scale = 0.7 + rand() * rand() * 1.5 + rand() * 0.5
       const geometry = buildCloudGeometry(rand, scale)
       const mesh = new Mesh(geometry, material)
       mesh.castShadow = false
