@@ -108,4 +108,5 @@ B3|2026-07-02|user smoke feedback: chunk mesh-in slow at load + visible pop-in w
 B4|2026-07-02|user smoke feedback: light leaks at roof/wall joins + wall/floor joins + wall corners (CSM bias/normalBias vs voxel-thin geometry)|T35 scope extended: shadow bias/normal-bias/cascade tuning to kill leaks
 B6|2026-07-02|user feedback: scene sterile/meh — no stairs (upper floors unreachable), no vegetation, no road markings/fences/street detail|T41,T42,T43
 B7|2026-07-02|user feedback risk: physics impulse feel must track material density (heavy=sluggish), bodies must never fly off to infinity|T40 velocity clamps + kill plane + feel tuning
+B8|2026-07-02|flat walls show per-voxel diagonal shading noise reading as broken AO (screenshot evidence) — per-voxel color hash interpolates across voxel + triangle diagonal seams; true AO must be uniform on coplanar faces, darken only real edges/corners|render-quality agent: flat-per-voxel variation sampling (voxel-center hash, no in-voxel gradient), verify AO uniformity on flat walls, GTAO radius > voxel size
 B5|2026-07-02|user smoke feedback: glass windows render opaque (known R-track v1 limitation, single opaque mesh pass)|T39
