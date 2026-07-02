@@ -43,7 +43,7 @@ Browser voxel sandbox: fully destructible suburban arena (terrain→player), str
 ## §T tasks
 
 id|st|task|deps|cites
-T1|.|[CORE] scaffold: vite+ts+three WebGPURenderer, rAF render loop, fly cam, flat test ground plane||§C
+T1|x|[CORE] scaffold: vite+ts+three WebGPURenderer, rAF render loop, fly cam, flat test ground plane||§C
 T2|.|[CORE] fixed-tick sim loop + I.cmd command queue + seeded PRNG|T1|V1,V2,V11
 T3|.|[CORE] sparse chunk store (I.chunk) + GPU mirror upload|T1|V5
 T4|.|[CORE] I.hash harness + replay determinism test|T2,T3|V3,V10
