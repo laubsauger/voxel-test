@@ -19,6 +19,8 @@ import { PlayerVisuals } from './render/player-visuals'
 import { SpectatorCam } from './render/spectator-cam'
 import { WaterSurface } from './render/water/surface'
 import { BodyMeshes } from './render/body-meshes'
+import { FxSystem } from './render/fx/fx-system'
+import { ProjectileMeshes } from './render/projectile-meshes'
 import { FixedStepDriver, Sim } from './sim/loop'
 import { registerEditOps } from './sim/edit-ops'
 import { registerShootOp } from './sim/shoot-op'
@@ -81,6 +83,10 @@ export class Game {
   private readonly driver = new FixedStepDriver()
   private readonly waterSurface: WaterSurface
   private readonly bodyMeshes: BodyMeshes
+  private readonly fx: FxSystem
+  private readonly projectileMeshes: ProjectileMeshes
+  /** sim event tap for audio (main.ts) — called with the frame's drained events */
+  onSimEvents: ((events: ReturnType<Sim['drainEvents']>) => void) | null = null
   private readonly spectator: SpectatorCam
   private readonly hudEl: HTMLElement | null
   private playerVisuals: PlayerVisuals | undefined
@@ -113,6 +119,11 @@ export class Game {
     this.waterSurface = new WaterSurface()
     this.scene.add(this.waterSurface.mesh)
     this.bodyMeshes = new BodyMeshes(this.scene, this.world.chunks.material)
+    // T53 — event-driven destruction/combat VFX (V6: reads events, writes nothing)
+    this.fx = new FxSystem(this.sim.world)
+    this.scene.add(this.fx.group)
+    // T54 — bomb projectile visuals (reads phys.projectiles, trails via fx)
+    this.projectileMeshes = new ProjectileMeshes(this.scene, this.fx)
     this.spectator = new SpectatorCam(this.cam.camera, this.input)
     this.hudEl = document.getElementById('hud')
 
@@ -233,6 +244,8 @@ export class Game {
         )
       }
       this.driver.advance(dtMs, this.sim) // fixed-tick sim (V11)
+      const fxEvents = this.sim.drainEvents() // T53 — sim → render outbox (once per frame)
+      this.onSimEvents?.(fxEvents)
 
       const player = this.phys.players.get(LOCAL_PLAYER)
       if (!this.playerVisuals) this.playerVisuals = new PlayerVisuals(this.scene, this.cam.camera)
@@ -253,6 +266,8 @@ export class Game {
 
       this.world.update(dt) // remesh budget, debris, CSM (V7)
       this.bodyMeshes.update(this.phys.bodies)
+      this.fx.update(dt, fxEvents, this.cam.camera)
+      this.projectileMeshes.update(this.phys.projectiles, dt)
       this.waterSurface.update(this.water, this.sim.world)
 
       frames++

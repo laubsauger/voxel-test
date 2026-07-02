@@ -199,6 +199,12 @@ const tools = new ToolController(game, hud, (e) => {
   }
 })
 hud.onSelect = () => void sfxPlay('ui-hotbar')
+// T54 — bomb detonations happen ticks after the throw: audio rides sim events
+game.onSimEvents = (events) => {
+  for (const e of events) {
+    if (e.kind === 'explosion') gameAudio.onExplosion(e.x, e.y, e.z, e.power)
+  }
+}
 game.equippedTool = () => tools.equipped // T49 — FP viewmodel reads the hotbar
 game.onFlyChange = (f) => hud.setFly(f)
 game.onPlayerDamaged = () => {
