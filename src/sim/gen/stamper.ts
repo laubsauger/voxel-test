@@ -23,6 +23,7 @@ import {
   MAT_DIRT,
   MAT_GLASS,
   MAT_GRASS,
+  MAT_LEAVES,
   MAT_WOOD,
 } from '../materials'
 import {
@@ -35,6 +36,8 @@ import {
   type Layout,
   type Opening,
   type Rect,
+  type Shrub,
+  type Tree,
 } from './layout'
 import type { VoxelGrid } from '../vox/remap'
 
@@ -186,6 +189,59 @@ function stampHouse(store: ChunkStore, layout: Layout, h: House): void {
   }
 }
 
+/**
+ * T42 — vegetation. Deterministic integer hash for ragged canopy edges
+ * (pure fn of position+seed — no stream to get out of order, V2-safe).
+ */
+function hash3(x: number, y: number, z: number, seed: number): number {
+  let h = (seed ^ Math.imul(x + 1, 0x9e3779b1) ^ Math.imul(y + 1, 0x85ebca6b) ^ Math.imul(z + 1, 0xc2b2ae35)) >>> 0
+  h ^= h >>> 15
+  h = Math.imul(h, 0x2c1b3c6d) >>> 0
+  return (h ^ (h >>> 13)) >>> 0
+}
+
+/** slightly-oblate leaf blob; fills AIR only so it never eats structures */
+function fillLeafBlob(store: ChunkStore, cx: number, cy: number, cz: number, r: number, seed: number): void {
+  const r2 = r * r
+  const shell = (r - 1) * (r - 1)
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let z = cz - r; z <= cz + r; z++) {
+      for (let x = cx - r; x <= cx + r; x++) {
+        const dx = x - cx
+        const dy = y - cy
+        const dz = z - cz
+        const d2 = dx * dx + dy * dy + ((dy * dy) >> 1) + dz * dz
+        if (d2 > r2) continue
+        // ragged edge: drop ~37% of the outer shell
+        if (d2 > shell && (hash3(x, y, z, seed) & 7) < 3) continue
+        if (store.getVoxel(x, y, z) === MAT_AIR) store.setVoxel(x, y, z, MAT_LEAVES)
+      }
+    }
+  }
+}
+
+function stampTree(store: ChunkStore, t: Tree, g: number): void {
+  const p = new Prng(t.seed)
+  // trunk 2×2, rooted 2 into the ground (grass bumps reach +2)
+  store.fillBox(t.x, g - 2, t.z, t.x + 1, g + t.trunkH - 1, t.z + 1, MAT_WOOD)
+  // canopy: main blob over the trunk top + 2-4 offset sub-blobs
+  const cy = g + t.trunkH + (t.canopyR >> 1) - 1
+  fillLeafBlob(store, t.x, cy, t.z, t.canopyR, t.seed)
+  const blobs = 2 + p.nextInt(3)
+  for (let i = 0; i < blobs; i++) {
+    const r = Math.max(3, t.canopyR - 2 - p.nextInt(3))
+    const ox = p.nextInt(t.canopyR + 1) - (t.canopyR >> 1)
+    const oy = p.nextInt((t.canopyR >> 1) + 1) - (t.canopyR >> 2)
+    const oz = p.nextInt(t.canopyR + 1) - (t.canopyR >> 1)
+    fillLeafBlob(store, t.x + ox, cy + oy, t.z + oz, r, (t.seed + i + 1) >>> 0)
+  }
+}
+
+function stampShrub(store: ChunkStore, s: Shrub, g: number): void {
+  // half-buried blob → leafy mound sitting on the grass
+  fillLeafBlob(store, s.x, g + 1, s.z, s.r, s.seed)
+}
+
 function stampPool(store: ChunkStore, basin: Box): void {
   // concrete shell around and below, then dig the interior to air
   store.fillBox(
@@ -235,6 +291,11 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   }
 
   for (const p of layout.props) stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot)
+
+  // vegetation last: leaf blobs fill AIR only, so canopies drape around
+  // everything already stamped instead of overwriting it
+  for (const t of layout.trees) stampTree(store, t, layout.groundY)
+  for (const s of layout.shrubs) stampShrub(store, s, layout.groundY)
 
   return { waterFills }
 }

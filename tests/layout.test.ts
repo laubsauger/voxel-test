@@ -103,6 +103,19 @@ describe('suburb layout generator (T19, V2)', () => {
       expect(prop.y).toBeGreaterThan(0)
       expect(prop.y).toBeLessThan(WORLD_VY)
     }
+    for (const t of l.trees) {
+      expect(t.x - t.canopyR).toBeGreaterThanOrEqual(0)
+      expect(t.x + 1 + t.canopyR).toBeLessThan(WORLD_VX)
+      expect(t.z - t.canopyR).toBeGreaterThanOrEqual(0)
+      expect(t.z + 1 + t.canopyR).toBeLessThan(WORLD_VZ)
+      expect(GROUND_Y + t.trunkH + 2 * t.canopyR).toBeLessThan(WORLD_VY)
+    }
+    for (const s of l.shrubs) {
+      expect(s.x - s.r).toBeGreaterThanOrEqual(0)
+      expect(s.x + s.r).toBeLessThan(WORLD_VX)
+      expect(s.z - s.r).toBeGreaterThanOrEqual(0)
+      expect(s.z + s.r).toBeLessThan(WORLD_VZ)
+    }
   })
 
   it('stairs: every multi-story house has a walkable straight run that never blocks the door (T41)', () => {
@@ -136,6 +149,29 @@ describe('suburb layout generator (T19, V2)', () => {
         expect(distToFront).toBeGreaterThanOrEqual(10)
       }
       expect(multi, `seed ${seed} should have multi-story houses`).toBeGreaterThan(0)
+    }
+  })
+
+  it('vegetation: trees exist and never intersect houses or driveways (T42)', () => {
+    // WHY: trees must add life without blocking gameplay routes — a canopy
+    // over a driveway clips parked cars, a trunk in a house corrupts walls.
+    for (const seed of [42, 7, 99]) {
+      const l = generateLayout(seed)
+      expect(l.trees.length, `seed ${seed} trees`).toBeGreaterThan(10)
+      expect(l.shrubs.length, `seed ${seed} shrubs`).toBeGreaterThan(5)
+      for (const t of l.trees) {
+        const canopy: Rect = { x0: t.x - t.canopyR, z0: t.z - t.canopyR, x1: t.x + 1 + t.canopyR, z1: t.z + 1 + t.canopyR }
+        for (const h of l.houses) {
+          expect(overlaps(canopy, h.rect), `tree(${t.x},${t.z}) r${t.canopyR} vs house`).toBe(false)
+          if (h.ell) expect(overlaps(canopy, h.ell), `tree(${t.x},${t.z}) vs ell`).toBe(false)
+          expect(overlaps(canopy, h.driveway), `tree(${t.x},${t.z}) vs driveway`).toBe(false)
+        }
+        // trunk never inside a pool basin (deck kept clear)
+        for (const p of l.pools) {
+          const trunk: Rect = { x0: t.x, z0: t.z, x1: t.x + 1, z1: t.z + 1 }
+          expect(overlaps(trunk, p.basin)).toBe(false)
+        }
+      }
     }
   })
 

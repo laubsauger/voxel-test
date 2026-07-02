@@ -96,6 +96,30 @@ export interface Pool {
   basin: Box
 }
 
+/**
+ * T42 — vegetation. Trunk base at (x,z) (2×2 voxels), blobby leaf canopy on
+ * top; per-tree seed drives canopy blob variation in the stamper. Trees are
+ * plain voxels (MAT_WOOD/MAT_LEAVES) — destructible, felled by connectivity.
+ */
+export interface Tree {
+  x: number
+  z: number
+  /** trunk height in voxels above ground */
+  trunkH: number
+  /** main canopy blob radius, voxels */
+  canopyR: number
+  /** per-tree seed for canopy variation (derived from world seed) */
+  seed: number
+}
+
+/** small leaf clump (foundation planting) */
+export interface Shrub {
+  x: number
+  z: number
+  r: number
+  seed: number
+}
+
 export interface Prop {
   /** placeholder car kinds 'car0'|'car1' now; .vox prop names later */
   kind: string
@@ -115,6 +139,8 @@ export interface Layout {
   houses: House[]
   pools: Pool[]
   props: Prop[]
+  trees: Tree[]
+  shrubs: Shrub[]
 }
 
 export const GROUND_Y = 48 // 4.8 m — within the y≈40..64 ground band
@@ -144,6 +170,21 @@ export const STAIR_TREAD = 3
 export const STAIR_W = 9
 export const STAIR_STEPS = STORY_H / STAIR_RISE // 13, integer by construction
 export const STAIR_RUN = STAIR_STEPS * STAIR_TREAD // 39
+
+/** tree size archetypes (T42): base height/radius + variation range */
+const TREE_ARCH = [
+  { h0: 12, hv: 5, r0: 6, rv: 3 }, // small
+  { h0: 18, hv: 6, r0: 9, rv: 3 }, // medium
+  { h0: 26, hv: 7, r0: 12, rv: 3 }, // large
+] as const
+
+function growRect(r: Rect, by: number): Rect {
+  return { x0: r.x0 - by, z0: r.z0 - by, x1: r.x1 + by, z1: r.z1 + by }
+}
+
+function rectsTouch(a: Rect, b: Rect): boolean {
+  return a.x0 <= b.x1 && a.x1 >= b.x0 && a.z0 <= b.z1 && a.z1 >= b.z0
+}
 
 function makeRoads(): Road[] {
   const roads: Road[] = []
@@ -216,6 +257,8 @@ export function generateLayout(seed: number): Layout {
   const houses: House[] = []
   const pools: Pool[] = []
   const props: Prop[] = []
+  const trees: Tree[] = []
+  const shrubs: Shrub[] = []
 
   for (const lot of lots) {
     const lotW = lot.rect.x1 - lot.rect.x0 + 1
@@ -302,6 +345,7 @@ export function generateLayout(seed: number): Layout {
     }
 
     // backyard pool on ~35% of lots, only if it fits behind the house/L
+    let poolBasin: Box | null = null
     if (prng.nextInt(100) < 35) {
       const pw = 40 + prng.nextInt(25)
       const pd = 24 + prng.nextInt(9)
@@ -316,9 +360,69 @@ export function generateLayout(seed: number): Layout {
         : backEdge - pd + 1 >= lot.rect.z0 + 8
           ? { x0: px0, y0: GROUND_Y - POOL_DEPTH, z0: backEdge - pd + 1, x1: px0 + pw - 1, y1: GROUND_Y - 1, z1: backEdge }
           : null
-      if (basin) pools.push({ lotId: lot.id, basin })
+      if (basin) {
+        pools.push({ lotId: lot.id, basin })
+        poolBasin = basin
+      }
+    }
+
+    // T42 — yard trees: 1-3 per lot, canopy fully clear of house/ell/driveway/pool deck
+    const lotD = lot.rect.z1 - lot.rect.z0 + 1
+    const keepOut: Rect[] = [growRect(rect, 2), growRect(driveway, 2)]
+    if (ell) keepOut.push(growRect(ell, 2))
+    if (poolBasin) keepOut.push({ x0: poolBasin.x0 - 7, z0: poolBasin.z0 - 7, x1: poolBasin.x1 + 7, z1: poolBasin.z1 + 7 })
+    const wantTrees = 1 + detail.nextInt(3)
+    let placedTrees = 0
+    for (let attempt = 0; attempt < 12 && placedTrees < wantTrees; attempt++) {
+      const arch = TREE_ARCH[detail.nextInt(3)]
+      const trunkH = arch.h0 + detail.nextInt(arch.hv)
+      const canopyR = arch.r0 + detail.nextInt(arch.rv)
+      const tx = lot.rect.x0 + 4 + detail.nextInt(lotW - 9)
+      const tz = lot.rect.z0 + 4 + detail.nextInt(lotD - 9)
+      const canopy: Rect = { x0: tx - canopyR, z0: tz - canopyR, x1: tx + 1 + canopyR, z1: tz + 1 + canopyR }
+      const treeSeed = detail.nextU32()
+      if (keepOut.some((k) => rectsTouch(canopy, k))) continue
+      trees.push({ x: tx, z: tz, trunkH, canopyR, seed: treeSeed })
+      placedTrees++
+    }
+
+    // T42 — foundation shrubs along the front wall, clear of door and driveway
+    const doorCx = rect.x0 + door.offset + (DOOR_W >> 1)
+    const shrubZ = frontZneg ? rect.z0 - 4 : rect.z1 + 3
+    const nShrubs = 2 + detail.nextInt(3)
+    for (let i = 0; i < nShrubs; i++) {
+      const sx = rect.x0 + 3 + detail.nextInt(Math.max(1, w - 6))
+      const sr = 2 + detail.nextInt(2)
+      const sSeed = detail.nextU32()
+      if (Math.abs(sx - doorCx) < 9) continue
+      const srect: Rect = { x0: sx - sr, z0: shrubZ - sr, x1: sx + sr, z1: shrubZ + sr }
+      if (rectsTouch(srect, driveway)) continue
+      shrubs.push({ x: sx, z: shrubZ, r: sr, seed: sSeed })
     }
   }
 
-  return { seed, groundY: GROUND_Y, roads, lots, houses, pools, props }
+  // T42 — parkway street trees: alternating road sides every ~9.6 m, clear of
+  // intersections and driveways (small/medium archetypes only near lamps)
+  const street = new Prng((seed ^ 0x7f4a7c15) >>> 0)
+  for (const road of roads) {
+    const c = road.center
+    let k = 0
+    for (let along = 48; along < WORLD_VX - 48; along += 96, k++) {
+      const jitter = street.nextInt(13) - 6
+      const arch = TREE_ARCH[street.nextInt(2)]
+      const trunkH = arch.h0 + street.nextInt(arch.hv)
+      const canopyR = arch.r0 + street.nextInt(arch.rv)
+      const treeSeed = street.nextU32()
+      const a = along + jitter
+      if (ROAD_CENTERS.some((c2) => Math.abs(a - c2) < ROAD_EXTENT + 12)) continue
+      const perp = c + (k % 2 === 0 ? -(ROAD_EXTENT + 3) : ROAD_EXTENT + 2)
+      const tx = road.axis === 'x' ? a : perp
+      const tz = road.axis === 'x' ? perp : a
+      const canopy: Rect = { x0: tx - canopyR, z0: tz - canopyR, x1: tx + 1 + canopyR, z1: tz + 1 + canopyR }
+      if (houses.some((h) => rectsTouch(canopy, growRect(h.driveway, 4)) || rectsTouch(canopy, h.rect))) continue
+      trees.push({ x: tx, z: tz, trunkH, canopyR, seed: treeSeed })
+    }
+  }
+
+  return { seed, groundY: GROUND_Y, roads, lots, houses, pools, props, trees, shrubs }
 }

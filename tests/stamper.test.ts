@@ -12,6 +12,7 @@ import {
   MAT_DIRT,
   MAT_GLASS,
   MAT_GRASS,
+  MAT_LEAVES,
   MAT_METAL,
   MAT_PLASTER,
   MAT_WOOD,
@@ -135,6 +136,29 @@ describe('scene stamper (T20, V2, V5)', () => {
       const midZ = (h.rect.z0 + h.rect.z1) >> 1
       expect(store.getVoxel(midX, g + h.storyH, midZ)).toBe(MAT_WOOD)
     }
+  })
+
+  it('trees: wood trunk rooted in the ground with a leaf canopy above (T42)', () => {
+    // WHY: trees are plain destructible voxels — trunk must connect ground →
+    // canopy so connectivity can fell them as one piece.
+    expect(layout.trees.length).toBeGreaterThan(0)
+    for (const t of layout.trees.slice(0, 8)) {
+      expect(store.getVoxel(t.x, g, t.z), `trunk base (${t.x},${t.z})`).toBe(MAT_WOOD)
+      expect(store.getVoxel(t.x, g + t.trunkH - 1, t.z), 'trunk top').toBe(MAT_WOOD)
+      // canopy: some leaves in the blob around the trunk top
+      let leaves = 0
+      const cy = g + t.trunkH + (t.canopyR >> 1) - 1
+      for (let y = cy - 2; y <= cy + 2; y++)
+        for (let z = t.z - 3; z <= t.z + 3; z++)
+          for (let x = t.x - 3; x <= t.x + 3; x++) {
+            if (store.getVoxel(x, y, z) === MAT_LEAVES) leaves++
+          }
+      expect(leaves, `canopy leaves near (${t.x},${t.z})`).toBeGreaterThan(10)
+    }
+    // shrubs: leafy mound on the grass
+    expect(layout.shrubs.length).toBeGreaterThan(0)
+    const s = layout.shrubs[0]
+    expect(store.getVoxel(s.x, g + 1, s.z)).toBe(MAT_LEAVES)
   })
 
   it('is deterministic: same seed → identical chunk hash; different seed differs', () => {
