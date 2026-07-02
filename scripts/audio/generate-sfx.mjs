@@ -92,11 +92,17 @@ function footstepGroup(gait, surface, prompt, variants) {
 }
 
 const STEP_VARIANTS = ['heel-first contact', 'flat even contact', 'slight toe scuff at the end']
+// B27: asphalt-only variants — 'heel-first contact' invited heel-click
+// renditions; asphalt keeps three distinct but explicitly soft contacts
+const ASPHALT_VARIANTS = ['soft flat even contact', 'gentle rolling contact', 'slight toe scuff at the end']
 
 const FOOTSTEP_SURFACES = [
   ['grass', 'sneaker on dry suburban lawn grass, soft turf compression with subtle blade rustle'],
   ['concrete', 'sneaker on a smooth concrete sidewalk, hard slap with tiny grit'],
-  ['asphalt', 'sneaker on rough asphalt street, gritty granular contact'],
+  // B27: old prompt ('rough asphalt street, gritty granular contact') came out
+  // metallic/clicky — rewritten as a dull low quiet rubber scuff with hard
+  // negative guards (winning candidate B of the 2-variant probe, 2026-07-02)
+  ['asphalt', 'soft-soled sneaker on smooth asphalt, low dull quiet rubber scuff with faint grit texture, muffled and padded, dead dry acoustic, no metallic sound, no click, no heels, no reverb', ASPHALT_VARIANTS],
   ['wood', 'sneaker on a wooden porch deck plank, low hollow knock'],
   ['dirt', 'sneaker on packed dry dirt with small pebbles, dull earthy thud'],
   ['water', 'sneaker stepping in ankle-deep water, small sloshing splash'],
@@ -104,9 +110,9 @@ const FOOTSTEP_SURFACES = [
 
 const SFX_GROUPS = [
   // --- footsteps: walk + run × 6 surfaces × 3 variants ---------------------
-  ...FOOTSTEP_SURFACES.flatMap(([surface, prompt]) => [
-    footstepGroup('walk', surface, prompt, STEP_VARIANTS),
-    footstepGroup('run', surface, prompt, STEP_VARIANTS),
+  ...FOOTSTEP_SURFACES.flatMap(([surface, prompt, variants = STEP_VARIANTS]) => [
+    footstepGroup('walk', surface, prompt, variants),
+    footstepGroup('run', surface, prompt, variants),
   ]),
 
   // --- jump: takeoff scuff + landing, hard/soft ------------------------------
