@@ -1,20 +1,24 @@
-import { Color, Scene, WebGPURenderer, ACESFilmicToneMapping } from 'three/webgpu'
-import { WorldRenderer } from './render/world-renderer'
-import { PlayerCam } from './render/player-cam'
-import { PlayerInput } from './render/player-input'
-import { PlayerMesh } from './render/player-mesh'
-import { WaterSurface } from './render/water/surface'
-import { BodyMeshes } from './render/body-meshes'
-import { FixedStepDriver, Sim } from './sim/loop'
-import { registerEditOps } from './sim/edit-ops'
-import { createPhysics, loadJolt } from './sim/physics'
-import { attachWaterSim } from './sim/water/water-sim'
-import { generateLayout } from './sim/gen/layout'
-import { stampScene } from './sim/gen/stamper'
-import { placeholderProps } from './sim/gen/props'
+/**
+ * T31 — boot orchestration (I.boot). Thin by design:
+ *   1. capability check (WebGPU, fail loud)
+ *   2. preloader → Game.create (real progress stages)
+ *   3. route by URL params: ?boot=game&seed=N straight into gameplay
+ *      (agent/CDP smoke path), ?dev=1 profiling overlay, default → menu.
+ * All sim/render wiring lives in src/game.ts; all UI in src/ui/**.
+ */
+import './ui/style.css'
+import { Game } from './game'
+import { parseBootParams } from './ui/boot-params'
+import { SettingsStore } from './ui/settings-store'
+import { Preloader } from './ui/preloader'
+import { Hud } from './ui/hud'
+import { ToolController } from './ui/tools'
+import { MainMenu, PauseMenu } from './ui/menu'
+import { SettingsPanel } from './ui/settings-panel'
+import { DevOverlay } from './ui/dev-overlay'
 
 const app = document.getElementById('app')!
-const hud = document.getElementById('hud')!
+const root = document.getElementById('ui-root')!
 const fatal = document.getElementById('fatal')!
 
 function die(msg: string): never {
@@ -23,113 +27,121 @@ function die(msg: string): never {
   throw new Error(msg)
 }
 
-// §C: WebGPU only, no fallback. Fail loud.
+// --- phase 1: capability check (§C: WebGPU only, no fallback, fail loud) -----
 if (!('gpu' in navigator)) die('WebGPU not available. Desktop Chrome required.')
 
-// I.boot (interim until T31): ?seed=N picks the map; fixed default keeps
-// CDP smoke deterministic.
-const params = new URLSearchParams(location.search)
-const seed = Number(params.get('seed') ?? 1337) >>> 0
+const boot = parseBootParams(location.search)
+const store = new SettingsStore()
 
-// --- sim (authoritative, deterministic) --------------------------------------
-// Order matters and is fixed here (V2): scene stamp → water system → physics
-// (createPhysics drains the dirty set for static collision and registers the
-// physics step; water registered first ⇒ CA runs before physics each tick).
-const sim = new Sim(seed)
-registerEditOps(sim)
-const layout = generateLayout(seed)
-const { waterFills } = stampScene(sim.world, layout, placeholderProps())
+// --- phase 2: preloader + game construction ----------------------------------
+const pre = new Preloader(root, boot.seed)
+const game = await Game.create({
+  seed: boot.seed,
+  host: app,
+  onStage: (s) => pre.stage(s),
+  graphics: { quality: store.get('graphics.quality'), fov: store.get('graphics.fov') },
+}).catch((e: unknown) => die(`boot failed: ${e instanceof Error ? e.message : String(e)}`))
 
-const water = attachWaterSim(sim)
-// edits wake settled water (breached pool wall etc.)
-sim.world.onVoxelChanged = (x, y, z) => water.notifyVoxelChanged(x, y, z)
-// fill pool basins before tick 0 — part of deterministic scene construction
-for (const { box } of waterFills) {
-  for (let y = box.y0; y <= box.y1; y++)
-    for (let z = box.z0; z <= box.z1; z++)
-      for (let x = box.x0; x <= box.x1; x++) water.addWater(x, y, z, 255)
+// --- settings wiring (I.settings — live apply, render-layer only, V6) --------
+const applyControls = () => {
+  game.input.sensitivity = store.get('controls.sensitivity')
+  game.input.invertY = store.get('controls.invertY')
+}
+const applyGraphics = () =>
+  game.applyGraphics({ quality: store.get('graphics.quality'), fov: store.get('graphics.fov') })
+applyControls()
+store.subscribe('controls.sensitivity', applyControls)
+store.subscribe('controls.invertY', applyControls)
+store.subscribe('graphics.quality', applyGraphics)
+store.subscribe('graphics.fov', applyGraphics)
+
+const dev = new DevOverlay(game)
+const syncDev = () => dev.setEnabled(boot.dev || store.get('dev.profiling'))
+store.subscribe('dev.profiling', syncDev)
+syncDev()
+
+// --- HUD + tools (T28) --------------------------------------------------------
+const hud = new Hud(root)
+new ToolController(game, hud)
+game.onFlyChange = (f) => hud.setFly(f)
+game.onPlayerDamaged = () => hud.damageFlash()
+hud.setLockHint(false)
+
+// --- menus (T33) ----------------------------------------------------------------
+let settingsReturn: 'menu' | 'pause' | null = null
+
+const settings = new SettingsPanel(root, store, boot)
+const menu = new MainMenu(root, {
+  seed: boot.seed,
+  onPlay: () => startPlay(true),
+  onSettings: () => openSettings('menu'),
+})
+const pause = new PauseMenu(root, {
+  onResume: resume,
+  onSettings: () => openSettings('pause'),
+  onQuit: quitToMenu,
+})
+
+function lock(): void {
+  // may reject during Chrome's post-Esc cooldown — the click hint stays available
+  const p = game.renderer.domElement.requestPointerLock() as Promise<void> | undefined
+  p?.catch(() => hud.setLockHint(true))
 }
 
-await loadJolt().catch((e) => die(`Jolt WASM failed to load: ${e}`))
-const phys = await createPhysics(sim).catch((e) => die(`physics init failed: ${e}`))
+function startPlay(requestLock: boolean): void {
+  menu.hide()
+  game.enterPlay(store.get('gameplay.camera'))
+  hud.show()
+  if (requestLock) lock()
+  else hud.setLockHint(true)
+}
 
-const driver = new FixedStepDriver()
+function resume(): void {
+  pause.hide()
+  lock()
+}
 
-// --- render -------------------------------------------------------------------
-const renderer = new WebGPURenderer({ antialias: true })
-renderer.toneMapping = ACESFilmicToneMapping
-renderer.shadowMap.enabled = true
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
-renderer.setSize(innerWidth, innerHeight)
-app.appendChild(renderer.domElement)
+function quitToMenu(): void {
+  pause.hide()
+  hud.hide()
+  game.enterOrbit()
+  menu.show()
+}
 
-const scene = new Scene()
-scene.background = new Color(0x87b5e0)
+function openSettings(from: 'menu' | 'pause'): void {
+  settingsReturn = from
+  if (from === 'menu') menu.hide()
+  else pause.hide()
+  settings.show()
+}
 
-const cam = new PlayerCam(innerWidth / innerHeight, renderer.domElement) // KeyV: fp/tp
-const input = new PlayerInput(renderer.domElement)
+settings.onClose = () => {
+  settings.hide()
+  if (settingsReturn === 'pause') pause.show()
+  else menu.show()
+  settingsReturn = null
+}
 
-const world = new WorldRenderer({
-  renderer,
-  scene,
-  world: sim.world,
-  camera: cam.camera,
-  // physics drains ChunkStore.dirty in-tick; render consumes its re-feed
-  dirtySource: () => phys.drainRemesh(),
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' && settings.visible) settings.onClose?.()
 })
 
-const waterSurface = new WaterSurface()
-scene.add(waterSurface.mesh)
-
-// dynamic island bodies (T12) share the chunk TSL material
-const bodyMeshes = new BodyMeshes(scene, world.chunks.material)
-
-const LOCAL_PLAYER = 1
-sim.queue.push({ tick: 0, playerId: LOCAL_PLAYER, seq: 0, op: { kind: 'spawn' } })
-
-let playerMesh: PlayerMesh | undefined
-
-addEventListener('resize', () => {
-  cam.camera.aspect = innerWidth / innerHeight
-  cam.camera.updateProjectionMatrix()
-  renderer.setSize(innerWidth, innerHeight)
-  world.resize()
-})
-
-let last = performance.now()
-let frames = 0
-let fpsAt = last
-renderer.setAnimationLoop((now: number) => {
-  const dtMs = Math.min(now - last, 100)
-  last = now
-
-  // local input → command queue (lockstep swaps this for the net queue, M5)
-  sim.queue.push(input.moveCommand(sim.tick, LOCAL_PLAYER))
-  driver.advance(dtMs, sim) // fixed-tick sim (V11)
-
-  const player = phys.players.get(LOCAL_PLAYER)
-  if (player) {
-    if (!playerMesh) {
-      playerMesh = new PlayerMesh(player)
-      scene.add(playerMesh.group)
-    }
-    playerMesh.update(player)
-    cam.update(player, sim.world)
-    playerMesh.group.visible = cam.mode === 'tp' // FP: don't render inside own head
+// pointer-lock lost in play (Esc) → pause menu
+document.addEventListener('pointerlockchange', () => {
+  const locked = document.pointerLockElement === game.renderer.domElement
+  if (locked) {
+    hud.setLockHint(false)
+    pause.hide()
+    return
   }
-
-  world.update(dtMs / 1000) // remesh budget, debris, CSM (V7)
-  bodyMeshes.update(phys.bodies)
-  waterSurface.update(water, sim.world)
-
-  frames++
-  if (now - fpsAt > 500) {
-    hud.textContent =
-      `${Math.round((frames * 1000) / (now - fpsAt))} fps  |  tick ${sim.tick}` +
-      `  |  meshes ${world.chunks.chunkMeshCount} pending ${world.chunks.pendingCount}` +
-      `  |  bodies ${phys.bodies.size}  |  WASD move, V camera, click to look`
-    frames = 0
-    fpsAt = now
-  }
-  world.render()
+  if (game.state === 'play' && !settings.visible && settingsReturn === null) pause.show()
 })
+
+// --- phase 3: route (I.boot) ---------------------------------------------------
+await pre.done()
+if (boot.mode === 'game') {
+  // agent/CDP smoke path — no user gesture available, hint until first click
+  startPlay(false)
+} else {
+  menu.show()
+}
