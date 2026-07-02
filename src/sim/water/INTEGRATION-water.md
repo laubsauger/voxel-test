@@ -1,7 +1,7 @@
-# INTEGRATION — water track (T15–T17)
+# INTEGRATION — water track (T15–T17, T60–T62)
 
-Owner: WATER track, branch `track/w`. Status of everything below: implemented
-and unit-tested unless marked **open**.
+Owner: WATER track, branch `track/water2` (v2 pass over `track/w`). Status of
+everything below: implemented and unit-tested unless marked **open**.
 
 Files:
 
@@ -169,9 +169,21 @@ Notes for physics:
 
 ## 5. Behavior notes & known artifacts (by design, tested)
 
-- Residue films: lateral pairs with level difference ≤ 1 are a fixpoint, so
-  draining leaves a ≤1-level puddle gradient sloping toward the hole (~0.4%
-  of a full cell per cell). Reads as a wet floor; not a leak (mass exact).
+- Residue films (T62 update): the lateral settle deadband makes pairs with
+  level difference ≤ 2 a fixpoint, so draining leaves a ≤2-level puddle
+  gradient sloping toward the hole (~0.8% of a full cell per cell). Reads as
+  a wet floor; not a leak (mass exact). The deadband exists because diff-2
+  ramps under the alternating pairing previously sustained a bucket-brigade
+  trickle for O(area) steps — the B21 "breach outflow runs forever" bug.
+- Waterfall leg (T62): a supported donor gives its whole level to an empty
+  partner that is about to fall — drains/cascades are advective, pools
+  visibly drain when breached.
+- Splash leg (T62): unsupported water landing on partial water spills a
+  quarter of the level difference sideways — falls roll/slosh outward.
+- `attachWaterSim` runs 2 CA steps per sim tick (WATER_STEPS_PER_TICK):
+  12 m/s fall speed, doubled lateral transport. GPU-harness note: the GPU
+  mirror still steps one CA step per `step()` call — keep the step COUNTS
+  equal when comparing, not the tick counts.
 - Falling columns stretch with air gaps (gather CA artifact) — reads as
   dripping; surface mesh closes each blob so it renders acceptably.
 - No compression/pressure rule (marked optional in T15): water does not rise
@@ -180,17 +192,49 @@ Notes for physics:
 - Water at world edge is walled in (no out-of-bounds leak), matching arena
   design.
 
-## 6. Open issues (summary)
+## 6. T61 render wiring (game.ts owner — mostly none needed)
+
+- `WaterSurface.update(water, world)` unchanged; it now also uploads a
+  per-vertex `waterFlow` attribute (disturbance mask from the sim's wake
+  set) — no new wiring.
+- The material animates ripples via TSL `time`; no per-frame uniform pushes
+  needed.
+- **Open (wiring wanted):** underwater camera tint. Render-side component is
+  ready: `src/render/water/underwater.ts`. game.ts should do:
+
+  ```ts
+  import { UnderwaterOverlay } from './render/water/underwater'
+  const underwater = new UnderwaterOverlay() // appends a DOM overlay
+  // in the frame loop, after cam update:
+  underwater.update(this.cam.camera.position, this.water)
+  ```
+
+## 7. T60 swimming (sim implemented; audio/particles hooks open)
+
+- Sim side is fully wired without game.ts changes: `attachBuoyancy` now sets
+  `phys.water`, and the character update (src/sim/player.ts) swims whenever
+  the capsule center is in water: jump = swim up, crouch = sink, neutral
+  float holds the head above the waterline (FLOAT_DEPTH). Crouch does NOT
+  shrink the capsule while swimming. Sprint has no effect in water.
+  Constants exported from player.ts (SWIM_SPEED etc.).
+- `p.swimming` (PlayerEntity) is derived per tick — render/audio may read it
+  (e.g. swim animations); it is not hashed.
+- **Splash hook (audio owner):** set `phys.onSplash = (e: SplashEvent) => …`
+  (fields: playerId, x/y/z meters, speed m/s, entering). Fired in-tick when
+  a player crosses the waterline with |vy| ≥ 1 m/s — callback must be
+  render/audio only, never mutate sim (V6). Suggested wiring: play a splash
+  SFX positioned at (x, y, z), volume scaled by `speed`, and emit a particle
+  burst via the existing debris/particles system.
+- **Underwater tint:** see §6.
+
+## 8. Open issues (summary)
 
 1. Global sim hash does not include water yet (§1) — CORE one-liner.
 2. GPU harness dev page not built (§2) — needs render-track dev page; the
    compute class + design above are ready.
 3. GPU active-region culling deferred (§2).
-4. Edit ops don't call `notifyVoxelChanged` yet — the dig/place handlers in
-   `src/sim/edit-ops.ts` predate water; whoever touches them next should add
-   the call (I may not modify existing handler files per track rules? —
-   edit-ops.ts is not in my do-not-modify list, but it IS actively owned by
-   CORE; left untouched to avoid a cross-track merge conflict. The call
-   pattern is documented in §1.)
+4. ~~Edit ops don't call `notifyVoxelChanged`~~ — resolved: game.ts wires
+   `world.onVoxelChanged` → `water.notifyVoxelChanged` (ChunkStore hook).
 5. No pressure/compression rule (§5).
 6. Buoyancy ignores angular velocity drag (§4).
+7. Underwater overlay + splash SFX wiring (§6, §7) — game/audio owners.

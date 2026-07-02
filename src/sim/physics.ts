@@ -29,7 +29,8 @@ import {
 } from './connectivity'
 import { material, VOXEL_VOLUME } from './materials'
 import { registerDestructionOps } from './destruction'
-import { registerPlayerOps, updatePlayers, type PlayerEntity } from './player'
+import { registerPlayerOps, updatePlayers, type PlayerEntity, type SplashEvent } from './player'
+import type { WaterSim } from './water/water-sim'
 
 type JoltApi = typeof Jolt
 
@@ -188,6 +189,22 @@ export class PhysicsWorld {
 
   /** player entities keyed by playerId (T21) — see player.ts */
   readonly players = new Map<number, PlayerEntity>()
+
+  /**
+   * T60 — water field reference for player swimming. Set by attachBuoyancy()
+   * (buoyancy-coupling.ts) — the one wiring point that already sees both
+   * physics and water. Null until then; swimming is inert without it.
+   * Water steps before physics in the sim system order (game.ts), so player
+   * updates read the current tick's field — deterministic (V2).
+   */
+  water: WaterSim | null = null
+
+  /**
+   * T60 — splash event hook (render/audio layer, V6): fired when a player
+   * enters/exits swimming with meaningful vertical speed. The callback runs
+   * in-tick and MUST NOT mutate sim state. See INTEGRATION-water.md §7.
+   */
+  onSplash: ((e: SplashEvent) => void) | null = null
 
   /** total bodies removed by the kill plane — hashed sim state (T40, V3) */
   removedBodies = 0
