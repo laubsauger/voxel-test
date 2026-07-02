@@ -11,7 +11,7 @@
 
 import { Prng } from '../prng'
 import { WORLD_VX, WORLD_VZ } from '../../world/chunks'
-import { MAT_BRICK, MAT_PLASTER } from '../materials'
+import { MAT_BRICK, MAT_PLASTER, MAT_ROOFTILE, MAT_WOOD } from '../materials'
 
 export interface Rect {
   x0: number
@@ -88,6 +88,16 @@ export interface House {
   driveway: Rect
   /** interior stairs to the upper floor; null for single-story houses */
   stairs: Stairs | null
+  /** gable roof material (MAT_WOOD or MAT_ROOFTILE); flat roofs stay concrete */
+  roofMat: number
+  /** driveway surface: plain concrete or brick/concrete paver checker */
+  driveMat: 'concrete' | 'paver'
+  /** concrete stoop in front of the door with posts + small awning */
+  porch: Rect | null
+  /** wood shutters flanking front-wall windows */
+  shutters: boolean
+  /** garden paver path: front lot edge → door (or porch) */
+  path: Rect
 }
 
 export interface Pool {
@@ -120,6 +130,34 @@ export interface Shrub {
   seed: number
 }
 
+/**
+ * T43 — street/yard detail. FenceLine is an axis-aligned 1-voxel-wide picket
+ * fence segment (gate gaps at driveways/paths are pre-split by the generator).
+ */
+export interface FenceLine {
+  x0: number
+  z0: number
+  x1: number
+  z1: number
+}
+
+export interface Lamp {
+  x: number
+  z: number
+  /** direction the arm + lamp head point (toward the road) */
+  dir: Side
+}
+
+export interface Mailbox {
+  x: number
+  z: number
+}
+
+export interface Bin {
+  x: number
+  z: number
+}
+
 export interface Prop {
   /** placeholder car kinds 'car0'|'car1' now; .vox prop names later */
   kind: string
@@ -141,6 +179,10 @@ export interface Layout {
   props: Prop[]
   trees: Tree[]
   shrubs: Shrub[]
+  fences: FenceLine[]
+  lamps: Lamp[]
+  mailboxes: Mailbox[]
+  bins: Bin[]
 }
 
 export const GROUND_Y = 48 // 4.8 m — within the y≈40..64 ground band
@@ -184,6 +226,53 @@ function growRect(r: Rect, by: number): Rect {
 
 function rectsTouch(a: Rect, b: Rect): boolean {
   return a.x0 <= b.x1 && a.x1 >= b.x0 && a.z0 <= b.z1 && a.z1 >= b.z0
+}
+
+/** squared distance from a point to a rect (0 when inside) */
+function rectDist2(r: Rect, x: number, z: number): number {
+  const dx = x < r.x0 ? r.x0 - x : x > r.x1 ? x - r.x1 : 0
+  const dz = z < r.z0 ? r.z0 - z : z > r.z1 ? z - r.z1 : 0
+  return dx * dx + dz * dz
+}
+
+/**
+ * Deterministic forced pool for the pool guarantee: behind the house with a
+ * shrinking size ladder; if the backyard is blocked (deep L extension), a
+ * small plunge pool in the front-yard corner opposite the driveway — that
+ * region is fixed geometry (48-voxel setback) so SOME basin always fits.
+ * biasX shifts the basin toward that world x (spawn side) instead of
+ * centering, which keeps the spawn-lot pool close to the road crossing.
+ */
+function forcePoolBasin(lot: Lot, h: House, biasX?: number): Box {
+  const frontZneg = lot.front === 'z-'
+  const lotW = lot.rect.x1 - lot.rect.x0 + 1
+  const poolX0 = (pw: number): number => {
+    if (biasX === undefined) return lot.rect.x0 + ((lotW - pw) >> 1)
+    return biasX > lot.rect.x0 + (lotW >> 1) ? lot.rect.x1 - 8 - pw + 1 : lot.rect.x0 + 8
+  }
+  for (const [pw, pd] of [
+    [40, 24],
+    [32, 20],
+    [24, 16],
+  ] as const) {
+    const backEdge = frontZneg
+      ? Math.max(h.rect.z1, h.ell ? h.ell.z1 : 0) + 8
+      : Math.min(h.rect.z0, h.ell ? h.ell.z0 : WORLD_VZ) - 8
+    const px0 = poolX0(pw)
+    if (frontZneg && backEdge + pd - 1 <= lot.rect.z1 - 8) {
+      return { x0: px0, y0: GROUND_Y - POOL_DEPTH, z0: backEdge, x1: px0 + pw - 1, y1: GROUND_Y - 1, z1: backEdge + pd - 1 }
+    }
+    if (!frontZneg && backEdge - pd + 1 >= lot.rect.z0 + 8) {
+      return { x0: px0, y0: GROUND_Y - POOL_DEPTH, z0: backEdge - pd + 1, x1: px0 + pw - 1, y1: GROUND_Y - 1, z1: backEdge }
+    }
+  }
+  // front-yard plunge pool, on the side of the path away from the driveway
+  const pw = 24
+  const pd = 14
+  const driveRight = h.driveway.x0 > h.path.x1
+  const px0 = driveRight ? lot.rect.x0 + 8 : lot.rect.x1 - 8 - pw + 1
+  const pz0 = frontZneg ? lot.rect.z0 + 8 : lot.rect.z1 - 8 - pd + 1
+  return { x0: px0, y0: GROUND_Y - POOL_DEPTH, z0: pz0, x1: px0 + pw - 1, y1: GROUND_Y - 1, z1: pz0 + pd - 1 }
 }
 
 function makeRoads(): Road[] {
@@ -259,6 +348,10 @@ export function generateLayout(seed: number): Layout {
   const props: Prop[] = []
   const trees: Tree[] = []
   const shrubs: Shrub[] = []
+  const fences: FenceLine[] = []
+  const lamps: Lamp[] = []
+  const mailboxes: Mailbox[] = []
+  const bins: Bin[] = []
 
   for (const lot of lots) {
     const lotW = lot.rect.x1 - lot.rect.x0 + 1
@@ -330,7 +423,27 @@ export function generateLayout(seed: number): Layout {
       ? { x0: dvx0, z0: lot.rect.z0 - LOT_GAP, x1: dvx0 + DRIVE_W - 1, z1: rect.z0 - 1 }
       : { x0: dvx0, z0: rect.z1 + 1, x1: dvx0 + DRIVE_W - 1, z1: lot.rect.z1 + LOT_GAP }
 
-    houses.push({ lotId: lot.id, rect, ell, floors, storyH: STORY_H, wallMat, roof, ridgeAxis, door, windows, driveway, stairs })
+    // T43 — variation: roof material, driveway pavers, porch, shutters, garden path
+    const roofMat = roof === 'gable' && detail.nextInt(10) < 6 ? MAT_ROOFTILE : MAT_WOOD
+    const driveMat = detail.nextInt(10) < 4 ? ('paver' as const) : ('concrete' as const)
+    const shutters = detail.nextInt(10) < 5
+    const doorCx = rect.x0 + door.offset + (DOOR_W >> 1)
+    let porch: Rect | null = null
+    if (detail.nextInt(10) < 4) {
+      const pw = DOOR_W + 10
+      const px0 = doorCx - (pw >> 1)
+      porch = frontZneg
+        ? { x0: px0, z0: rect.z0 - 8, x1: px0 + pw - 1, z1: rect.z0 - 1 }
+        : { x0: px0, z0: rect.z1 + 1, x1: px0 + pw - 1, z1: rect.z1 + 8 }
+    }
+    const path: Rect = frontZneg
+      ? { x0: doorCx - 2, z0: lot.rect.z0 - LOT_GAP, x1: doorCx + 2, z1: (porch ? porch.z0 : rect.z0) - 1 }
+      : { x0: doorCx - 2, z0: (porch ? porch.z1 : rect.z1) + 1, x1: doorCx + 2, z1: lot.rect.z1 + LOT_GAP }
+
+    houses.push({
+      lotId: lot.id, rect, ell, floors, storyH: STORY_H, wallMat, roof, ridgeAxis,
+      door, windows, driveway, stairs, roofMat, driveMat, porch, shutters, path,
+    })
 
     // parked car on ~half the driveways (placeholder .vox prop spot)
     if (prng.nextInt(2) === 0) {
@@ -345,7 +458,6 @@ export function generateLayout(seed: number): Layout {
     }
 
     // backyard pool on ~35% of lots, only if it fits behind the house/L
-    let poolBasin: Box | null = null
     if (prng.nextInt(100) < 35) {
       const pw = 40 + prng.nextInt(25)
       const pd = 24 + prng.nextInt(9)
@@ -360,44 +472,110 @@ export function generateLayout(seed: number): Layout {
         : backEdge - pd + 1 >= lot.rect.z0 + 8
           ? { x0: px0, y0: GROUND_Y - POOL_DEPTH, z0: backEdge - pd + 1, x1: px0 + pw - 1, y1: GROUND_Y - 1, z1: backEdge }
           : null
-      if (basin) {
-        pools.push({ lotId: lot.id, basin })
-        poolBasin = basin
-      }
+      if (basin) pools.push({ lotId: lot.id, basin })
     }
 
-    // T42 — yard trees: 1-3 per lot, canopy fully clear of house/ell/driveway/pool deck
-    const lotD = lot.rect.z1 - lot.rect.z0 + 1
-    const keepOut: Rect[] = [growRect(rect, 2), growRect(driveway, 2)]
-    if (ell) keepOut.push(growRect(ell, 2))
-    if (poolBasin) keepOut.push({ x0: poolBasin.x0 - 7, z0: poolBasin.z0 - 7, x1: poolBasin.x1 + 7, z1: poolBasin.z1 + 7 })
-    const wantTrees = 1 + detail.nextInt(3)
-    let placedTrees = 0
-    for (let attempt = 0; attempt < 12 && placedTrees < wantTrees; attempt++) {
-      const arch = TREE_ARCH[detail.nextInt(3)]
-      const trunkH = arch.h0 + detail.nextInt(arch.hv)
-      const canopyR = arch.r0 + detail.nextInt(arch.rv)
-      const tx = lot.rect.x0 + 4 + detail.nextInt(lotW - 9)
-      const tz = lot.rect.z0 + 4 + detail.nextInt(lotD - 9)
-      const canopy: Rect = { x0: tx - canopyR, z0: tz - canopyR, x1: tx + 1 + canopyR, z1: tz + 1 + canopyR }
-      const treeSeed = detail.nextU32()
-      if (keepOut.some((k) => rectsTouch(canopy, k))) continue
-      trees.push({ x: tx, z: tz, trunkH, canopyR, seed: treeSeed })
-      placedTrees++
-    }
-
-    // T42 — foundation shrubs along the front wall, clear of door and driveway
-    const doorCx = rect.x0 + door.offset + (DOOR_W >> 1)
+    // T42 — foundation shrubs along the front wall, clear of door/porch and driveway
     const shrubZ = frontZneg ? rect.z0 - 4 : rect.z1 + 3
     const nShrubs = 2 + detail.nextInt(3)
     for (let i = 0; i < nShrubs; i++) {
       const sx = rect.x0 + 3 + detail.nextInt(Math.max(1, w - 6))
       const sr = 2 + detail.nextInt(2)
       const sSeed = detail.nextU32()
-      if (Math.abs(sx - doorCx) < 9) continue
+      if (Math.abs(sx - doorCx) < 13) continue
       const srect: Rect = { x0: sx - sr, z0: shrubZ - sr, x1: sx + sr, z1: shrubZ + sr }
       if (rectsTouch(srect, driveway)) continue
       shrubs.push({ x: sx, z: shrubZ, r: sr, seed: sSeed })
+    }
+
+    // T43 — picket fences: sides + back on ~55% of lots, front (with gate
+    // gaps at driveway and path) on ~40% of those
+    const frontZ = frontZneg ? lot.rect.z0 : lot.rect.z1
+    const backZ = frontZneg ? lot.rect.z1 : lot.rect.z0
+    if (detail.nextInt(100) < 55) {
+      fences.push({ x0: lot.rect.x0, z0: lot.rect.z0, x1: lot.rect.x0, z1: lot.rect.z1 })
+      fences.push({ x0: lot.rect.x1, z0: lot.rect.z0, x1: lot.rect.x1, z1: lot.rect.z1 })
+      fences.push({ x0: lot.rect.x0 + 1, z0: backZ, x1: lot.rect.x1 - 1, z1: backZ })
+      if (detail.nextInt(100) < 40) {
+        const gaps = (
+          [
+            [driveway.x0 - 2, driveway.x1 + 2],
+            [path.x0 - 2, path.x1 + 2],
+          ] as [number, number][]
+        ).sort((a, b) => a[0] - b[0])
+        let cur = lot.rect.x0 + 1
+        for (const [g0, g1] of gaps) {
+          if (g0 - 1 >= cur + 3) fences.push({ x0: cur, z0: frontZ, x1: g0 - 1, z1: frontZ })
+          cur = Math.max(cur, g1 + 1)
+        }
+        if (lot.rect.x1 - 1 >= cur + 3) fences.push({ x0: cur, z0: frontZ, x1: lot.rect.x1 - 1, z1: frontZ })
+      }
+    }
+
+    // T43 — mailbox on the street side of every driveway, in the grass strip
+    const mbx = driveLeft ? driveway.x0 - 3 : driveway.x1 + 3
+    const mbz = frontZneg ? lot.rect.z0 - 3 : lot.rect.z1 + 3
+    mailboxes.push({ x: mbx, z: mbz })
+
+    // T43 — trash bin beside ~40% of driveways, near the house corner
+    if (detail.nextInt(10) < 4) {
+      const bx = driveLeft ? driveway.x1 + 2 : driveway.x0 - 6
+      const bz = frontZneg ? rect.z0 - 11 : rect.z1 + 7
+      const brect: Rect = { x0: bx, z0: bz, x1: bx + 3, z1: bz + 3 }
+      if (!rectsTouch(brect, path) && !(porch && rectsTouch(brect, porch)) && !rectsTouch(brect, driveway)) {
+        bins.push({ x: bx, z: bz })
+      }
+    }
+  }
+
+  // Pool guarantee: ≥2 pools total AND one on the lot closest to the player
+  // spawn (world center, voxel 512,512 — the central road crossing). Pure
+  // geometry, runs before tree placement so trees respect forced pools (V2).
+  const byDistToSpawn = [...lots].sort((a, b) => {
+    const da = rectDist2(a.rect, 512, 512)
+    const db = rectDist2(b.rect, 512, 512)
+    return da - db || a.id - b.id
+  })
+  // 1) the closest lot ALWAYS gets a spawn-biased pool (replacing any rolled
+  //    basin there), capping spawn→pool distance at ~19 m for every seed
+  const spawnLot = byDistToSpawn[0]
+  const spawnBasin = forcePoolBasin(spawnLot, houses[spawnLot.id], 512)
+  const rolled = pools.findIndex((p) => p.lotId === spawnLot.id)
+  if (rolled >= 0) pools.splice(rolled, 1)
+  pools.push({ lotId: spawnLot.id, basin: spawnBasin })
+  // 2) top up to at least 2 pools, nearest lots first
+  for (const lot of byDistToSpawn) {
+    if (pools.length >= 2) break
+    if (pools.some((p) => p.lotId === lot.id)) continue
+    pools.push({ lotId: lot.id, basin: forcePoolBasin(lot, houses[lot.id]) })
+  }
+
+  // T42 — yard trees: 1-3 per lot, canopy fully clear of house/ell/driveway/
+  // path/porch/pool deck. Runs after the pool guarantee; own derived stream.
+  for (const lot of lots) {
+    const h = houses[lot.id]
+    const veg = new Prng((seed ^ 0x6e624eb7 ^ Math.imul(lot.id + 1, 0x9e3779b9)) >>> 0)
+    const lotW = lot.rect.x1 - lot.rect.x0 + 1
+    const lotD = lot.rect.z1 - lot.rect.z0 + 1
+    const keepOut: Rect[] = [growRect(h.rect, 2), growRect(h.driveway, 2), growRect(h.path, 2)]
+    if (h.ell) keepOut.push(growRect(h.ell, 2))
+    if (h.porch) keepOut.push(growRect(h.porch, 2))
+    for (const p of pools.filter((p) => p.lotId === lot.id)) {
+      keepOut.push({ x0: p.basin.x0 - 7, z0: p.basin.z0 - 7, x1: p.basin.x1 + 7, z1: p.basin.z1 + 7 })
+    }
+    const wantTrees = 1 + veg.nextInt(3)
+    let placedTrees = 0
+    for (let attempt = 0; attempt < 12 && placedTrees < wantTrees; attempt++) {
+      const arch = TREE_ARCH[veg.nextInt(3)]
+      const trunkH = arch.h0 + veg.nextInt(arch.hv)
+      const canopyR = arch.r0 + veg.nextInt(arch.rv)
+      const tx = lot.rect.x0 + 4 + veg.nextInt(lotW - 9)
+      const tz = lot.rect.z0 + 4 + veg.nextInt(lotD - 9)
+      const canopy: Rect = { x0: tx - canopyR, z0: tz - canopyR, x1: tx + 1 + canopyR, z1: tz + 1 + canopyR }
+      const treeSeed = veg.nextU32()
+      if (keepOut.some((k) => rectsTouch(canopy, k))) continue
+      trees.push({ x: tx, z: tz, trunkH, canopyR, seed: treeSeed })
+      placedTrees++
     }
   }
 
@@ -424,5 +602,24 @@ export function generateLayout(seed: number): Layout {
     }
   }
 
-  return { seed, groundY: GROUND_Y, roads, lots, houses, pools, props, trees, shrubs }
+  // T43 — lamp posts: every ~12.8 m along each road on the outer sidewalk
+  // edge, alternating sides, clear of intersections. Purely derived (no prng
+  // needed — spacing is the aesthetic).
+  for (const road of roads) {
+    const c = road.center
+    let k = 0
+    for (let along = 64; along < WORLD_VX - 32; along += 128, k++) {
+      if (ROAD_CENTERS.some((c2) => Math.abs(along - c2) < ROAD_EXTENT + 10)) continue
+      const side = k % 2 === 0 ? 1 : -1
+      const perp = c + side * (ROAD_EXTENT - 2)
+      const dir: Side = road.axis === 'x' ? (side === 1 ? 'z-' : 'z+') : (side === 1 ? 'x-' : 'x+')
+      lamps.push({
+        x: road.axis === 'x' ? along : perp,
+        z: road.axis === 'x' ? perp : along,
+        dir,
+      })
+    }
+  }
+
+  return { seed, groundY: GROUND_Y, roads, lots, houses, pools, props, trees, shrubs, fences, lamps, mailboxes, bins }
 }

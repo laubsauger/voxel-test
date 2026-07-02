@@ -1,4 +1,4 @@
-# INTEGRATION — content track (T18/T19/T20)
+# INTEGRATION — content track (T18/T19/T20 + detail pass T41/T42/T43)
 
 For the integrator wiring main.ts and for the render/physics/water tracks.
 
@@ -32,8 +32,26 @@ Geometry facts the other tracks may rely on:
   exported from `src/sim/gen/layout.ts`). Grass-bump tiles add up to +2.
 - Suburb: 3×3 road grid (centers x/z ∈ {96, 512, 928}), 4 blocks, 16 lots,
   one house each, ~35% pools, ~50% driveway cars.
+- Pool guarantee: every seed has ≥2 pools, and the lot closest to spawn
+  (voxel 512,512, the central crossing) always carries a spawn-biased pool
+  ≤ ~19 m from the crossing (`forcePoolBasin` in layout.ts).
 - Pool basins are empty (air) with 2-voxel concrete lining; water arrives
   only via the returned `waterFills` data.
+- Multi-story houses (floors=2) have interior straight-run stairs (T41):
+  `House.stairs` (rect/axis/dir), 13 steps × rise 2 / tread 3 voxels against
+  the back wall; the upper slab is carved over the run (capsule head-safe).
+- Vegetation (T42): `Layout.trees` (2×2 MAT_WOOD trunk + blobby MAT_LEAVES
+  canopy, 3 archetypes, per-tree seed) and `Layout.shrubs` (leaf mounds at
+  house fronts). Yard trees keep canopy clear of house/driveway/path/porch/
+  pool deck; parkway trees line the roads. Leaf blobs fill AIR only.
+- Street detail (T43): `Layout.fences` (picket segments, gate gaps pre-split
+  at driveway/path), `Layout.lamps` (metal pole + emissive MAT_LAMP head,
+  arm dir toward road), `Layout.mailboxes`, `Layout.bins`. Road markings
+  (center dashes + zebra crosswalks) are derived in the stamper from road
+  geometry — MAT_PAINT (id 15) 1 voxel deep, asphalt-guarded.
+- House variation (T43): `roofMat` (wood|rooftile gables), `driveMat`
+  (concrete|paver checker), `porch` (stoop + posts + awning), `shutters`,
+  `path` (paver walk from front lot edge to door).
 
 ## Material id table (I.mat, `src/sim/materials.ts`)
 
@@ -50,12 +68,17 @@ Geometry facts the other tracks may rely on:
 | 8 | glass | windows, car glazing | transparent |
 | 9 | metal | car bodies/wheels | |
 | 10 | water-solid | RESERVED for water track (marker for CA source volumes) | transparent |
-| 11–15 | — | reserved (null entries) | |
+| 11 | leaves | tree canopies, shrubs | flammable, floats |
+| 12 | rooftile | some gable roofs | |
+| 13 | lamp | street-lamp heads (emissive in render) | |
+| 14 | flesh | player body segments | |
+| 15 | paint | road markings (dashes, crosswalks), white | |
 
 `colorRamp` = two 0xRRGGBB endpoints for per-voxel variation (render track,
 T8). `strength`/`density` are first-pass values — physics track (T12/T13)
 should tune, but keep ids stable; ids are baked into stamped worlds and tests.
-Extending: fill slots 11–15 in `MATERIALS`, never renumber existing ids.
+The table is now FULL (0–15). Never renumber existing ids (V13); growing past
+16 entries needs coordination here first.
 
 ## .vox asset workflow (real art later)
 
@@ -93,5 +116,10 @@ Extending: fill slots 11–15 in `MATERIALS`, never renumber existing ids.
   integration.
 - Houses have no interior walls/furniture; L-extensions have no door between
   main house and extension. Cosmetic, post-M1.
-- material ids 11–15 free — fire/foliage candidates. Coordinate here before
-  claiming.
+- Material table is full (id 15 = paint claimed by T43). No free slots left
+  in the 16-entry table.
+- Lamp heads are MAT_LAMP voxels; the glow comes from the render material's
+  emissive param (id 13) — nothing to wire for content.
+- Detail features draw from per-lot/per-system DERIVED Prng streams
+  (`seed ^ const ^ imul(lotId)`), so adding more detail later never
+  reshuffles the base suburb or other features.

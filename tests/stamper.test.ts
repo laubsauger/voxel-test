@@ -12,10 +12,14 @@ import {
   MAT_DIRT,
   MAT_GLASS,
   MAT_GRASS,
+  MAT_LAMP,
   MAT_LEAVES,
   MAT_METAL,
+  MAT_PAINT,
   MAT_PLASTER,
   MAT_WOOD,
+  MATERIALS,
+  MatFlags,
 } from '../src/sim/materials'
 
 /** Fnv over all touched (non-empty) chunks — same shape hashSim uses for world state */
@@ -62,7 +66,8 @@ describe('scene stamper (T20, V2, V5)', () => {
 
   it('roads are asphalt, sidewalks concrete, at surface level', () => {
     const road = layout.roads.find((r) => r.axis === 'x')!
-    expect(store.getVoxel(300, g - 1, road.center)).toBe(MAT_ASPHALT)
+    // probe off the 2-voxel center line (which may carry a paint dash, T43)
+    expect(store.getVoxel(300, g - 1, road.center + 5)).toBe(MAT_ASPHALT)
     expect(store.getVoxel(300, g - 1, road.sidewalks[0].z0 + 1)).toBe(MAT_CONCRETE)
     expect(store.getVoxel(300, g, road.center)).toBe(MAT_AIR) // road surface is walkable
   })
@@ -159,6 +164,94 @@ describe('scene stamper (T20, V2, V5)', () => {
     expect(layout.shrubs.length).toBeGreaterThan(0)
     const s = layout.shrubs[0]
     expect(store.getVoxel(s.x, g + 1, s.z)).toBe(MAT_LEAVES)
+  })
+
+  it('paint claims material id 15: white ramp, strength 1 (T43, V13)', () => {
+    // WHY: id 15 was the last reserved slot — its assignment is baked into
+    // stamped worlds forever; render/physics derive from this single entry.
+    expect(MAT_PAINT).toBe(15)
+    const paint = MATERIALS[15]!
+    expect(paint.id).toBe(15)
+    expect(paint.name).toBe('paint')
+    expect(paint.strength).toBe(1)
+    expect(paint.colorRamp[0]).toBe(0xf0f0ea)
+    expect(paint.colorRamp[1]).toBe(0xffffff)
+    expect(paint.flags).toBe(MatFlags.None)
+    expect(paint.density).toBeGreaterThan(0)
+  })
+
+  it('road markings: dashes + crosswalks exist, paint ONLY on asphalt (T43)', () => {
+    // WHY: markings are stamped 1 voxel deep into the road surface — paint
+    // anywhere else (grass, sidewalk) means the asphalt guard regressed.
+    const asphalt = layout.roads.map((r) => r.asphalt)
+    let paint = 0
+    for (let z = 0; z < 1024; z++) {
+      for (let x = 0; x < 1024; x++) {
+        if (store.getVoxel(x, g - 1, z) !== MAT_PAINT) continue
+        paint++
+        const onRoad = asphalt.some((a) => x >= a.x0 && x <= a.x1 && z >= a.z0 && z <= a.z1)
+        expect(onRoad, `paint at (${x},${z}) off the asphalt`).toBe(true)
+      }
+    }
+    expect(paint).toBeGreaterThan(500) // dashes + 9 intersections of zebra stripes
+    // center dash: 2-wide line at the road center, away from intersections
+    const xRoad = layout.roads.find((r) => r.axis === 'x')!
+    let dash = 0
+    for (let x = 0; x < 1024; x++) {
+      if (store.getVoxel(x, g - 1, xRoad.center) === MAT_PAINT) dash++
+    }
+    expect(dash).toBeGreaterThan(50)
+    // crosswalk band near the center intersection (east approach, past the
+    // crossing sidewalk: x ∈ [512+44 .. 512+51])
+    let zebra = 0
+    for (let z = 512 - 28; z <= 512 + 28; z++) {
+      for (let x = 556; x <= 563; x++) {
+        if (store.getVoxel(x, g - 1, z) === MAT_PAINT) zebra++
+      }
+    }
+    expect(zebra).toBeGreaterThan(50)
+  })
+
+  it('street furniture: fences, lamp posts, mailboxes, bins stamped (T43)', () => {
+    expect(layout.fences.length).toBeGreaterThan(0)
+    for (const f of layout.fences.slice(0, 6)) {
+      expect(store.getVoxel(f.x0, g, f.z0), 'fence post base').toBe(MAT_WOOD)
+      expect(store.getVoxel(f.x0, g + 10, f.z0), 'fence post top').toBe(MAT_WOOD)
+    }
+    expect(layout.lamps.length).toBeGreaterThan(10)
+    for (const l of layout.lamps.slice(0, 6)) {
+      expect(store.getVoxel(l.x, g, l.z), 'lamp pole base').toBe(MAT_METAL)
+      expect(store.getVoxel(l.x, g + 23, l.z), 'lamp pole top').toBe(MAT_METAL)
+      const dx = l.dir === 'x-' ? -1 : l.dir === 'x+' ? 1 : 0
+      const dz = l.dir === 'z-' ? -1 : l.dir === 'z+' ? 1 : 0
+      expect(store.getVoxel(l.x + dx * 3, g + 22, l.z + dz * 3), 'emissive head').toBe(MAT_LAMP)
+      // lamp stands on the sidewalk
+      expect(store.getVoxel(l.x, g - 1, l.z)).toBe(MAT_CONCRETE)
+    }
+    expect(layout.mailboxes.length).toBe(layout.houses.length)
+    for (const m of layout.mailboxes.slice(0, 6)) {
+      expect(store.getVoxel(m.x, g, m.z), 'mailbox post').toBe(MAT_WOOD)
+      expect(store.getVoxel(m.x, g + 11, m.z), 'mailbox box').toBe(MAT_METAL)
+    }
+    expect(layout.bins.length).toBeGreaterThan(0)
+    const b = layout.bins[0]
+    expect(store.getVoxel(b.x, g + 2, b.z)).toBe(MAT_METAL)
+  })
+
+  it('house detail: garden path pavers, porches, shutters appear (T43)', () => {
+    // every house has a paver path reaching the front lot edge
+    for (const h of layout.houses.slice(0, 4)) {
+      const midZ = (h.path.z0 + h.path.z1) >> 1
+      const surf = store.getVoxel(h.path.x0 + 1, g - 1, midZ)
+      expect([MAT_BRICK, MAT_CONCRETE], 'path pavers').toContain(surf)
+    }
+    const porched = layout.houses.find((h) => h.porch)
+    expect(porched, 'some house should have a porch').toBeTruthy()
+    const p = porched!.porch!
+    expect(store.getVoxel((p.x0 + p.x1) >> 1, g, (p.z0 + p.z1) >> 1)).toBe(MAT_CONCRETE)
+    // roof variation: at least one rooftile gable across the suburb
+    const tiled = layout.houses.find((h) => h.roof === 'gable' && h.roofMat === 12)
+    expect(tiled, 'some gable should use rooftile').toBeTruthy()
   })
 
   it('is deterministic: same seed → identical chunk hash; different seed differs', () => {

@@ -9,9 +9,11 @@
  * from layout.seed for terrain height variation (V2). Only material ids
  * 0..255 are written (V5).
  *
- * Stamp order (fixed): terrain → roads/sidewalks → driveways → houses →
- * pools → props. Pool water fills are returned as DATA for the integrator
- * to feed the water sim (water track API) — never written here.
+ * Stamp order (fixed): terrain → roads/sidewalks → road markings → houses
+ * (driveway, path, walls, stairs, porch, shutters, roof) → pools → fences →
+ * lamps → mailboxes → bins → props → vegetation (leaf blobs fill air only).
+ * Pool water fills are returned as DATA for the integrator to feed the
+ * water sim (water track API) — never written here.
  */
 
 import { ChunkStore, CHUNK, WORLD_VX, WORLD_VZ } from '../../world/chunks'
@@ -19,11 +21,15 @@ import { Prng } from '../prng'
 import {
   MAT_AIR,
   MAT_ASPHALT,
+  MAT_BRICK,
   MAT_CONCRETE,
   MAT_DIRT,
   MAT_GLASS,
   MAT_GRASS,
+  MAT_LAMP,
   MAT_LEAVES,
+  MAT_METAL,
+  MAT_PAINT,
   MAT_WOOD,
 } from '../materials'
 import {
@@ -31,11 +37,16 @@ import {
   STAIR_STEPS,
   STAIR_TREAD,
   WALL_T,
+  type Bin,
   type Box,
+  type FenceLine,
   type House,
+  type Lamp,
   type Layout,
+  type Mailbox,
   type Opening,
   type Rect,
+  type Road,
   type Shrub,
   type Tree,
 } from './layout'
@@ -93,6 +104,81 @@ function stampRoads(store: ChunkStore, layout: Layout): void {
   }
 }
 
+/** paint the road-surface voxel, but ONLY where it is asphalt (markings never leak) */
+function paintIfAsphalt(store: ChunkStore, x: number, y: number, z: number): void {
+  if (store.getVoxel(x, y, z) === MAT_ASPHALT) store.setVoxel(x, y, z, MAT_PAINT)
+}
+
+function roadHalf(road: Road): number {
+  return road.axis === 'x' ? (road.asphalt.z1 - road.asphalt.z0) >> 1 : (road.asphalt.x1 - road.asphalt.x0) >> 1
+}
+
+/** half-width including sidewalks (sidewalk strips cross the other road at intersections) */
+function roadExtent(road: Road): number {
+  const s = road.sidewalks[1]
+  return road.axis === 'x' ? s.z1 - road.center : s.x1 - road.center
+}
+
+/**
+ * T43 — road markings, derived purely from road geometry (no randomness):
+ * dashed center line (12 on / 12 off, 2 wide) kept clear of intersections,
+ * zebra crosswalks on all four approaches of every intersection. Paint is
+ * stamped 1 voxel deep into the asphalt surface (y = groundY-1).
+ */
+function stampMarkings(store: ChunkStore, layout: Layout): void {
+  const g = layout.groundY
+  const y = g - 1
+  const xRoads = layout.roads.filter((r) => r.axis === 'x')
+  const zRoads = layout.roads.filter((r) => r.axis === 'z')
+
+  for (const road of layout.roads) {
+    const c = road.center
+    const crossings = road.axis === 'x' ? zRoads : xRoads
+    const len = road.axis === 'x' ? WORLD_VX : WORLD_VZ
+    for (let a = 8; a + 12 <= len; a += 24) {
+      // keep the intersection + crossing-sidewalk + crosswalk zone clean
+      if (crossings.some((o) => a + 11 >= o.center - roadExtent(o) - 14 && a <= o.center + roadExtent(o) + 14)) continue
+      for (let t = a; t < a + 12; t++) {
+        for (const cc of [c - 1, c]) {
+          if (road.axis === 'x') paintIfAsphalt(store, t, y, cc)
+          else paintIfAsphalt(store, cc, y, t)
+        }
+      }
+    }
+  }
+
+  for (const xr of xRoads) {
+    for (const zr of zRoads) {
+      const cx = zr.center
+      const cz = xr.center
+      const hx = roadHalf(zr)
+      const hz = roadHalf(xr)
+      const ex = roadExtent(zr) // clears the z-road's sidewalks crossing the x-road
+      const ez = roadExtent(xr)
+      // bands across the x-road (west/east approaches): stripes stacked along z
+      for (const [b0, b1] of [
+        [cx - ex - 9, cx - ex - 2],
+        [cx + ex + 2, cx + ex + 9],
+      ]) {
+        for (let z = cz - hz + 2; z <= cz + hz - 2; z++) {
+          if ((z - (cz - hz)) % 7 >= 4) continue
+          for (let x = b0; x <= b1; x++) paintIfAsphalt(store, x, y, z)
+        }
+      }
+      // bands across the z-road (north/south approaches): stripes stacked along x
+      for (const [b0, b1] of [
+        [cz - ez - 9, cz - ez - 2],
+        [cz + ez + 2, cz + ez + 9],
+      ]) {
+        for (let x = cx - hx + 2; x <= cx + hx - 2; x++) {
+          if ((x - (cx - hx)) % 7 >= 4) continue
+          for (let z = b0; z <= b1; z++) paintIfAsphalt(store, x, y, z)
+        }
+      }
+    }
+  }
+}
+
 /** carve one wall opening; door → air, window → glass pane */
 function stampOpening(store: ChunkStore, h: House, o: Opening, mat: number, groundY: number): void {
   const y0 = groundY + o.floor * h.storyH + o.sill
@@ -122,13 +208,28 @@ function stampWalls(store: ChunkStore, r: Rect, y0: number, y1: number, mat: num
   store.fillBox(r.x1 - 1, y0, r.z0, r.x1, y1, r.z1, mat)
 }
 
+/** brick/concrete checker (2×2 cells) on the surface voxel of a rect */
+function stampPavers(store: ChunkStore, r: Rect, g: number): void {
+  for (let z = r.z0; z <= r.z1; z++) {
+    for (let x = r.x0; x <= r.x1; x++) {
+      if ((((x >> 1) + (z >> 1)) & 1) === 0) store.setVoxel(x, g - 1, z, MAT_BRICK)
+    }
+  }
+}
+
 function stampHouse(store: ChunkStore, layout: Layout, h: House): void {
   const g = layout.groundY
   const r = h.rect
   const wallTop = g + h.floors * h.storyH - 1
 
-  // driveway first (under any car prop later)
+  // driveway first (under any car prop later); paver variant gets a
+  // brick/concrete checker on the surface voxel
   store.fillBox(h.driveway.x0, g - WALK_DEPTH, h.driveway.z0, h.driveway.x1, g - 1, h.driveway.z1, MAT_CONCRETE)
+  if (h.driveMat === 'paver') stampPavers(store, h.driveway, g)
+
+  // garden path: paver strip from the front lot edge to the door/porch
+  store.fillBox(h.path.x0, g - WALK_DEPTH, h.path.z0, h.path.x1, g - 1, h.path.z1, MAT_CONCRETE)
+  stampPavers(store, h.path, g)
 
   // ground-floor slab, then walls (walls overwrite slab perimeter)
   store.fillBox(r.x0, g, r.z0, r.x1, g, r.z1, MAT_WOOD)
@@ -164,18 +265,42 @@ function stampHouse(store: ChunkStore, layout: Layout, h: House): void {
     }
   }
 
-  // roof
+  // roof (gable material varies per house: wood or rooftile, T43)
   const roofY = wallTop + 1
   if (h.roof === 'flat') {
     store.fillBox(r.x0, roofY, r.z0, r.x1, roofY + 1, r.z1, MAT_CONCRETE)
   } else if (h.ridgeAxis === 'x') {
-    // gable spanning z, slope 1 up : 2 in, solid wood levels (stepped gable + attic)
+    // gable spanning z, slope 1 up : 2 in, solid levels (stepped gable + attic)
     for (let lvl = 0; r.z0 + 2 * lvl <= r.z1 - 2 * lvl; lvl++) {
-      store.fillBox(r.x0, roofY + lvl, r.z0 + 2 * lvl, r.x1, roofY + lvl, r.z1 - 2 * lvl, MAT_WOOD)
+      store.fillBox(r.x0, roofY + lvl, r.z0 + 2 * lvl, r.x1, roofY + lvl, r.z1 - 2 * lvl, h.roofMat)
     }
   } else {
     for (let lvl = 0; r.x0 + 2 * lvl <= r.x1 - 2 * lvl; lvl++) {
-      store.fillBox(r.x0 + 2 * lvl, roofY + lvl, r.z0, r.x1 - 2 * lvl, roofY + lvl, r.z1, MAT_WOOD)
+      store.fillBox(r.x0 + 2 * lvl, roofY + lvl, r.z0, r.x1 - 2 * lvl, roofY + lvl, r.z1, h.roofMat)
+    }
+  }
+
+  // porch (T43): concrete stoop + wood corner posts + small wood awning
+  if (h.porch) {
+    const p = h.porch
+    store.fillBox(p.x0, g, p.z0, p.x1, g, p.z1, MAT_CONCRETE)
+    const outerZ = p.z0 < r.z0 ? p.z0 : p.z1 // porch edge away from the house
+    const awnY = g + 23
+    for (const px of [p.x0, p.x1]) {
+      store.fillBox(px, g + 1, outerZ, px, awnY - 1, outerZ, MAT_WOOD)
+    }
+    store.fillBox(p.x0, awnY, p.z0, p.x1, awnY + 1, p.z1, MAT_WOOD)
+  }
+
+  // window shutters (T43): wood panels flanking front-wall windows
+  if (h.shutters) {
+    const outZ = h.door.side === 'z-' ? r.z0 - 1 : r.z1 + 1
+    for (const win of h.windows) {
+      if (win.side !== h.door.side) continue
+      const y0 = g + win.floor * h.storyH + win.sill
+      const y1 = y0 + win.h - 1
+      store.fillBox(r.x0 + win.offset - 3, y0, outZ, r.x0 + win.offset - 2, y1, outZ, MAT_WOOD)
+      store.fillBox(r.x0 + win.offset + win.w + 1, y0, outZ, r.x0 + win.offset + win.w + 2, y1, outZ, MAT_WOOD)
     }
   }
 
@@ -252,6 +377,51 @@ function stampPool(store: ChunkStore, basin: Box): void {
   store.fillBox(basin.x0, basin.y0, basin.z0, basin.x1, basin.y1, basin.z1, MAT_AIR)
 }
 
+/**
+ * T43 — picket fence along an axis-aligned line: posts every 16 voxels,
+ * 1-wide pickets every other voxel, two rails bridging the picket gaps.
+ * All wood — collapses beautifully.
+ */
+function stampFence(store: ChunkStore, f: FenceLine, g: number): void {
+  const alongX = f.z0 === f.z1
+  const len = (alongX ? f.x1 - f.x0 : f.z1 - f.z0) + 1
+  if (len < 4) return
+  for (let t = 0; t < len; t++) {
+    const x = alongX ? f.x0 + t : f.x0
+    const z = alongX ? f.z0 : f.z0 + t
+    if (t % 16 === 0 || t === len - 1) {
+      store.fillBox(x, g, z, x, g + 10, z, MAT_WOOD) // post
+    } else if (t % 2 === 0) {
+      store.fillBox(x, g, z, x, g + 8, z, MAT_WOOD) // picket
+    } else {
+      store.setVoxel(x, g + 3, z, MAT_WOOD) // lower rail
+      store.setVoxel(x, g + 7, z, MAT_WOOD) // upper rail
+    }
+  }
+}
+
+/** T43 — street lamp: metal pole + arm toward the road, emissive MAT_LAMP head */
+function stampLampPost(store: ChunkStore, l: Lamp, g: number): void {
+  store.fillBox(l.x, g, l.z, l.x, g + 23, l.z, MAT_METAL)
+  const dx = l.dir === 'x-' ? -1 : l.dir === 'x+' ? 1 : 0
+  const dz = l.dir === 'z-' ? -1 : l.dir === 'z+' ? 1 : 0
+  for (let i = 1; i <= 3; i++) store.setVoxel(l.x + dx * i, g + 23, l.z + dz * i, MAT_METAL)
+  const hx = l.x + dx * 3
+  const hz = l.z + dz * 3
+  store.fillBox(Math.min(hx, hx + dx), g + 21, Math.min(hz, hz + dz), Math.max(hx, hx + dx), g + 22, Math.max(hz, hz + dz), MAT_LAMP)
+}
+
+/** T43 — mailbox: wood post + metal box */
+function stampMailbox(store: ChunkStore, m: Mailbox, g: number): void {
+  store.fillBox(m.x, g, m.z, m.x, g + 9, m.z, MAT_WOOD)
+  store.fillBox(m.x - 1, g + 10, m.z - 1, m.x + 1, g + 12, m.z + 1, MAT_METAL)
+}
+
+/** T43 — trash bin: squat metal block */
+function stampBin(store: ChunkStore, b: Bin, g: number): void {
+  store.fillBox(b.x, g, b.z, b.x + 3, g + 8, b.z + 3, MAT_METAL)
+}
+
 /** stamp a y-up material grid at (x,y,z) with rot quarter-turns around +y */
 export function stampGrid(store: ChunkStore, grid: VoxelGrid, x: number, y: number, z: number, rot: 0 | 1 | 2 | 3): void {
   const { sx, sy, sz, mats } = grid
@@ -282,6 +452,7 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
 
   stampTerrain(store, layout)
   stampRoads(store, layout)
+  stampMarkings(store, layout)
   for (const h of layout.houses) stampHouse(store, layout, h)
 
   const waterFills: WaterFillRequest[] = []
@@ -289,6 +460,11 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
     stampPool(store, pool.basin)
     waterFills.push({ box: { ...pool.basin } })
   }
+
+  for (const f of layout.fences) stampFence(store, f, layout.groundY)
+  for (const l of layout.lamps) stampLampPost(store, l, layout.groundY)
+  for (const m of layout.mailboxes) stampMailbox(store, m, layout.groundY)
+  for (const b of layout.bins) stampBin(store, b, layout.groundY)
 
   for (const p of layout.props) stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot)
 

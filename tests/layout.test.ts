@@ -152,6 +152,35 @@ describe('suburb layout generator (T19, V2)', () => {
     }
   })
 
+  it('pool guarantee: ≥2 pools and one within 200 voxels of spawn, any seed', () => {
+    // WHY: spawn is the central road crossing (voxel 512,512) — pools are a
+    // headline water-sim feature and must be reachable without a map hike,
+    // regardless of what the per-lot 35% roll produced.
+    for (const seed of [1337, 1, 42, 7, 99, 31337]) {
+      const l = generateLayout(seed)
+      expect(l.pools.length, `seed ${seed} pool count`).toBeGreaterThanOrEqual(2)
+      const min = Math.min(
+        ...l.pools.map((p) => {
+          const dx = 512 < p.basin.x0 ? p.basin.x0 - 512 : 512 > p.basin.x1 ? 512 - p.basin.x1 : 0
+          const dz = 512 < p.basin.z0 ? p.basin.z0 - 512 : 512 > p.basin.z1 ? 512 - p.basin.z1 : 0
+          return Math.hypot(dx, dz)
+        }),
+      )
+      expect(min, `seed ${seed} nearest pool distance`).toBeLessThanOrEqual(200)
+      // forced pools still live inside their lot, clear of the house
+      const lotById = new Map(l.lots.map((lot) => [lot.id, lot]))
+      for (const p of l.pools) {
+        const lot = lotById.get(p.lotId)!
+        expect(contains(lot.rect, { x0: p.basin.x0, z0: p.basin.z0, x1: p.basin.x1, z1: p.basin.z1 })).toBe(true)
+        const h = l.houses[p.lotId]
+        expect(overlaps(h.rect, p.basin)).toBe(false)
+        if (h.ell) expect(overlaps(h.ell, p.basin)).toBe(false)
+        expect(overlaps(h.driveway, p.basin)).toBe(false)
+        expect(overlaps(h.path, p.basin)).toBe(false)
+      }
+    }
+  })
+
   it('vegetation: trees exist and never intersect houses or driveways (T42)', () => {
     // WHY: trees must add life without blocking gameplay routes — a canopy
     // over a driveway clips parked cars, a trunk in a house corrupts walls.
