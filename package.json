@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
-    "signal": "node server/signal.mjs"
+    "signal": "node server/signal.mjs",
+    "mp-e2e": "node scripts/mp-e2e.mjs"
   },
   "dependencies": {
     "jolt-physics": "^1.0.0",

@@ -448,6 +448,7 @@ async function buildMpGame(seed: number): Promise<Game> {
     host: app,
     onStage: (s) => mpPre.stage(s),
     graphics: { quality: store.get('graphics.quality'), fov: store.get('graphics.fov') },
+    holdTicks: true, // sim stays pristine at tick 0 until attachNet (V2)
   }).catch((e: unknown) => die(`mp boot failed: ${e instanceof Error ? e.message : String(e)}`))
   wireGame(g)
   await mpPre.done()
@@ -570,6 +571,25 @@ function finishSessionStart(s: MpSession, pingSend: (n: number) => void): void {
       const p = game.phys.players.get(s.playerId)
       return p ? { x: p.px, y: p.py, z: p.pz } : null
     },
+    /**
+     * T72 — full kinematic player state, all players. Player capsules are in
+     * NEITHER hashSim NOR hashPhysics (missing export, reported in
+     * INTEGRATION-net.md) — the e2e compares this across pages instead.
+     */
+    playersState: () =>
+      [...game.phys.players.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([pid, p]) => ({
+          pid,
+          x: p.px,
+          y: p.py,
+          z: p.pz,
+          vx: p.vx,
+          vy: p.vy,
+          vz: p.vz,
+          yaw: p.yaw,
+          flags: p.flags,
+        })),
     submitOp: (op: Op) => game.pushOp(op),
   }
 }

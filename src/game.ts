@@ -55,6 +55,14 @@ export interface CreateGameOptions {
   onStage?: (stage: StageId) => void
   /** initial graphics settings (applied before first frame) */
   graphics?: Settings['graphics']
+  /**
+   * T71 — MP: freeze the sim at tick 0 until attachNet(). Without this the
+   * loop free-runs the fresh session game while peers are still building,
+   * and lockstep tick 0 meets a sim already hundreds of ticks in (found by
+   * mp-e2e: "stale bundle for tick 0 (sim at 484)"). Rendering/meshing still
+   * run — initStatic seeds the remesh feed without any ticks.
+   */
+  holdTicks?: boolean
 }
 
 /** orbit rig tuning (menu backdrop) */
@@ -98,6 +106,8 @@ export class Game {
   private net: NetSession | null = null
   /** MP: one move op per stepped frame (avoids unbounded pile-up at a stall) */
   private movePending = false
+  /** sim frozen until attachNet (MP build phase, see CreateGameOptions.holdTicks) */
+  private holdTicks = false
   /** T71 — remote player bodies (playerId → mesh); local player uses playerVisuals */
   private readonly remoteMeshes = new Map<number, PlayerMesh>()
   private disposed = false
@@ -169,6 +179,10 @@ export class Game {
   attachNet(net: NetSession): void {
     if (this.net) throw new Error('game: net session already attached')
     if (net.node.sim !== this.sim) throw new Error('game: lockstep node drives a different sim')
+    if (this.sim.tick !== 0) {
+      // V10: lockstep MUST start from identical state on every peer
+      throw new Error(`game: net attach at tick ${this.sim.tick} — sim must be pristine (holdTicks)`)
+    }
     this.net = net
   }
 
@@ -327,6 +341,8 @@ export class Game {
         }
         // advance ONLY released ticks (tick barrier, V2) — never free-run
         if (this.net.driver.advance(dtMs, this.net.node) > 0) this.movePending = false
+      } else if (this.holdTicks) {
+        // MP build phase: render/mesh, but the sim stays at tick 0 for lockstep
       } else {
         // solo: local input → command queue directly
         if (this.spawned) {
@@ -456,6 +472,7 @@ export class Game {
     })
 
     const game = new Game({ seed, sim, phys, water, renderer, scene, cam, input, world })
+    game.holdTicks = opts.holdTicks ?? false
     game.startLoop()
 
     onStage?.('meshing')
