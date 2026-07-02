@@ -1,0 +1,56 @@
+import { describe, expect, it } from 'vitest'
+import { MAT_AIR, MATERIALS, getMaterial } from '../src/render/materials'
+
+// I.mat: id byte → {colorRamp, strength, density, flags}. 0 = air, ~16 entries.
+// The table drives destruction feel (strength), physics (density, floats)
+// and rendering (colorRamp, PBR params) — entries must stay coherent.
+describe('material table (I.mat)', () => {
+  it('has 16 entries whose id matches their table index (voxel byte == index)', () => {
+    expect(MATERIALS).toHaveLength(16)
+    for (let i = 0; i < MATERIALS.length; i++) expect(MATERIALS[i].id).toBe(i)
+  })
+
+  it('id 0 is air: massless, strengthless, no flags', () => {
+    const air = getMaterial(MAT_AIR)
+    expect(air.name).toBe('air')
+    expect(air.strength).toBe(0)
+    expect(air.density).toBe(0)
+    expect(air.flammable).toBe(false)
+    expect(air.floats).toBe(false)
+  })
+
+  it('all non-air solids have positive density (physics mass depends on it)', () => {
+    for (const m of MATERIALS.slice(1)) expect(m.density, m.name).toBeGreaterThan(0)
+  })
+
+  it('glass and water are transparent, nothing structural is', () => {
+    expect(getMaterial(10).name).toBe('glass')
+    expect(getMaterial(10).transparent).toBe(true)
+    expect(getMaterial(12).name).toBe('water')
+    expect(getMaterial(12).transparent).toBe(true)
+    for (const name of ['concrete', 'brick', 'stone', 'metal']) {
+      const m = MATERIALS.find((x) => x.name === name)!
+      expect(m.transparent, name).toBe(false)
+    }
+  })
+
+  it('wood floats and burns (buoyancy + fire gameplay hooks)', () => {
+    const wood = MATERIALS.find((m) => m.name === 'wood')!
+    expect(wood.floats).toBe(true)
+    expect(wood.flammable).toBe(true)
+    expect(wood.density).toBeLessThan(1000) // must be lighter than water to float
+  })
+
+  it('metal is the only strongly metallic material', () => {
+    const metal = MATERIALS.find((m) => m.name === 'metal')!
+    expect(metal.metalness).toBeGreaterThan(0.5)
+    for (const m of MATERIALS) {
+      if (m.name !== 'metal') expect(m.metalness, m.name).toBeLessThan(0.5)
+    }
+  })
+
+  it('lookup fails loud for ids outside the table', () => {
+    expect(() => getMaterial(16)).toThrow(/unknown material/)
+    expect(() => getMaterial(255)).toThrow(/unknown material/)
+  })
+})
