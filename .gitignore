@@ -5,5 +5,7 @@ dist/
 smoke-artifacts/
 .claude/*
 !.claude/skills/
+.claude/skills/*
+!.claude/skills/cdp-testing/
 .env*
 !.env.example
