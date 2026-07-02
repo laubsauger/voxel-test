@@ -38,6 +38,7 @@ import {
   disposeVehicles,
   hashVehicles,
   registerVehicleOps,
+  tickVehiclesPlow,
   tickVehiclesPostStep,
   tickVehiclesPreStep,
   type VehicleEntity,
@@ -309,8 +310,9 @@ export class PhysicsWorld {
 
   /** Sim system body: structural updates, then the fixed Jolt step (V2: DT only). */
   tick(sim: Sim): void {
+    tickVehiclesPlow(sim, this) // T64 — carve weak materials BEFORE collider rebuild
     this.structuralPass(sim)
-    tickVehiclesPreStep(this) // T64 — driver input → Jolt controller, pre-step
+    tickVehiclesPreStep(this) // T64 — driver input → Jolt controller
     this.joltInterface.Step(DT, 1)
     tickVehiclesPostStep(sim, this) // T64 — readback, crash damage, seat sync
     updatePlayers(this, sim) // character controllers, fixed order (T21)

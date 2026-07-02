@@ -230,7 +230,7 @@ function toGeometry(a: Accum): BufferGeometry {
 // dev controls (T64.7) — testable NOW without gen changes
 // ---------------------------------------------------------------------------
 
-const DEV_ARCHETYPES = ['sedan0', 'sedan1', 'sedan2', 'pickup0', 'pickup1', 'van0']
+const DEV_ARCHETYPES = ['sedan1', 'sedan0', 'sedan2', 'pickup0', 'pickup1', 'van0']
 
 /**
  * Dev-gated vehicle keys (game.ts wires this; see INTEGRATION-vehicles.md):
@@ -256,11 +256,12 @@ export function installVehicleDevControls(
     if (e.code !== 'KeyG' || !enabled()) return
     const p = phys.players.get(playerId)
     if (!p) return
-    // 6 m ahead along the player's yaw, dropped onto the ground surface
+    // just ahead along the player's yaw (close enough that the driver seat is
+    // inside ENTER_RANGE), dropped onto the ground surface
     const fx = -Math.sin(p.yaw)
     const fz = -Math.cos(p.yaw)
-    const cx = p.px + fx * 6
-    const cz = p.pz + fz * 6
+    const cx = p.px + fx * 4
+    const cz = p.pz + fz * 4
     const vx = Math.floor(cx / VOXEL_SIZE)
     const vz = Math.floor(cz / VOXEL_SIZE)
     let groundY = p.py

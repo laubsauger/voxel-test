@@ -28,7 +28,7 @@ import type Jolt from 'jolt-physics'
 import { DT, type Sim } from './loop'
 import type { SimEvent } from './events'
 import { VOXEL_SIZE, type ChunkStore } from '../world/chunks'
-import { MAT_ASPHALT, MAT_METAL, material } from './materials'
+import { MAT_AIR, MAT_ASPHALT, MAT_DIRT, MAT_GRASS, MAT_METAL, MAT_WATER_SOLID, material } from './materials'
 import { greedyBoxes } from './greedy-boxes'
 import { destroySphere } from './destruction'
 import { placeholderProps } from './gen/props'
@@ -88,6 +88,34 @@ export const WRECK_FRACTION = 0.4
 /** max distance (m) from player center to a seat for vehicle_enter (GTA-generous) */
 export const ENTER_RANGE = 4.0
 
+// --- momentum-scaled mutual crash damage: "through fences, stopped by walls" -
+/**
+ * PLOW pass (pre-Jolt-step): a moving vehicle carves weak BUILT materials in
+ * its sweep path before the solver sees them — so a picket fence never
+ * hard-stops the car; brick/concrete are never plowed, Jolt stops the car and
+ * the post-step crash response takes the momentum-scaled wall bite instead.
+ * Only materials with strength ≤ PLOW_MAX_STRENGTH and not natural ground
+ * (dirt/grass/water) are plowable: wood fences, glass, plaster walls,
+ * rooftile, hedges, lamps, paint.
+ */
+export const PLOW_MAX_STRENGTH = 2
+/** minimum speed (m/s) for the plow pass */
+export const PLOW_MIN_SPEED = 2.5
+/** J per (voxel · strength) — energy price of removing a voxel. Calibrated so
+ *  a full picket-fence section (~240 wood voxels) costs a 5 m/s sedan about a
+ *  quarter of its speed — through with a shudder, not a stop. */
+export const PLOW_COST_PER_STRENGTH = 15
+/** per-tick energy budget = this fraction of ½mv² (slow cars stall, fast cars plow) */
+export const PLOW_BUDGET_FRACTION = 0.25
+/** hard per-tick cap on plowed voxels per vehicle (perf guard) */
+export const MAX_PLOW_VOXELS = 200
+
+/** can the plow remove this material? */
+function plowable(mat: number): boolean {
+  if (mat === MAT_AIR || mat === MAT_DIRT || mat === MAT_GRASS || mat === MAT_WATER_SOLID) return false
+  return material(mat).strength <= PLOW_MAX_STRENGTH
+}
+
 // ---------------------------------------------------------------------------
 // T64 sim → render events. NOTE for the coordinator: these belong in
 // src/sim/events.ts (not editable on this track) — fold VehicleEvent into the
@@ -125,7 +153,17 @@ export interface VehicleWheelLossEvent {
   z: number
 }
 
-export type VehicleEvent = VehicleCrashEvent | VehicleDoorEvent | VehicleWheelLossEvent
+/** emitted when the plow pass removed world voxels (fence smash, glass, …) */
+export interface VehiclePlowEvent {
+  kind: 'vehicle_plow'
+  vehicleId: number
+  /** flat [matId, count, ...] of voxels plowed this tick */
+  removedByMat: number[]
+  /** capped sample of removed voxels, flat [vx, vy, vz, mat, ...] (FX/debris) */
+  sample: number[]
+}
+
+export type VehicleEvent = VehicleCrashEvent | VehicleDoorEvent | VehicleWheelLossEvent | VehiclePlowEvent
 
 const asSimEvent = (ev: VehicleEvent): SimEvent => ev as unknown as SimEvent
 
@@ -696,6 +734,123 @@ function syncSeatedPlayer(phys: PhysicsWorld, v: VehicleEntity, p: PlayerEntity)
 // per-tick systems (called from PhysicsWorld.tick, fixed order)
 // ---------------------------------------------------------------------------
 
+/**
+ * PLOW: sweep the vehicle's leading face along its velocity for this tick's
+ * travel and remove plowable voxels, paying PLOW_COST_PER_STRENGTH·strength
+ * per voxel from a ½mv²-derived budget; the spent energy comes back out of
+ * the chassis velocity (√(v² − 2E/m)). Whatever is not plowable or not
+ * affordable stays solid — Jolt resolves the collision (hard stop) and the
+ * post-step crash response handles dents + the momentum-scaled wall bite.
+ * Deterministic: fixed sample order, budget draw in scan order (V2).
+ */
+function plowPass(sim: Sim, phys: PhysicsWorld, v: VehicleEntity): void {
+  const speed = Math.sqrt(v.vx * v.vx + v.vy * v.vy + v.vz * v.vz)
+  if (speed < PLOW_MIN_SPEED) return
+  const dx = v.vx / speed
+  const dy = v.vy / speed
+  const dz = v.vz / speed
+  // leading face by dominant local-velocity axis
+  const [lvx, lvy, lvz] = quatRotate(-v.qx, -v.qy, -v.qz, v.qw, v.vx, v.vy, v.vz)
+  const ax = Math.abs(lvx)
+  const ay = Math.abs(lvy)
+  const az = Math.abs(lvz)
+  const { sx, sy, sz } = v
+  // sample the face at 1-voxel pitch. Side/front bands reach DOWN to wheel
+  // level (local y = 1): a fence must be carved to the ground or the car
+  // beaches on the stub. Natural ground (dirt/grass) is never plowable, so
+  // the low rays cannot tunnel terrain.
+  let su: number, sv: number
+  let toLocal: (u: number, w: number) => [number, number, number]
+  if (ay >= ax && ay >= az) {
+    // vertical impact (falling onto a roof): bottom or top face
+    su = sx
+    sv = sz
+    const fy = lvy < 0 ? 3.5 : sy + 0.5
+    toLocal = (u, w) => [u + 0.5, fy, w + 0.5]
+  } else if (ax >= az) {
+    su = sz
+    sv = sy - 1
+    const fx = lvx < 0 ? -0.5 : sx + 0.5
+    toLocal = (u, w) => [fx, w + 1.5, u + 0.5]
+  } else {
+    su = sx
+    sv = sy - 1
+    const fz = lvz < 0 ? -0.5 : sz + 0.5
+    toLocal = (u, w) => [u + 0.5, w + 1.5, fz]
+  }
+
+  const sweep = speed * DT + 0.2
+  const step = VOXEL_SIZE * 0.5
+  let budget = PLOW_BUDGET_FRACTION * 0.5 * v.mass * speed * speed
+  let spent = 0
+  let removed = 0
+  const removedByMat = new Uint32Array(256)
+  const sample: number[] = []
+  const seen = new Set<number>()
+  // 1-voxel margin each side so the cleared corridor is a shade wider than
+  // the hull (no snagging the fence edge with a fender)
+  for (let w = 0; w < sv && removed < MAX_PLOW_VOXELS; w++) {
+    for (let u = -1; u <= su && removed < MAX_PLOW_VOXELS; u++) {
+      const [lx, ly, lz] = toLocal(u, w)
+      const [rx, ry, rz] = quatRotate(v.qx, v.qy, v.qz, v.qw, lx * VOXEL_SIZE, ly * VOXEL_SIZE, lz * VOXEL_SIZE)
+      const ox = v.px + rx
+      const oy = v.py + ry
+      const oz = v.pz + rz
+      for (let d = 0; d <= sweep; d += step) {
+        const wx = Math.floor((ox + dx * d) / VOXEL_SIZE)
+        const wy = Math.floor((oy + dy * d) / VOXEL_SIZE)
+        const wz = Math.floor((oz + dz * d) / VOXEL_SIZE)
+        const key = wx + 4096 * (wz + 4096 * wy)
+        if (seen.has(key)) continue
+        const mat = sim.world.getVoxel(wx, wy, wz)
+        if (mat === 0) continue
+        seen.add(key)
+        // first solid along this ray: plow it or leave it for Jolt
+        if (plowable(mat)) {
+          const cost = PLOW_COST_PER_STRENGTH * material(mat).strength
+          if (budget >= cost) {
+            sim.world.setVoxel(wx, wy, wz, 0)
+            budget -= cost
+            spent += cost
+            removedByMat[mat]++
+            removed++
+            if (sample.length < 64) sample.push(wx, wy, wz, mat)
+          }
+        }
+        break // ray stops at the first solid voxel either way
+      }
+    }
+  }
+  if (removed === 0) return
+
+  // energy accounting: the plowed material bleeds speed out of the chassis
+  const v2 = Math.max(0, speed * speed - (2 * spent) / v.mass)
+  const scale = Math.sqrt(v2) / speed
+  const api = phys.api
+  const nv = new api.Vec3(v.vx * scale, v.vy * scale, v.vz * scale)
+  v.body.SetLinearVelocity(nv)
+  api.destroy(nv)
+  v.vx *= scale
+  v.vy *= scale
+  v.vz *= scale
+
+  const rbm: number[] = []
+  for (let m = 1; m < 256; m++) if (removedByMat[m] > 0) rbm.push(m, removedByMat[m])
+  sim.emit(asSimEvent({ kind: 'vehicle_plow', vehicleId: v.id, removedByMat: rbm, sample }))
+}
+
+/**
+ * BEFORE structuralPass: plow pass for every vehicle. Runs first inside the
+ * tick so the chunks it dirties get their static colliders rebuilt (and
+ * connectivity-checked — fence remainders drop as debris) in the SAME tick's
+ * structuralPass, before the Jolt step ever sees the obstacle.
+ */
+export function tickVehiclesPlow(sim: Sim, phys: PhysicsWorld): void {
+  if (phys.vehicles.size === 0) return
+  const ids = [...phys.vehicles.keys()].sort((a, b) => a - b)
+  for (const id of ids) plowPass(sim, phys, phys.vehicles.get(id)!)
+}
+
 /** BEFORE the Jolt step: map the driver's move-op input bits to driver input */
 export function tickVehiclesPreStep(phys: PhysicsWorld): void {
   if (phys.vehicles.size === 0) return
@@ -776,6 +931,30 @@ export function tickVehiclesPostStep(sim: Sim, phys: PhysicsWorld): void {
 
     if (v.crashCooldown > 0) v.crashCooldown--
 
+    // punt light debris out of the way: a plank lodged under the chassis
+    // must not beach a moving car — it flies off the bumper instead.
+    // Deterministic: ascending body id, pure function of tick state.
+    const vSpeed = Math.sqrt(v.vx * v.vx + v.vy * v.vy + v.vz * v.vz)
+    if (vSpeed > 3) {
+      const bids = [...phys.bodies.keys()].sort((a, b) => a - b)
+      for (const bid of bids) {
+        const b = phys.bodies.get(bid)
+        if (!b || b.mass > 150) continue
+        const bcx = b.px + (b.sx * VOXEL_SIZE) / 2
+        const bcy = b.py + (b.sy * VOXEL_SIZE) / 2
+        const bcz = b.pz + (b.sz * VOXEL_SIZE) / 2
+        const [lx, ly, lz] = worldToLocal(v, bcx, bcy, bcz)
+        const m = 0.4 // overlap margin, meters
+        if (
+          lx > -m && lx < v.sx * VOXEL_SIZE + m &&
+          ly > -m && ly < v.sy * VOXEL_SIZE + m &&
+          lz > -m && lz < v.sz * VOXEL_SIZE + m
+        ) {
+          phys.setBodyVelocity(b, v.vx * 1.2, Math.max(2.5, v.vy + 2.5), v.vz * 1.2, 4, 1, 4)
+        }
+      }
+    }
+
     // --- crash detection: gravity-corrected one-tick velocity change --------
     const prevSpeed = Math.sqrt(prevVx * prevVx + prevVy * prevVy + prevVz * prevVz)
     const dvx = v.vx - prevVx
@@ -855,12 +1034,33 @@ function handleCrash(
   }
   const large = dv >= CRASH_DV_LARGE
 
-  // world damage: only on a real voxel hit (crashing into another body dents
-  // the car but leaves the world alone)
+  // MUTUAL world damage, momentum-scaled: heavier + faster ⇒ bigger bite.
+  // Brick (strength 3) loses its core at a hard hit; concrete (5) mostly
+  // shrugs; the dirty set feeds the structural pass next tick, so knocking a
+  // pillar out collapses what it carried (same path as explosions).
   if (hit) {
-    const r = Math.min(4, Math.max(1.5, dv * 0.4))
-    const power = Math.min(7, dv * 0.8)
+    const massScale = 0.6 + 0.4 * (v.mass / 1800)
+    const r = Math.min(5, Math.max(1.5, dv * 0.35 * massScale))
+    const power = Math.min(8, dv * 0.55 * massScale)
     destroySphere(sim, hx / VOXEL_SIZE, hy / VOXEL_SIZE, hz / VOXEL_SIZE, r, power)
+  }
+
+  // mutual damage vs dynamic bodies at the contact (momentum-scaled)
+  {
+    const massScale = 0.6 + 0.4 * (v.mass / 1800)
+    const rM = Math.min(0.8, Math.max(0.3, dv * 0.05 * massScale))
+    const power = Math.min(8, dv * 0.55 * massScale)
+    const ids = [...phys.bodies.keys()].sort((a, b) => a - b)
+    for (const bid of ids) {
+      const b = phys.bodies.get(bid)
+      if (!b) continue
+      const bx = b.px + (b.sx * VOXEL_SIZE) / 2 - hx
+      const by = b.py + (b.sy * VOXEL_SIZE) / 2 - hy
+      const bz = b.pz + (b.sz * VOXEL_SIZE) / 2 - hz
+      const reach = rM + (Math.sqrt(b.sx * b.sx + b.sy * b.sy + b.sz * b.sz) * VOXEL_SIZE) / 2
+      if (bx * bx + by * by + bz * bz > reach * reach) continue
+      phys.damageBodySphere(b, hx, hy, hz, rM, power)
+    }
   }
 
   // chassis dent at the contact: uniform sheet-metal strength

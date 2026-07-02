@@ -230,10 +230,105 @@ describe('crash damage (T64.3)', () => {
   }, 30000)
 })
 
+describe('momentum-scaled mutual damage: through fences, stopped by walls (T64.3)', () => {
+  // WHY: this is the acceptance sentence of the crash contract — weak built
+  // materials must yield to a moving car (plow pass), strong masonry must
+  // stop it (Jolt) while taking a momentum-scaled bite (crash response).
+
+  it('crashes THROUGH a wood picket fence: fence section gone, car ≥95% intact', async () => {
+    const sim = makeSim(41)
+    const phys = await createPhysics(sim)
+    sim.queue.push(cmd(0, { kind: 'spawn' }))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 102.4, y: GROUND_Y, z: 106, yaw: 0 }, 1, 1))
+    // picket fence across the path: 1 voxel thick, 1.2 m tall, wood
+    sim.world.fillBox(1000, 8, 1000, 1048, 19, 1000, 6)
+    for (let i = 0; i < 20; i++) sim.step()
+    const v = [...phys.vehicles.values()][0]
+    sim.queue.push(cmd(sim.tick, { kind: 'vehicle_enter' }))
+    sim.step()
+    for (let i = 0; i < 240; i++) {
+      sim.queue.push(cmd(sim.tick, { kind: 'move', input: INPUT_FWD, yaw: 0, pitch: 0 }, 1, 100 + i))
+      sim.step()
+    }
+    // car came out the OTHER side of the fence (fence plane z = 100.0 m)
+    expect(v.pz + (v.sz * 0.1) / 2).toBeLessThan(99.5)
+    // car barely dented
+    expect(v.count).toBeGreaterThanOrEqual(v.initialCount * 0.95)
+    // the fence section in the car's corridor is gone
+    let corridor = 0
+    for (let y = 8; y <= 19; y++)
+      for (let x = 1014; x <= 1033; x++) if (sim.world.getVoxel(x, y, 1000) !== 0) corridor++
+    // was 20 wide × 12 tall = 240 voxels; the ground-level base row (20) may
+    // survive (below the lowest plow ray — the car hops it like a curb)
+    expect(corridor).toBeLessThan(240 * 0.25)
+    phys.dispose()
+  }, 60000)
+
+  it('is STOPPED by a brick wall: hard stop, partial breach, crumpled front', async () => {
+    const sim = makeSim(42)
+    const phys = await createPhysics(sim)
+    sim.queue.push(cmd(0, { kind: 'spawn' }))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 102.4, y: GROUND_Y, z: 106, yaw: 0 }, 1, 1))
+    // thick brick wall (5 voxels) across the path at z = 99.0..99.4 m
+    sim.world.fillBox(1000, 8, 990, 1048, 26, 994, 5)
+    const wallVoxels = () => {
+      let n = 0
+      for (let y = 8; y <= 26; y++)
+        for (let z = 990; z <= 994; z++)
+          for (let x = 1000; x <= 1048; x++) if (sim.world.getVoxel(x, y, z) !== 0) n++
+      return n
+    }
+    const wall0 = wallVoxels()
+    for (let i = 0; i < 20; i++) sim.step()
+    const v = [...phys.vehicles.values()][0]
+    sim.queue.push(cmd(sim.tick, { kind: 'vehicle_enter' }))
+    sim.step()
+    for (let i = 0; i < 300; i++) {
+      sim.queue.push(cmd(sim.tick, { kind: 'move', input: INPUT_FWD, yaw: 0, pitch: 0 }, 1, 100 + i))
+      sim.step()
+    }
+    // the car did NOT punch through (wall back face at z = 99.0 m)
+    expect(v.pz).toBeGreaterThan(98.8)
+    // hard stop (throttle still pinned, wall wins)
+    expect(Math.hypot(v.vx, v.vy, v.vz)).toBeLessThan(2)
+    // wall took a bite but stands: partial breach only
+    const lost = wall0 - wallVoxels()
+    expect(lost).toBeGreaterThan(0)
+    expect(lost).toBeLessThan(wall0 * 0.4)
+    // car front crumpled — real chassis damage, but not a wreck
+    expect(v.count).toBeLessThan(v.initialCount)
+    expect(v.count).toBeGreaterThan(v.initialCount * WRECK_FRACTION)
+    phys.dispose()
+  }, 60000)
+
+  it('vehicle-caused damage feeds the structural pass: plowed pillar drops its slab', async () => {
+    const sim = makeSim(43)
+    const phys = await createPhysics(sim)
+    sim.queue.push(cmd(0, { kind: 'spawn' }))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 102.4, y: GROUND_Y, z: 106, yaw: 0 }, 1, 1))
+    // wooden pillar in the car's path carrying a brick slab overhead (2.0 m up
+    // — the car passes under the slab, plows the pillar, the slab must fall)
+    sim.world.fillBox(1022, 8, 998, 1025, 27, 1000, 6) // pillar (wood)
+    sim.world.fillBox(1014, 28, 994, 1033, 30, 1004, 5) // slab (brick), pillar-only support
+    for (let i = 0; i < 20; i++) sim.step()
+    const bodies0 = phys.bodies.size
+    sim.queue.push(cmd(sim.tick, { kind: 'vehicle_enter' }))
+    sim.step()
+    for (let i = 0; i < 240; i++) {
+      sim.queue.push(cmd(sim.tick, { kind: 'move', input: INPUT_FWD, yaw: 0, pitch: 0 }, 1, 100 + i))
+      sim.step()
+    }
+    // the unsupported slab became dynamic debris (same path as explosions)
+    expect(phys.bodies.size).toBeGreaterThan(bodies0)
+    phys.dispose()
+  }, 60000)
+})
+
 describe('determinism (V2/V3): full vehicle lifecycle, two-run hash equality', () => {
   async function run(seed: number, ticks: number) {
     const sim = makeSim(seed)
-    // wall for the crash leg
+    // fence (plowed through) then wall (hard crash) for the damage legs
+    sim.world.fillBox(1000, 8, 1000, 1048, 18, 1000, 6)
     sim.world.fillBox(1000, 8, 984, 1048, 20, 986, 5)
     const phys = await createPhysics(sim)
     sim.queue.push(cmd(0, { kind: 'spawn' }))
