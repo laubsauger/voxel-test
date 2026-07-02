@@ -80,7 +80,7 @@ T28|.|[CORE] tool UX: hotbar dig/place/gun/explode, crosshair, hit feedback — 
 T29|.|[R] PBR texture pipeline: CC0 sets (ambientcg/freepbr) per I.mat entry, triplanar TSL mapping (albedo/normal/rough/ao), texture array|T8|I.mat,§C
 T30|.|[R] atmosphere polish: physical sky + sun disc, height/distance fog, exposure tuning, SSAO/GTAO, TAA or SMAA, post stack within 60fps budget|T8|§C
 T31|.|[UI] boot pipeline: preloader gate (WASM+assets+scene stamp+water fill done → then UI), I.boot URL params, dev bypass straight into scene||I.boot
-T32|.|[UI] profiling from get-go: stats-gl (WebGPU) + renderer.info panel, toggle via I.boot dev flag + I.settings dev section|T31|I.boot,I.settings
+T32|.|[UI] profiling from get-go: three r185 Inspector addon (three/addons/inspector/Inspector.js — NOT stats-gl) + renderer.info line, toggle via I.boot dev flag + I.settings dev section|T31|I.boot,I.settings
 T33|.|[UI] main menu AAA: slick styled, live in-game scene as background (slow orbit cam over suburb), play/join/settings entries|T31,T20|§C,I.boot
 T34|.|[UI] settings screens: graphics/audio/controls/gameplay + dev settings, I.settings store, localStorage persist, applies live|T33|I.settings,V6
 T35|x|[R] draw-call batching: 2437 chunk meshes × CSM passes = 23fps settled. BatchedMesh or region merge + shadow pass reduction. Exit: settled suburb ≥60fps smoke gate|T9|§C,B2
