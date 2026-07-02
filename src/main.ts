@@ -189,6 +189,46 @@ store.subscribe('dev.cycleSpeed', applyCycleSpeed)
 const map = new MapSystem(adaptLayout(generateLayout(boot.seed)), { vx: WORLD_VX, vz: WORLD_VZ })
 map.attach(root)
 map.setVisible(false) // hidden until play (user nit: no minimap over the menu)
+// T64 — continuous vehicle audio: engine/skid loops follow the seated vehicle
+type LoopHandle = { gain: { gain: { value: number } }; source: { playbackRate?: { value: number } }; stop: (f?: number) => void }
+const vloops: { engine: LoopHandle | null; skid: LoopHandle | null; arch: string } = { engine: null, skid: null, arch: '' }
+function stopVehicleLoops(): void {
+  vloops.engine?.stop(0.3)
+  vloops.skid?.stop(0.15)
+  vloops.engine = vloops.skid = null
+}
+game.addFrameHook(() => {
+  const pl = game.phys.players.get(LOCAL_PLAYER)
+  const v = pl && pl.seatedVehicle !== 0 ? game.phys.vehicles.get(pl.seatedVehicle) : undefined
+  if (!v || !audio.unlocked || !audio.loaded) {
+    if (vloops.engine || vloops.skid) stopVehicleLoops()
+    return
+  }
+  const speed = Math.hypot(v.vx, v.vy, v.vz)
+  const arch = v.archetype
+  if (vloops.arch !== arch && (vloops.engine || vloops.skid)) stopVehicleLoops()
+  vloops.arch = arch
+  const loopName =
+    arch === 'bicycle' ? (speed > 1 ? 'bicycle-freewheel-loop' : 'bicycle-chain-loop')
+    : arch === 'scooter' ? 'scooter-engine-loop'
+    : 'engine-rev-loop'
+  if (!vloops.engine) {
+    void audio.play(loopName, { volume: 0.0001 }).then((h) => { if (h) vloops.engine = h as unknown as LoopHandle })
+  } else {
+    const top = arch === 'bicycle' ? 7 : arch === 'scooter' ? 13 : 21
+    vloops.engine.gain.gain.value = arch === 'bicycle' ? 0.35 : Math.min(0.8, 0.25 + (speed / top) * 0.6)
+    if (vloops.engine.source.playbackRate) vloops.engine.source.playbackRate.value = 0.75 + 0.85 * (speed / top)
+  }
+  const slip = Math.max(0, ...v.wheels.map((w) => w.slip))
+  const skidGain = speed > 4 ? Math.min(1, Math.max(0, (slip - 1.2) / 3)) : 0
+  if (skidGain > 0 && !vloops.skid) {
+    void audio.play('skid-loop', { volume: 0.0001 }).then((h) => { if (h) vloops.skid = h as unknown as LoopHandle })
+  } else if (vloops.skid) {
+    if (skidGain <= 0) { vloops.skid.stop(0.15); vloops.skid = null }
+    else vloops.skid.gain.gain.value = skidGain * 0.7
+  }
+})
+
 game.addFrameHook(() => {
   map.setVisible(game.state === 'play')
   const p = game.phys.players.get(LOCAL_PLAYER)
