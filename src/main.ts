@@ -301,12 +301,26 @@ document.addEventListener('keydown', (e) => {
   if (pause.visible && game.state === 'play') resume()
 })
 
+// U — unlock cursor WITHOUT pausing (regioned screenshots, dev). Click re-locks.
+let screenshotUnlock = false
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyU' && game.state === 'play' && document.pointerLockElement) {
+    screenshotUnlock = true
+    document.exitPointerLock()
+    hud.setLockHint(true)
+  }
+})
+
 // pointer-lock lost in play (Esc) → pause menu
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === game.renderer.domElement
   if (locked) {
     hud.setLockHint(false)
     pause.hide()
+    return
+  }
+  if (screenshotUnlock) {
+    screenshotUnlock = false // deliberate unlock: no pause, HUD hint shows re-lock path
     return
   }
   if (game.state === 'play' && !settings.visible && settingsReturn === null) pause.show()
