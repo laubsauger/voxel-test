@@ -77,8 +77,8 @@ T25|x|[N] lockstep transport: input delay buffer 2-3 ticks, tick barrier|T24|V2,
 T26|x|[N] join snapshot: serialize sim state, RLE chunks, fast-forward|T25|V3
 T27|x|[N] desync detector: periodic hash exchange, loud fail|T25|V10
 T28|x|[CORE] tool UX: hotbar dig/place/gun/explode, crosshair, hit feedback — AAA HUD styling per §C UI bar, shared design system with T33 menu|T5,T13|§C
-T29|.|[R] PBR texture pipeline: CC0 sets (ambientcg/freepbr) per I.mat entry, triplanar TSL mapping (albedo/normal/rough/ao), texture array|T8|I.mat,§C
-T30|.|[R] atmosphere polish: physical sky + sun disc + moon, voxel/block clouds (cute, drifting, seed-varied), height/distance fog, exposure tuning, SSAO/GTAO, TAA or SMAA, post stack within 60fps budget|T8|§C
+T29|x|[R] PBR texture pipeline: CC0 sets (ambientcg/freepbr) per I.mat entry, triplanar TSL mapping (albedo/normal/rough/ao), texture array|T8|I.mat,§C
+T30|x|[R] atmosphere polish: physical sky + sun disc + moon, voxel/block clouds (cute, drifting, seed-varied), height/distance fog, exposure tuning, SSAO/GTAO, TAA or SMAA, post stack within 60fps budget|T8|§C
 T31|x|[UI] boot pipeline: preloader gate (WASM+assets+scene stamp+water fill done → then UI), I.boot URL params, dev bypass straight into scene||I.boot
 T32|x|[UI] profiling from get-go: three r185 Inspector addon (three/addons/inspector/Inspector.js — NOT stats-gl) + renderer.info line, toggle via I.boot dev flag + I.settings dev section|T31|I.boot,I.settings
 T33|x|[UI] main menu AAA: slick styled, live in-game scene as background (slow orbit cam over suburb), play/join/settings entries|T31,T20|§C,I.boot
@@ -87,7 +87,7 @@ T35|x|[R] draw-call batching: 2437 chunk meshes × CSM passes = 23fps settled. B
 T36|x|[A] SFX asset pipeline: ElevenLabs gen (I.audio) — footsteps×surface, shoot, impacts×material, explosions, water, ambience, UI, hurt. Rich AAA set, manifest|T31|I.audio,§C
 T37|x|[A] runtime audio engine: WebAudio buses (master/music/sfx), positional SFX, footstep surface detect, event hooks from sim/render, volumes via I.settings|T36|I.audio,I.settings,V6
 T38|x|[A] music: DESCOPED 2026-07-02 — user supplies own tracks. Placeholder ambient beds stay until replaced. Crossfade + music bus shipped, drop-in = replace public/audio/music/*.mp3 + manifest entries|T36|I.audio
-T39|.|[R] transparency pass: second mesh pass per chunk for transparent mats (glass, water-solid), no cull vs transparent neighbors, sorted blend|T35|B5,I.mat
+T39|x|[R] transparency pass: second mesh pass per chunk for transparent mats (glass, water-solid), no cull vs transparent neighbors, sorted blend|T35|B5,I.mat
 T40|x|[P] physics feel: density-true impulse response, per-material friction/restitution, max lin/ang velocity clamps, sleep tuning, kill plane despawn, buoyancy coupling (FloatingBodyAdapter per INTEGRATION-water.md §4)|T13,T17|B7,V2,V12
 T41|x|[C] stairs: multi-story houses get interior stairs + floor openings, walkable slope for char controller|T20|B6
 T42|x|[C] vegetation: trees (trunk+leaf canopy, MAT_LEAVES), shrubs, yard/parkway placement from seed|T20|B6,V2
@@ -100,7 +100,7 @@ T50|.|[C] world expansion (B11): 2048×2048×768 world. Districts: suburban core
 T51|.|[C] house/lot detail (B11): interiors — rooms, interior doors, basic voxel furniture; garages, balconies, chimneys, varied rooflines; backyard variety|T50|B11,V2
 T55|.|[P] explosion falloff zones (B14): core=vaporize, mid=voxels ejected as small debris bodies/ballistic ejecta (deterministic Prng-capped clumps) radiating from center, outer=loosened/cracked singles knocked free, shockwave impulse on bodies+ejecta, per-material scaling|T13|B14,V1,V2,V8
 T56|.|[P] structural support heuristic: after edits, weak necks (small connection cross-section vs supported mass, per-material strength) break → collapse. Walls cave, undermined buildings crumble progressively. Region-scoped, deterministic, budgeted per tick|T55|B15,V1,V2
-T57|.|[SPIKE] 5cm voxel evaluation: branch-only prototype, small scene, measure memory/mesh/physics cost vs visual gain. DECISION GATE after T29/T30 land — 10cm = Teardown parity, halving = 8× cost|T29,T30|§C
+T57|-|[SPIKE] 5cm voxels: BENCHED 2026-07-02 by user — staying at 10cm (Teardown parity). Revisit only on explicit ask|T29,T30|§C
 T53|.|[R] destruction/combat VFX (B13): explosion = flash+fireball+radial debris (velocities FROM blast center)+smoke plume+dust ring; gun muzzle flash+tracer+impact fx by material; debris particle overhaul (impulse-centered emission)|T14|B13,V6,§C
 T54|.|[P] projectile entities: thrown bomb = sim projectile (arc, bounce, fuse timer → explode at rest), deterministic. Visual: classic black round voxel bomb + fuse spark, trailed|T13|B13,B14,V1,V2
 T52|x|[UI] audio wiring per INTEGRATION-audio.md (B9: engine init on gesture, listener sync, footstep poller, event hooks) + fullscreen setting & quick-access + mute quick-access in main/pause menus + ESC toggles pause closed (B10)|T34,T37|B9,B10,I.audio,I.settings

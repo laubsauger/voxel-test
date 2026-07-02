@@ -34,6 +34,7 @@ export interface BufferSourceLike extends AudioNodeLike {
   buffer: unknown
   loop: boolean
   onended: (() => void) | null
+  playbackRate?: AudioParamLike
   start(when?: number): void
   stop(when?: number): void
 }
@@ -101,6 +102,8 @@ export interface PlayOptions {
   position?: { x: number; y: number; z: number }
   /** extra gain 0..1 on top of the manifest trim (e.g. distance-derived) */
   volume?: number
+  /** playback rate multiplier (pitch jitter), default 1 */
+  playbackRate?: number
   /** panner tuning (positional only) */
   refDistance?: number
   maxDistance?: number
@@ -267,7 +270,11 @@ export class AudioEngine {
       p = (async () => {
         const res = await this.fetchFn(def.path)
         if (!res.ok) throw new Error(`audio fetch failed: ${res.status} ${def.path}`)
-        return this.ctx!.decodeAudioData(await res.arrayBuffer())
+        const decoded = await this.ctx!.decodeAudioData(await res.arrayBuffer())
+        // UI one-shots: downmix to mono — some generated assets ship with
+        // skewed stereo (heard right-ear-only in menus). Center them.
+        if (def.category === 'ui') return downmixToMono(decoded)
+        return decoded
       })()
       // evict failed loads so a transient error can retry (still loud: play() rejects)
       p.catch(() => this.buffers.delete(def.path))
@@ -289,6 +296,7 @@ export class AudioEngine {
     const source = ctx.createBufferSource()
     source.buffer = buffer
     source.loop = def.loop
+    if (opts.playbackRate && source.playbackRate) source.playbackRate.value = opts.playbackRate
 
     const gain = ctx.createGain()
     gain.gain.value = def.volume * (opts.volume ?? 1)
@@ -358,4 +366,30 @@ export class AudioEngine {
     this.currentMusic?.stop(fadeSeconds)
     this.currentMusic = null
   }
+}
+
+/**
+ * Downmix a decoded AudioBuffer to mono (average of channels). Used for UI
+ * one-shots whose source assets ship with skewed stereo. Works on real
+ * AudioBuffers; passes mock/mono buffers through untouched.
+ */
+function downmixToMono(buffer: unknown): unknown {
+  const b = buffer as {
+    numberOfChannels?: number
+    length?: number
+    sampleRate?: number
+    getChannelData?: (c: number) => Float32Array
+    copyToChannel?: (src: Float32Array, c: number) => void
+  }
+  if (!b || typeof b.getChannelData !== 'function' || (b.numberOfChannels ?? 1) < 2) return buffer
+  const len = b.length!
+  const mixed = new Float32Array(len)
+  for (let c = 0; c < b.numberOfChannels!; c++) {
+    const data = b.getChannelData(c)
+    for (let i = 0; i < len; i++) mixed[i] += data[i]
+  }
+  const inv = 1 / b.numberOfChannels!
+  for (let i = 0; i < len; i++) mixed[i] *= inv
+  for (let c = 0; c < b.numberOfChannels!; c++) b.copyToChannel!(mixed, c)
+  return buffer
 }

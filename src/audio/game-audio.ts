@@ -207,10 +207,14 @@ export class GameAudio {
       if (this.strideAcc > stride) this.strideAcc = 0 // don't burst after a long stall
       const surface = this.surfaceAt(player.px, player.py, player.pz)
       if (surface) {
+        // jittered volume + playback rate so fast cadences (sprint) don't
+        // machine-gun the same transient — render-side randomness is fine (V6)
         this.engine.play(`footstep-${running ? 'run' : 'walk'}-${surface}`, {
           position: pos,
           refDistance: 1.5,
           maxDistance: 30,
+          volume: (running ? 0.55 : 0.85) * (0.85 + Math.random() * 0.15),
+          playbackRate: 0.92 + Math.random() * 0.16,
         })
       }
     }

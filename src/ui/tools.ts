@@ -64,11 +64,28 @@ export class ToolController {
       },
       { passive: true },
     )
+    // hold-to-fire: mousedown starts, per-tool cooldown paces via the rAF
+    // poller in fire(); mouseup/lock-loss/blur stop
     document.addEventListener('mousedown', (e) => {
       if (e.button !== 0 || game.state !== 'play' || !this.locked()) return
+      this.held = true
       this.fire()
     })
+    document.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this.held = false
+    })
+    addEventListener('blur', () => (this.held = false))
+    document.addEventListener('pointerlockchange', () => {
+      if (!this.locked()) this.held = false
+    })
+    const pump = () => {
+      if (this.held && game.state === 'play' && this.locked()) this.fire()
+      requestAnimationFrame(pump)
+    }
+    requestAnimationFrame(pump)
   }
+
+  private held = false
 
   private locked(): boolean {
     return document.pointerLockElement === this.game.renderer.domElement
