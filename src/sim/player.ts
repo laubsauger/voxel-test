@@ -155,10 +155,10 @@ function makeCapsule(api: PhysicsWorld['api'], halfCyl: number): Jolt.Shape {
   return shape
 }
 
-/** deterministic spawn column per player */
+/** deterministic spawn column per player — world-center road crossing (T50) */
 function spawnPoint(sim: Sim, playerId: number): { x: number; y: number; z: number } {
-  const x = 51.2 + playerId * 1.0
-  const z = 51.2
+  const x = 102.4 + playerId * 1.0
+  const z = 102.4
   // scan down for the highest solid voxel in the spawn column (deterministic)
   const vx = Math.floor(x / VOXEL_SIZE)
   const vz = Math.floor(z / VOXEL_SIZE)
