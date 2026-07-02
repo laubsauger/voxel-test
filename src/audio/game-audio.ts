@@ -22,6 +22,7 @@ import {
   MAT_LAMP,
   MAT_LEAVES,
   MAT_METAL,
+  MAT_PAINT,
   MAT_PLASTER,
   MAT_ROOFTILE,
   MAT_WATER_SOLID,
@@ -54,7 +55,8 @@ export function footstepSurface(mat: number): FootstepSurface | null {
     case MAT_LEAVES:
       return 'grass'
     case MAT_ASPHALT:
-      return 'asphalt'
+    case MAT_PAINT:
+      return 'asphalt' // paint is a 1-voxel skin on road surfaces
     case MAT_CONCRETE:
     case MAT_BRICK:
     case MAT_PLASTER:
@@ -86,6 +88,7 @@ export function impactGroup(mat: number): string | null {
     case MAT_LEAVES:
       return 'impact-grass'
     case MAT_ASPHALT:
+    case MAT_PAINT:
     case MAT_CONCRETE:
     case MAT_PLASTER:
     case MAT_ROOFTILE:

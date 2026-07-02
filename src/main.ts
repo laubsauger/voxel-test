@@ -56,6 +56,12 @@ store.subscribe('graphics.quality', applyGraphics)
 store.subscribe('graphics.fov', applyGraphics)
 
 const dev = new DevOverlay(game)
+// T47 — noclip on N, dev-gated (deterministic sim op, lockstep-safe)
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyN' && (boot.dev || store.get('dev.profiling')) && game.state === 'play') {
+    game.toggleNoclip()
+  }
+})
 const syncDev = () => dev.setEnabled(boot.dev || store.get('dev.profiling'))
 store.subscribe('dev.profiling', syncDev)
 syncDev()

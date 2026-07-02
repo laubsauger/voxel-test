@@ -33,6 +33,7 @@ describe('material id → footstep surface', () => {
     rooftile: 'concrete',
     lamp: 'concrete',
     flesh: 'dirt',
+    paint: 'asphalt',
   }
 
   it('maps every material in the sim table (exhaustive, keyed by name not index)', () => {
@@ -45,7 +46,7 @@ describe('material id → footstep surface', () => {
   })
 
   it('unknown/reserved ids fall back to a soft surface instead of crashing the render layer', () => {
-    expect(footstepSurface(15)).toBe('dirt')
+    expect(footstepSurface(99)).toBe('dirt')
     expect(footstepSurface(200)).toBe('dirt')
   })
 })
@@ -67,6 +68,7 @@ describe('material id → impact group', () => {
     rooftile: 'impact-concrete',
     lamp: 'impact-metal',
     flesh: 'impact-dirt',
+    paint: 'impact-concrete',
   }
 
   it('maps every material in the sim table (exhaustive)', () => {

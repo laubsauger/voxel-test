@@ -23,6 +23,7 @@ import { FixedStepDriver, Sim } from './sim/loop'
 import { registerEditOps } from './sim/edit-ops'
 import { registerShootOp } from './sim/shoot-op'
 import { createPhysics, loadJolt, type PhysicsWorld } from './sim/physics'
+import { attachBuoyancy } from './sim/buoyancy-coupling'
 import { attachWaterSim, type WaterSim } from './sim/water/water-sim'
 import { generateLayout } from './sim/gen/layout'
 import { stampScene } from './sim/gen/stamper'
@@ -140,6 +141,11 @@ export class Game {
     this.cam.mode = defaultCamMode
     this.state = 'play'
     if (this.flying) this.toggleFly()
+  }
+
+  /** T47 — dev noclip toggle (deterministic op; UI gates behind dev mode) */
+  toggleNoclip(): void {
+    this.sim.queue.push({ tick: this.sim.tick, playerId: LOCAL_PLAYER, seq: nextSeq(), op: { kind: 'noclip' } })
   }
 
   /** back to the cinematic orbit (quit to menu) */
@@ -298,6 +304,7 @@ export class Game {
     await loadJolt()
     const phys = await createPhysics(sim)
     registerShootOp(sim, phys) // T28 — hitscan op, same connectivity path as explode
+    attachBuoyancy(sim, phys, water) // T40 — after BOTH physics + water (one-tick force latency, deterministic)
 
     // --- render ---------------------------------------------------------------
     onStage?.('renderer')
