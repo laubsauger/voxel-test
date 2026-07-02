@@ -41,6 +41,8 @@ const log: Command[] = [
   { tick: 1, playerId: 1, seq: 0, op: { kind: 'dig', x: 20, y: 7, z: 20, r: 4 } },
   { tick: 4, playerId: 1, seq: 1, op: { kind: 'place', x: 40, y: 10, z: 40, r: 3, mat: 5 } },
   { tick: 8, playerId: 2, seq: 0, op: { kind: 'dig', x: 42, y: 8, z: 40, r: 3 } },
+  // T13: explode severs the placed blob → island bodies enter the physics hash
+  { tick: 12, playerId: 1, seq: 2, op: { kind: 'explode', x: 40.5, y: 8.5, z: 40.5, r: 5, power: 3 } },
 ]
 
 describe('physics determinism (T10, I.jolt, V2, V3)', () => {

@@ -28,6 +28,7 @@ import {
   type Region,
 } from './connectivity'
 import { material, VOXEL_VOLUME } from './materials'
+import { registerDestructionOps } from './destruction'
 
 type JoltApi = typeof Jolt
 
@@ -441,6 +442,7 @@ export function hashPhysics(phys: PhysicsWorld): number {
 export async function createPhysics(sim: Sim): Promise<PhysicsWorld> {
   const api = await loadJolt()
   const phys = new PhysicsWorld(api)
+  registerDestructionOps(sim, phys)
   phys.initStatic(sim.world)
   sim.addSystem(() => phys.tick(sim))
   return phys
