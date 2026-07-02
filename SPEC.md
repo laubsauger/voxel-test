@@ -88,14 +88,14 @@ T36|x|[A] SFX asset pipeline: ElevenLabs gen (I.audio) — footsteps×surface, s
 T37|x|[A] runtime audio engine: WebAudio buses (master/music/sfx), positional SFX, footstep surface detect, event hooks from sim/render, volumes via I.settings|T36|I.audio,I.settings,V6
 T38|x|[A] music: DESCOPED 2026-07-02 — user supplies own tracks. Placeholder ambient beds stay until replaced. Crossfade + music bus shipped, drop-in = replace public/audio/music/*.mp3 + manifest entries|T36|I.audio
 T39|.|[R] transparency pass: second mesh pass per chunk for transparent mats (glass, water-solid), no cull vs transparent neighbors, sorted blend|T35|B5,I.mat
-T40|.|[P] physics feel: density-true impulse response, per-material friction/restitution, max lin/ang velocity clamps, sleep tuning, kill plane despawn, buoyancy coupling (FloatingBodyAdapter per INTEGRATION-water.md §4)|T13,T17|B7,V2,V12
+T40|x|[P] physics feel: density-true impulse response, per-material friction/restitution, max lin/ang velocity clamps, sleep tuning, kill plane despawn, buoyancy coupling (FloatingBodyAdapter per INTEGRATION-water.md §4)|T13,T17|B7,V2,V12
 T41|.|[C] stairs: multi-story houses get interior stairs + floor openings, walkable slope for char controller|T20|B6
 T42|.|[C] vegetation: trees (trunk+leaf canopy, MAT_LEAVES), shrubs, yard/parkway placement from seed|T20|B6,V2
 T43|.|[C] street detail: road markings (id 15 = paint), fences, lamp posts (emissive), mailboxes, driveway/roof/palette variation — cute pass|T20|B6,V2
-T44|.|[PL] sprint (input bit 64, speed mult) + functional crouch (capsule shrink, slow) — sim-side, deterministic move op|T21|V1,V2
+T44|x|[PL] sprint (input bit 64, speed mult) + functional crouch (capsule shrink, slow) — sim-side, deterministic move op|T21|V1,V2
 T45|.|[PL] fly/spectator mode: quick toggle (F), free camera detached from player (render-only, lockstep-safe), speed tiers|T21|V6
 T46|.|[PL] player visual detail: segment-based colors (skin/shirt/pants/shoes), better proportions, damage-visible voxel body|T22|§C
-T47|.|[PL] noclip dev mode: 'noclip' toggle op, player skips collision + direct velocity integration, deterministic (command-driven), dev-gated in UI|T21|V1,V2
+T47|x|[PL] noclip dev mode: 'noclip' toggle op, player skips collision + direct velocity integration, deterministic (command-driven), dev-gated in UI|T21|V1,V2
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 
