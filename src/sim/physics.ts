@@ -21,6 +21,13 @@ import {
   type ChunkStore,
 } from '../world/chunks'
 import { greedyBoxes, type Box } from './greedy-boxes'
+import {
+  CONNECTIVITY_MARGIN,
+  findUnsupportedIslands,
+  type Island,
+  type Region,
+} from './connectivity'
+import { material, VOXEL_VOLUME } from './materials'
 
 type JoltApi = typeof Jolt
 
@@ -33,6 +40,34 @@ export const GRAVITY_Y = -9.81
 
 /** Full 32³ chunk as a single box — fast path for Uniform chunks. */
 const FULL_CHUNK_BOX: Box[] = [{ x: 0, y: 0, z: 0, sx: CHUNK, sy: CHUNK, sz: CHUNK }]
+
+/**
+ * Union voxel-space bounding box of a set of chunk indices, expanded by
+ * `margin`. clampRegion (in connectivity) bounds the final search volume.
+ */
+export function chunkUnionRegion(chunkIndices: number[], margin: number): Region {
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity
+  let x1 = -Infinity, y1 = -Infinity, z1 = -Infinity
+  for (const ci of chunkIndices) {
+    const cx = ci % WORLD_CX
+    const cz = ((ci / WORLD_CX) | 0) % WORLD_CZ
+    const cy = (ci / (WORLD_CX * WORLD_CZ)) | 0
+    x0 = Math.min(x0, cx * CHUNK)
+    y0 = Math.min(y0, cy * CHUNK)
+    z0 = Math.min(z0, cz * CHUNK)
+    x1 = Math.max(x1, cx * CHUNK + CHUNK - 1)
+    y1 = Math.max(y1, cy * CHUNK + CHUNK - 1)
+    z1 = Math.max(z1, cz * CHUNK + CHUNK - 1)
+  }
+  return {
+    x0: x0 - margin,
+    y0: y0 - margin,
+    z0: z0 - margin,
+    x1: x1 + margin,
+    y1: y1 + margin,
+    z1: z1 + margin,
+  }
+}
 
 let joltPromise: Promise<JoltApi> | undefined
 
@@ -84,6 +119,8 @@ export class PhysicsWorld {
 
   /** chunk indices rebuilt since last drainRemesh() — render consumes these (see INTEGRATION-physics.md) */
   private readonly remesh = new Set<number>()
+  /** chunk indices needing a connectivity check next structural pass (island-removal cascades, T12) */
+  private pendingConnectivity: number[] = []
 
   private readonly settings: Jolt.JoltSettings
   private readonly gravity: Jolt.Vec3
@@ -147,8 +184,13 @@ export class PhysicsWorld {
   }
 
   /**
-   * Rebuild static chunk bodies for chunks dirtied by this tick's commands.
-   * Connectivity/island extraction extends this at T11/T12.
+   * Structural update (T11/T12): rebuild static chunk bodies for chunks
+   * dirtied by this tick's commands, then run the region-limited connectivity
+   * check over the affected neighborhood and extract unsupported islands into
+   * dynamic bodies. Island removal re-dirties chunks; those are rebuilt
+   * immediately (no one-tick collider overlap with the new body) and queued
+   * for a connectivity check next pass — cascades settle over ticks,
+   * deterministically (V2).
    */
   structuralPass(sim: Sim): void {
     const drained = sim.world.drainDirty()
@@ -156,6 +198,87 @@ export class PhysicsWorld {
       this.rebuildChunkBody(sim.world, ci)
       this.remesh.add(ci)
     }
+    const check = this.pendingConnectivity.concat(drained)
+    this.pendingConnectivity = []
+    if (check.length === 0) return
+
+    const region = chunkUnionRegion(check, CONNECTIVITY_MARGIN)
+    for (const island of findUnsupportedIslands(sim.world, region)) {
+      this.extractIsland(sim, island)
+    }
+    const dirtied = sim.world.drainDirty()
+    for (const ci of dirtied) {
+      this.rebuildChunkBody(sim.world, ci)
+      this.remesh.add(ci)
+      this.pendingConnectivity.push(ci)
+    }
+  }
+
+  /**
+   * T12: island voxels → dynamic body entity. Voxels leave the ChunkStore and
+   * live in the body's own mini grid; collider = greedy-box compound; mass =
+   * Σ voxel density × voxel volume. Entity id via sim.allocEntityId() (V8).
+   * Bodies stay dynamic after settling (V12) — sleep is allowed, re-weld is not.
+   */
+  extractIsland(sim: Sim, island: Island): DynamicBody {
+    const vs = island.voxels
+    if (vs.length === 0) throw new Error('extractIsland: empty island')
+    let x0 = vs[0].x, y0 = vs[0].y, z0 = vs[0].z
+    let x1 = x0, y1 = y0, z1 = z0
+    for (const v of vs) {
+      if (v.x < x0) x0 = v.x
+      if (v.y < y0) y0 = v.y
+      if (v.z < z0) z0 = v.z
+      if (v.x > x1) x1 = v.x
+      if (v.y > y1) y1 = v.y
+      if (v.z > z1) z1 = v.z
+    }
+    const sx = x1 - x0 + 1
+    const sy = y1 - y0 + 1
+    const sz = z1 - z0 + 1
+    const grid = new Uint8Array(sx * sy * sz)
+    let mass = 0
+    for (const v of vs) {
+      grid[v.x - x0 + (v.z - z0) * sx + (v.y - y0) * sx * sz] = v.mat
+      mass += material(v.mat).density * VOXEL_VOLUME
+      sim.world.setVoxel(v.x, v.y, v.z, 0)
+    }
+
+    const api = this.api
+    const shape = this.buildBoxesShape(greedyBoxes(grid, sx, sy, sz))
+    const pos = new api.RVec3(x0 * VOXEL_SIZE, y0 * VOXEL_SIZE, z0 * VOXEL_SIZE)
+    const rot = new api.Quat(0, 0, 0, 1)
+    const bcs = new api.BodyCreationSettings(shape, pos, rot, api.EMotionType_Dynamic, LAYER_MOVING)
+    bcs.mOverrideMassProperties = api.EOverrideMassProperties_CalculateInertia
+    bcs.mMassPropertiesOverride.mMass = mass
+    const body = this.bodyInterface.CreateBody(bcs)
+    this.bodyInterface.AddBody(body.GetID(), api.EActivation_Activate)
+    api.destroy(bcs)
+    api.destroy(pos)
+    api.destroy(rot)
+
+    const id = sim.allocEntityId()
+    body.SetUserData(id)
+    const entity: DynamicBody = {
+      id,
+      sx,
+      sy,
+      sz,
+      grid,
+      count: vs.length,
+      mass,
+      px: x0 * VOXEL_SIZE,
+      py: y0 * VOXEL_SIZE,
+      pz: z0 * VOXEL_SIZE,
+      qx: 0,
+      qy: 0,
+      qz: 0,
+      qw: 1,
+      body,
+      version: 0,
+    }
+    this.bodies.set(id, entity)
+    return entity
   }
 
   /** Chunk indices needing remesh — the render layer's dirty feed (replaces world.drainDirty(), V6-safe read). */
