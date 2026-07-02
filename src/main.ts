@@ -41,6 +41,7 @@ import { GuestLobby, HostLobby, HOST_PLAYER_ID, playerName, type SessionPlayer }
 import { LockstepClient, LockstepDriver, LockstepHost, DEFAULT_INPUT_DELAY, type LockstepNode } from './net/lockstep'
 import { DesyncDetectorHost, DesyncReporter, DEFAULT_HASH_INTERVAL, type DesyncEvent } from './net/desync'
 import { combinedHash } from './net/combined-hash'
+import type { DataChannelAdapter } from './net/signaling'
 import type { Channel } from './net/channel'
 import type { Op } from './sim/commands'
 
@@ -395,6 +396,8 @@ interface MpSession {
   verifiedTick: () => number
   desync: DesyncEvent | null
   lastHashes: { tick: number; hash: number }[]
+  /** transport triage (mp-e2e): playerId → channel (DataChannelAdapter live) */
+  channels: { playerId: number; channel: Channel }[]
 }
 let mpSession: MpSession | null = null
 
@@ -411,6 +414,11 @@ let mpOnJoinCode: ((code: string) => void) | null = null
 
 function mpFatal(title: string, lines: string[]): void {
   desyncOverlay.show(title, lines)
+}
+
+/** transport death is never silent (V10): host drops the peer, guest gets the overlay */
+function watchChannelClose(channel: Channel, onDead: () => void): void {
+  if ('onClose' in channel) (channel as DataChannelAdapter).onClose(onDead)
 }
 
 function onDesyncEvent(e: DesyncEvent): void {
@@ -538,6 +546,10 @@ function finishSessionStart(s: MpSession, pingSend: (n: number) => void): void {
   // ping (ss/ping n = send timestamp, echoed back verbatim)
   setInterval(() => pingSend(Math.round(performance.now())), PING_INTERVAL_MS)
 
+  // rAF heartbeat — distinguishes "barrier stalled" from "render loop dead"
+  let frames = 0
+  game.addFrameHook(() => frames++)
+
   // T72 — CDP debug handle (read-side + sanctioned op injection via pushOp)
   ;(window as unknown as { __bbNet: unknown }).__bbNet = {
     get role() {
@@ -557,6 +569,27 @@ function finishSessionStart(s: MpSession, pingSend: (n: number) => void): void {
     },
     get verifiedTick() {
       return s.verifiedTick()
+    },
+    get frames() {
+      return frames
+    },
+    get canStep() {
+      return s.node.canStep
+    },
+    get waitingOn() {
+      return s.lockstepHost?.waitingOn() ?? null
+    },
+    get channelStats() {
+      return s.channels.map(({ playerId, channel }) => {
+        const c = channel as Partial<DataChannelAdapter>
+        return {
+          playerId,
+          sent: c.sent ?? -1,
+          received: c.received ?? -1,
+          buffered: c.bufferedAmount ?? -1,
+          state: c.readyState ?? 'n/a',
+        }
+      })
     },
     get desync() {
       return s.desync
@@ -618,11 +651,16 @@ async function hostFlow(): Promise<void> {
   }
   const code = await sig.hostRoom((peerId, channel) => {
     try {
-      peerToPlayer.set(peerId, lobby.addPeer(channel))
+      const pid = lobby.addPeer(channel)
+      peerToPlayer.set(peerId, pid)
+      watchChannelClose(channel, () => {
+        if (lobby.state === 'lobby') lobby.removePeer(pid)
+        else mpSession?.lockstepHost?.dropPlayer(pid)
+      })
     } catch (e) {
       console.error('[net] peer rejected:', e) // room full / already started
     }
-  })
+  }, boot.transport)
   mpLobby.setCode(code)
 
   mpOnStart = () => {
@@ -655,6 +693,7 @@ async function hostFlow(): Promise<void> {
         verifiedTick: () => detector.lastVerifiedTick,
         desync: null,
         lastHashes: [],
+        channels: [...lobby.peerChannels],
       }
       recordCheckpointHashes(s, hashFn)
       lobby.onPong = (pid, n) => s.pings.set(pid, Math.max(0, Math.round(performance.now() - n)))
@@ -683,9 +722,12 @@ async function joinFlow(): Promise<void> {
     // NOTE: a bad code / full room surfaces via sig.onError (the server's
     // error message), not a joinRoom rejection — see the handler below.
     void (async () => {
-      const { channel } = await sig.joinRoom(code)
+      const { channel } = await sig.joinRoom(code, boot.transport)
       // construct synchronously after join — the host's hello races the listener
       const guest = new GuestLobby(channel)
+      watchChannelClose(channel, () =>
+        mpFatal('Connection lost', ['The channel to the host closed — session over.']),
+      )
       mpLobby.setMode('guest')
       mpLobby.setCode(code)
       mpLobby.setStatus(boot.signalUrl)
@@ -719,6 +761,7 @@ async function joinFlow(): Promise<void> {
             verifiedTick: () => lastGuestVerified,
             desync: null,
             lastHashes: [],
+            channels: [{ playerId: HOST_PLAYER_ID, channel }],
           }
           let lastGuestVerified = -1
           // guests have no detector; "verified" = last checkpoint we reported

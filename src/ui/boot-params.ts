@@ -16,6 +16,12 @@ export interface BootConfig {
   dev: boolean
   /** T71 — signaling server URL for HOST/JOIN (I.net); `?signal=ws://...` */
   signalUrl: string
+  /**
+   * T72 — session transport. 'rtc' (default) = WebRTC DataChannel.
+   * 'ws' = relay through the signaling server — AUTOMATED TESTING ONLY
+   * (headless-CDP WebRTC is flaky; the mp-e2e merge gate uses this).
+   */
+  transport: 'rtc' | 'ws'
 }
 
 export function parseBootParams(search: string): BootConfig {
@@ -27,6 +33,7 @@ export function parseBootParams(search: string): BootConfig {
     seed,
     dev: params.get('dev') === '1',
     signalUrl: params.get('signal') ?? DEFAULT_SIGNAL_URL,
+    transport: params.get('transport') === 'ws' ? 'ws' : 'rtc',
   }
 }
 

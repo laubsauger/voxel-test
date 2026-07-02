@@ -19,9 +19,22 @@
  *      pages, (b) desync detector green, (c) both report the same tick within
  *      barrier tolerance, (d) zero console/page errors.
  *
- * Usage: node scripts/mp-e2e.mjs [--headed]
+ * TRANSPORT (read this before trusting a result):
+ *   default = `?transport=ws` — lockstep runs over the signaling server's
+ *   relay. This proves cross-process sim determinism (the merge-gate claim)
+ *   with a stable transport. It does NOT exercise WebRTC.
+ *   `--rtc` = real RTCDataChannel path. It passes, but ~10% of headless-CDP
+ *   runs hit a loopback-WebRTC environment flake: both pcs stay 'connected'
+ *   while SCTP delivery silently dies mid-run (no JS errors, no state
+ *   change, no dc close) → barrier starves → host drops the peer at 30s.
+ *   Real-browser sessions are unaffected (verified manually + many green
+ *   rtc runs); this is a headless/CDP quirk, not product code — see
+ *   .claude/skills/cdp-testing/SKILL.md "WebRTC under CDP".
+ *
+ * Usage: node scripts/mp-e2e.mjs [--headed] [--rtc]
  */
 import { spawn } from 'node:child_process'
+import { mkdirSync } from 'node:fs'
 import puppeteer from 'puppeteer-core'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
@@ -29,6 +42,7 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const VITE_PORT = Number(process.env.MP_E2E_PORT ?? 5800 + (process.pid % 500))
 const SIGNAL_PORT = VITE_PORT + 500
 const HEADED = process.argv.includes('--headed')
+const RTC = process.argv.includes('--rtc')
 const SEED = 424242
 const RUN_TICKS = 600
 const HASH_INTERVAL = 30
@@ -77,10 +91,61 @@ await new Promise((resolve, reject) => {
 })
 note(`vite up on :${VITE_PORT}`)
 
-const URL = `http://localhost:${VITE_PORT}/?seed=${SEED}&signal=${encodeURIComponent(`ws://localhost:${SIGNAL_PORT}`)}`
+const URL =
+  `http://localhost:${VITE_PORT}/?seed=${SEED}` +
+  `&signal=${encodeURIComponent(`ws://localhost:${SIGNAL_PORT}`)}` +
+  (RTC ? '' : '&transport=ws')
+note(`transport: ${RTC ? 'WebRTC DataChannel (--rtc; flaky under headless CDP)' : 'ws-relay (determinism gate)'}`)
 
 const browsers = []
+const pages = {}
 const errorLogs = { A: [], B: [] }
+
+/** on failure: dump everything we can see on both pages */
+async function dumpDiagnostics() {
+  mkdirSync('smoke-artifacts', { recursive: true })
+  for (const label of Object.keys(pages)) {
+    const page = pages[label]
+    try {
+      const state = await page.evaluate(async () => {
+        const n = window.__bbNet
+        const f0 = n?.frames
+        await new Promise((r) => setTimeout(r, 500))
+        return {
+        net: n
+          ? {
+              tick: n.tick,
+              role: n.role,
+              verifiedTick: n.verifiedTick,
+              desync: n.desync,
+              hashCount: n.lastHashes.length,
+              framesIn500ms: n.frames - f0,
+              canStep: n.canStep,
+              waitingOn: n.waitingOn,
+              channelStats: n.channelStats,
+            }
+          : null,
+        fatal: (() => {
+          const el = document.getElementById('fatal')
+          return el && getComputedStyle(el).display !== 'none' ? el.textContent : null
+        })(),
+        desyncOverlay: (() => {
+          const el = document.querySelector('.bb-desync')
+          return el && el.style.display !== 'none' ? el.textContent.trim().slice(0, 300) : null
+        })(),
+          stall: document.querySelector('.bb-stall')?.textContent ?? null,
+        }
+      })
+      console.error(`[mp-e2e] page ${label} state: ${JSON.stringify(state)}`)
+      await page.screenshot({ path: `smoke-artifacts/mp-e2e-${label}.png` }).catch(() => {})
+    } catch (e) {
+      console.error(`[mp-e2e] page ${label} state unavailable: ${e.message}`)
+    }
+    if (errorLogs[label].length) {
+      console.error(`[mp-e2e] page ${label} errors:\n  ${errorLogs[label].join('\n  ')}`)
+    }
+  }
+}
 
 async function launchPage(label) {
   // separate puppeteer.launch per page ⇒ separate Chrome process trees
@@ -97,17 +162,28 @@ async function launchPage(label) {
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
+      // headless WebRTC on localhost: mDNS-obfuscated host candidates
+      // (.local) resolve flakily without a UI session — the ICE pair can die
+      // mid-run (observed: silent DataChannel death ~7s in). Use raw IPs.
+      '--disable-features=WebRtcHideLocalIpsWithMdns',
     ],
   })
   browsers.push(browser)
   const page = await browser.newPage()
+  pages[label] = page
   await page.setViewport({ width: 1280, height: 800 })
   page.on('pageerror', (e) => errorLogs[label].push(`pageerror: ${String(e)}`))
   page.on('console', (m) => {
+    const text = m.text()
+    // [net] warnings are transport diagnostics (pc/ice/channel state) — echo live
+    if (m.type() === 'warning' && text.startsWith('[net]')) {
+      console.log(`[mp-e2e] ${label} ${text}`)
+      return
+    }
     if (m.type() !== 'error') return
     const url = m.location()?.url ?? ''
     if (url.includes('favicon')) return
-    errorLogs[label].push(`${m.text()} (${url})`)
+    errorLogs[label].push(`${text} (${url})`)
   })
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
   return page
@@ -339,6 +415,7 @@ try {
   }
 } catch (e) {
   fail(`harness error: ${e.message}`)
+  await dumpDiagnostics()
 } finally {
   for (const b of browsers) await b.close().catch(() => {})
   vite.kill()

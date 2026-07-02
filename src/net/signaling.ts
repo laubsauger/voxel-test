@@ -15,15 +15,37 @@ const DATA_CHANNEL_LABEL = 'lockstep'
 /** Thin Channel adapter over a reliable-ordered RTCDataChannel. */
 export class DataChannelAdapter implements Channel {
   private readonly listeners: ((msg: Wire) => void)[] = []
+  private readonly closeListeners: (() => void)[] = []
+  /** diagnostic counters (mp-e2e transport triage) */
+  sent = 0
+  received = 0
+
+  /** outbound bytes stuck in the SCTP queue — growth = transport stalled */
+  get bufferedAmount(): number {
+    return this.dc.bufferedAmount
+  }
+
+  get readyState(): RTCDataChannelState {
+    return this.dc.readyState
+  }
 
   constructor(private readonly dc: RTCDataChannel) {
     dc.binaryType = 'arraybuffer'
     dc.onmessage = (e: MessageEvent) => {
+      this.received++
       for (const cb of this.listeners) cb(e.data as Wire)
     }
+    // T71 — transport death is a session event, never silent (V10). Lockstep
+    // stalls on a dead channel with zero JS errors; surface it.
+    dc.onclose = () => {
+      console.warn(`[net] data channel '${dc.label}' closed`)
+      for (const cb of this.closeListeners) cb()
+    }
+    dc.onerror = (e) => console.warn('[net] data channel error:', e)
   }
 
   send(msg: Wire): void {
+    this.sent++
     if (typeof msg === 'string') this.dc.send(msg)
     else this.dc.send(msg)
   }
@@ -31,11 +53,19 @@ export class DataChannelAdapter implements Channel {
   onMessage(cb: (msg: Wire) => void): void {
     this.listeners.push(cb)
   }
+
+  /** channel closed (peer gone / transport failed) */
+  onClose(cb: () => void): void {
+    this.closeListeners.push(cb)
+  }
 }
 
 export interface SignalingOptions {
   iceServers?: RTCIceServer[]
 }
+
+/** 'rtc' = WebRTC DataChannel (real sessions); 'ws' = signaling-relay (tests) */
+export type Transport = 'rtc' | 'ws'
 
 interface ServerMsg {
   t: string
@@ -56,6 +86,8 @@ export class SignalingClient {
 
   private readonly iceServers: RTCIceServer[]
   private readonly peerConnections = new Map<number, RTCPeerConnection>()
+  /** T72 — ws-relay channels by peerId (test transport, see relayChannel) */
+  private readonly relayHandlers = new Map<number, (msg: string) => void>()
   private signalHandler: ((from: number, data: SignalPayload) => void) | null = null
   private peerJoinedHandler: ((peerId: number) => void) | null = null
   private readonly waiters = new Map<string, (msg: ServerMsg) => void>()
@@ -67,8 +99,11 @@ export class SignalingClient {
     this.iceServers = opts.iceServers ?? DEFAULT_ICE
     ws.onmessage = (e) => this.dispatch(JSON.parse(String(e.data)) as ServerMsg)
     ws.onclose = () => {
-      // fine after setup; loud only if something still waits on the server
-      if (this.waiters.size > 0) this.onError(new Error('signaling connection closed'))
+      // fine after setup (rtc transport); loud if something still waits on the
+      // server or the socket IS the session transport (ws-relay, T72)
+      if (this.waiters.size > 0 || this.relayHandlers.size > 0) {
+        this.onError(new Error('signaling connection closed'))
+      }
     }
   }
 
@@ -90,12 +125,19 @@ export class SignalingClient {
    * `onPeer`. playerId assignment happens above this layer (see
    * INTEGRATION-net.md) — this reports signaling peerIds.
    */
-  async hostRoom(onPeer: (peerId: number, channel: Channel) => void): Promise<string> {
+  async hostRoom(
+    onPeer: (peerId: number, channel: Channel) => void,
+    transport: Transport = 'rtc',
+  ): Promise<string> {
     const created = this.expect('created')
     this.send({ t: 'create' })
     const code = (await created).code as string
 
     this.peerJoinedHandler = (peerId) => {
+      if (transport === 'ws') {
+        onPeer(peerId, this.relayChannel(peerId))
+        return
+      }
       void this.offerTo(peerId)
         .then((channel) => onPeer(peerId, channel))
         .catch((err: Error) => this.onError(err))
@@ -104,18 +146,52 @@ export class SignalingClient {
   }
 
   /** Client flow: join by code, wait for the host's offer, return the open channel. */
-  async joinRoom(code: string): Promise<{ hostId: number; channel: Channel }> {
+  async joinRoom(code: string, transport: Transport = 'rtc'): Promise<{ hostId: number; channel: Channel }> {
     const joined = this.expect('joined')
     this.send({ t: 'join', code })
     const hostId = (await joined).hostId as number
-    const channel = await this.answerFrom(hostId)
+    const channel = transport === 'ws' ? this.relayChannel(hostId) : await this.answerFrom(hostId)
     return { hostId, channel }
+  }
+
+  /**
+   * T72 — WS-relay transport: a Channel tunneled through the signaling
+   * server's existing member-to-member relay ({t:'signal', data:{ch}} —
+   * disjoint from SDP/ICE payloads). Reliable + ordered (single TCP ws).
+   *
+   * PURPOSE: automated testing only (`?transport=ws`). Two headless Chromes
+   * under CDP flake ~10% on loopback WebRTC (transport reports `connected`
+   * while SCTP delivery silently dies — see mp-e2e + INTEGRATION-net.md);
+   * the merge gate needs determinism proof, not WebRTC weather. Real
+   * sessions default to WebRTC ('rtc').
+   */
+  relayChannel(peerId: number): Channel {
+    const listeners: ((msg: Wire) => void)[] = []
+    this.relayHandlers.set(peerId, (msg) => {
+      for (const cb of listeners) cb(msg)
+    })
+    return {
+      send: (msg: Wire) => {
+        if (typeof msg !== 'string') throw new Error('ws-relay: binary frames not supported (V10)')
+        this.send({ t: 'signal', to: peerId, data: { ch: msg } })
+      },
+      onMessage: (cb: (msg: Wire) => void) => {
+        listeners.push(cb)
+      },
+    }
   }
 
   // -- WebRTC plumbing -------------------------------------------------------
 
+  /** diagnostic breadcrumbs — a dying transport must be visible in the console */
+  private static logPcState(pc: RTCPeerConnection, who: string): void {
+    pc.onconnectionstatechange = () => console.warn(`[net] pc(${who}) connection: ${pc.connectionState}`)
+    pc.oniceconnectionstatechange = () => console.warn(`[net] pc(${who}) ice: ${pc.iceConnectionState}`)
+  }
+
   private async offerTo(peerId: number): Promise<Channel> {
     const pc = new RTCPeerConnection({ iceServers: this.iceServers })
+    SignalingClient.logPcState(pc, `peer ${peerId}`)
     this.peerConnections.set(peerId, pc)
     // reliable + ordered is the RTCDataChannel default — exactly what lockstep needs
     const dc = pc.createDataChannel(DATA_CHANNEL_LABEL)
@@ -135,6 +211,7 @@ export class SignalingClient {
 
   private answerFrom(hostId: number): Promise<Channel> {
     const pc = new RTCPeerConnection({ iceServers: this.iceServers })
+    SignalingClient.logPcState(pc, 'host')
     this.peerConnections.set(hostId, pc)
     this.wireIce(pc, hostId)
 
@@ -198,9 +275,15 @@ export class SignalingClient {
       return
     }
     switch (msg.t) {
-      case 'signal':
-        this.signalHandler?.(msg.from as number, msg.data as SignalPayload)
+      case 'signal': {
+        const data = msg.data as SignalPayload & { ch?: string }
+        if (typeof data?.ch === 'string') {
+          this.relayHandlers.get(msg.from as number)?.(data.ch) // ws-relay traffic
+          break
+        }
+        this.signalHandler?.(msg.from as number, data)
         break
+      }
       case 'peer-joined':
         this.peerJoinedHandler?.(msg.peerId as number)
         break

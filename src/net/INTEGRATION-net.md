@@ -1,20 +1,94 @@
-# INTEGRATION — net track (T24–T27)
+# INTEGRATION — net track (T24–T27, wired live in T71/T72)
 
-How the integrator wires `src/net/**` into `main.ts`. Nothing in this track
-modifies existing files; everything below is additive wiring.
+How the integrator wires `src/net/**` into `main.ts`.
+
+## Status after T71/T72 — what is LIVE
+
+| Piece | Status |
+|---|---|
+| Menu HOST/JOIN → lobby → synchronized start | **live** (`main.ts` hostFlow/joinFlow, `src/ui/mp.ts`) |
+| Session protocol `ss/*` (hello/lobby/start/ready/ping) | **live** (`src/net/session.ts`, unit-tested) |
+| Lockstep tick barrier in the real game loop | **live** (`Game.attachNet` + `LockstepDriver` in `game.ts`) |
+| Session-aware command sink (`Game.pushOp`), playerId threading | **live** (tools/spawn/noclip/move; solo stays playerId 1) |
+| Remote player rendering (`PlayerMesh` per spawned peer) | **live** (`game.ts` loop) |
+| Desync detector every 30 ticks, **combined** hash (sim+physics+water) | **live** (`src/net/combined-hash.ts`, V10 red overlay) |
+| Stall UX: banner ≥2s, host drop ≥30s (empty-input substitution) | **live** (`LockstepHost.dropPlayer`, announced in `BundleMsg.dropped`) |
+| Presence HUD (players + ping + sync tick), pause-menu MP note | **live** |
+| 2-browser e2e determinism gate | **live** (`npm run mp-e2e` — MERGE GATE for sim-touching changes) |
+| WS-relay test transport (`?transport=ws`) | **live** (`SignalingClient.relayChannel` — automated tests only) |
+
+Key wiring facts (differ from the original sketch below):
+
+- **The session game is a fresh `Game.create` with `holdTicks: true`.** The
+  menu-orbit backdrop game has been ticking since boot and cannot be lockstep
+  tick-0 state; it is disposed at session start. `holdTicks` freezes the new
+  sim at tick 0 (rendering/meshing still run — `initStatic` seeds the remesh
+  feed without ticks) until `attachNet`, which asserts `sim.tick === 0`.
+  First live run without this: "stale bundle for tick 0 (sim at 484)".
+- **Readiness barrier before `LockstepHost.start()`.** `DataChannelAdapter`
+  does not buffer for unregistered listeners, and guests take seconds to build
+  their Game — bundles sent early would be silently lost. Guests send
+  `ss/ready` after wiring `LockstepClient` + `DesyncReporter`; the host starts
+  the tick stream only after `onAllReady` (see `session.ts` header).
+- **Desync hash is `combinedHash(sim, phys, water)`** — `hashSim` alone would
+  miss physics/water divergence (old open issue 4, now closed). The hash fn is
+  injectable on `DesyncDetectorHost`/`DesyncReporter`; host and guests MUST
+  use the same one.
+- **MISSING HASH EXPORT (open):** player capsule state (`phys.players` —
+  px/py/pz, velocity, yaw, input, segments, noclip) is in **neither `hashSim`
+  nor `hashPhysics`**. A player-only desync is invisible to the detector.
+  Needs a `hashPlayers` export from the physics/player owners (sim/** is not
+  this track's to edit). `mp-e2e` compensates with a bit-exact cross-browser
+  `playersState()` comparison.
+- **Move ops are gated to one per stepped frame** (`Game` MP loop): during a
+  barrier stall nothing is submitted, so a 30s stall can't dump thousands of
+  stale moves into one bundle at release.
+- Leaving a lobby/session (or the desync overlay's "Return to Menu") is a
+  `location.reload()` — clean-slate v1 pragmatism; the backdrop-game swap
+  only runs forward (menu → session), never backward.
+- **Transports.** Real sessions: WebRTC DataChannel (default). Automated
+  tests: `?transport=ws` tunnels lockstep through the signaling server relay
+  (JSON only, binary throws). Reason: loopback WebRTC under headless CDP
+  silently drops SCTP delivery in ~10% of runs with zero observable errors
+  (pcs stay `connected`) — see `.claude/skills/cdp-testing/SKILL.md`
+  "WebRTC under CDP". The rtc path is still exercised by
+  `npm run mp-e2e -- --rtc` and passed repeatedly; the merge gate just
+  doesn't bet on headless WebRTC weather. NOTE for real networks: product
+  code has no ICE-restart/reconnect handling — a mid-session transport blip
+  behaves like a dropped peer (stall banner → host drop at 30s).
+
+## Still deferred (NOT built)
+
+1. **Late join / mid-session snapshot transfer** — explicitly out of scope for
+   T71. `SnapshotCodec` + framing are ready; `LockstepHost.addPeer` still
+   throws after `start()`. Host-side bundle buffering + peer admission at a
+   tick boundary remain open (see "Late-join transfer flow" sketch below).
+2. **Session persistence / reconnect** — a dropped player cannot rejoin
+   (their capsule stays in-world, frozen by empty-input substitution).
+3. **Snapshot sections for physics/water/entities** — blocked on late join.
+4. **Client-side host-death auto-exit** — guests get the stall banner and the
+   `room-closed` fatal overlay (via signaling), but no timeout-based local
+   drop of a silent host (host is the authority; nothing to fail over to).
+
+---
+
+Original wiring sketch from the net track (kept for reference; superseded
+where the table above says so):
 
 ## Files
 
 | File | What |
 |---|---|
-| `server/signal.mjs` | WS signaling server (run: `npm run signal`, `PORT` env, default 8787) |
+| `server/signal.mjs` | WS signaling server (run: `npm run signal`, `PORT` env, default **8081**; client default `ws://localhost:8081`, override with `?signal=ws://...`) |
 | `server/rooms.mjs` (+`.d.mts`) | room/relay state machine, pure, unit-tested |
 | `src/net/channel.ts` | `Channel {send, onMessage}` + `MockChannel` for tests |
 | `src/net/signaling.ts` | browser-only: signaling client + RTCPeerConnection/DataChannel adapter |
 | `src/net/lockstep.ts` | `LockstepHost` / `LockstepClient` / `LockstepNode` / `LockstepDriver` |
 | `src/net/snapshot.ts` | `SnapshotCodec` (sectioned, RLE), `rleEncode/rleDecode` |
 | `src/net/framing.ts` | 16KB DataChannel framing: `frameTransfer` / `FrameAssembler` |
-| `src/net/desync.ts` | `DesyncDetectorHost` / `DesyncReporter` |
+| `src/net/desync.ts` | `DesyncDetectorHost` / `DesyncReporter` (hash fn injectable, T71) |
+| `src/net/session.ts` | `HostLobby` / `GuestLobby` — `ss/*` lobby protocol (T71) |
+| `src/net/combined-hash.ts` | `combinedHash(sim, phys, water)` — the live desync hash (T71) |
 
 ## Host / join UI flow
 
@@ -157,16 +231,16 @@ room (`room-closed` to all — surface as fatal, the lockstep authority is gone)
 
 1. **Mid-session late join** — see above; needs host bundle buffering and a
    protocol message admitting a new playerId at a tick boundary.
-2. **WebRTC layer untested** — `signaling.ts` (RTCPeerConnection/DataChannel)
-   has no unit tests by design (no WebRTC in the vitest node env); needs a
-   manual 2-browser smoke test against `npm run signal`. Server ws wiring was
-   smoke-tested end-to-end (create/join/relay OK).
-3. **Peer drop mid-session** — a disconnected peer stalls everyone at the tick
-   barrier forever (correct per lockstep, but needs UX: timeout → error
-   overlay / host removes player at a released tick boundary).
-4. **hashSim coverage** — currently tick+prng+entityId+chunks. When physics/
-   water state lands, it must be added to hashSim or desyncs in those systems
-   are invisible to T27.
+2. ~~WebRTC layer untested~~ — **closed by T72**: `npm run mp-e2e` exercises
+   signaling + RTCPeerConnection/DataChannel end-to-end in two real Chrome
+   processes on every run.
+3. ~~Peer drop mid-session~~ — **closed by T71**: stall banner ≥2s, host
+   `dropPlayer` ≥30s (also on signaling `peer-left`) with deterministic
+   empty-input substitution announced in `BundleMsg.dropped`
+   (tests/lockstep-drop.test.ts).
+4. ~~hashSim coverage~~ — **closed by T71** for physics + water via
+   `combinedHash`. **Still open for player capsule state** (no exported hash;
+   see "MISSING HASH EXPORT" above).
 5. **Backpressure** — snapshot frames are sent without watching
    `RTCDataChannel.bufferedAmount`; fine at current sizes (uniform world
    ≈ 33KB), revisit if snapshots grow past a few MB.

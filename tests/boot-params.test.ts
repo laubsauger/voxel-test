@@ -10,7 +10,13 @@ describe('parseBootParams (I.boot)', () => {
       seed: DEFAULT_SEED,
       dev: false,
       signalUrl: DEFAULT_SIGNAL_URL,
+      transport: 'rtc',
     })
+  })
+
+  it('T72 — ?transport=ws selects the signaling-relay test transport; default is rtc', () => {
+    expect(parseBootParams('?transport=ws').transport).toBe('ws')
+    expect(parseBootParams('?transport=nonsense').transport).toBe('rtc')
   })
 
   it('?boot=game&seed=N routes straight into gameplay (CDP smoke path)', () => {
@@ -36,7 +42,13 @@ describe('parseBootParams (I.boot)', () => {
   })
 
   it('bootUrl round-trips through parseBootParams', () => {
-    const cfg = { mode: 'game' as const, seed: 42, dev: true, signalUrl: DEFAULT_SIGNAL_URL }
+    const cfg = {
+      mode: 'game' as const,
+      seed: 42,
+      dev: true,
+      signalUrl: DEFAULT_SIGNAL_URL,
+      transport: 'rtc' as const,
+    }
     const url = bootUrl('http://localhost:5173', cfg)
     expect(parseBootParams(new URL(url).search)).toEqual(cfg)
   })
