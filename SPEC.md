@@ -43,6 +43,7 @@ Browser voxel sandbox: fully destructible suburban arena (terrain→player), str
 - V10: desync/hash mismatch = loud error surfaced to user. Never silent divergence.
 - V11: render interpolates between sim ticks. No sim stepping from rAF directly.
 - V12: dynamic island bodies stay dynamic after settle. No re-weld v1.
+- V13: single I.mat authority = src/sim/materials.ts. Other layers derive params by id, never redefine id assignments. Test enforces render/sim id agreement.
 
 ## §T tasks
 
@@ -87,3 +88,4 @@ Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T
 ## §B bugs
 
 id|date|cause|fix
+B1|2026-07-02|parallel track agents (C, R) each defined I.mat table, divergent id assignments (R: 3=sand,8=wood,11=metal vs canonical 3=asphalt,6=wood,9=metal) — merge-time discovery, would have corrupted stamped worlds|V13; render/materials.ts now derives from sim table

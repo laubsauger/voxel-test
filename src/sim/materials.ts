@@ -7,7 +7,10 @@
  *   0 air, 1 dirt, 2 grass, 3 asphalt, 4 concrete, 5 brick, 6 wood,
  *   7 plaster, 8 glass, 9 metal, 10 water-solid marker (reserved for the
  *   water track: solid cells the CA treats as water source volume),
- *   11..15 reserved (null).
+ *   11 leaves, 12 rooftile, 13 lamp, 14..15 reserved (null).
+ *
+ * V13: THIS is the only I.mat id authority. Render/physics derive params
+ * from these ids — never redefine id assignments elsewhere.
  */
 
 export const enum MatFlags {
@@ -54,9 +57,9 @@ export const MATERIALS: (Material | null)[] = [
   { id: 8, name: 'glass', colorRamp: [0xa8cce0, 0xc0e0f0], strength: 5, density: 2500, flags: MatFlags.Transparent },
   { id: 9, name: 'metal', colorRamp: [0x707880, 0x8a929a], strength: 120, density: 7800, flags: MatFlags.None },
   { id: 10, name: 'water-solid', colorRamp: [0x2a5a8a, 0x3a6a9a], strength: 0, density: 1000, flags: MatFlags.Transparent },
-  null,
-  null,
-  null,
+  { id: 11, name: 'leaves', colorRamp: [0x2f4a25, 0x557d3a], strength: 5, density: 300, flags: MatFlags.Flammable | MatFlags.Floats },
+  { id: 12, name: 'rooftile', colorRamp: [0x5f342c, 0x8f4f42], strength: 40, density: 1800, flags: MatFlags.None },
+  { id: 13, name: 'lamp', colorRamp: [0xffedb8, 0xfff9e0], strength: 10, density: 400, flags: MatFlags.None },
   null,
   null,
 ]

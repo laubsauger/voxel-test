@@ -91,6 +91,22 @@ try {
   if (!hudAlive) fail('render loop never reported fps (HUD empty after 20s)')
   else note(`hud: ${await page.evaluate(() => document.getElementById('hud').textContent)}`)
 
+  // Wait for the initial remesh storm to drain (HUD reports pending count).
+  const settled = await page
+    .waitForFunction(() => /pending 0(\D|$)/.test(document.getElementById('hud')?.textContent ?? ''), {
+      timeout: 60000,
+    })
+    .then(() => true)
+    .catch(() => false)
+  if (!settled) fail('world never finished meshing (pending > 0 after 60s)')
+  else {
+    await new Promise((r) => setTimeout(r, 1500)) // let fps counter settle
+    const hudText = await page.evaluate(() => document.getElementById('hud').textContent)
+    note(`settled: ${hudText}`)
+    const fps = Number(/(\d+) fps/.exec(hudText)?.[1] ?? 0)
+    if (fps < 30) fail(`settled fps too low: ${fps}`)
+  }
+
   // Fatal overlay visible?
   const fatalText = await page.evaluate(() => {
     const el = document.getElementById('fatal')

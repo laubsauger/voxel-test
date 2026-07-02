@@ -19,19 +19,28 @@ describe('material table (I.mat)', () => {
     expect(air.floats).toBe(false)
   })
 
-  it('all non-air solids have positive density (physics mass depends on it)', () => {
-    for (const m of MATERIALS.slice(1)) expect(m.density, m.name).toBeGreaterThan(0)
+  it('all non-air, non-reserved solids have positive density (physics mass)', () => {
+    for (const m of MATERIALS.slice(1)) {
+      if (m.name.startsWith('reserved-')) continue
+      expect(m.density, m.name).toBeGreaterThan(0)
+    }
   })
 
   it('glass and water are transparent, nothing structural is', () => {
-    expect(getMaterial(10).name).toBe('glass')
+    expect(getMaterial(8).name).toBe('glass')
+    expect(getMaterial(8).transparent).toBe(true)
+    expect(getMaterial(10).name).toBe('water-solid')
     expect(getMaterial(10).transparent).toBe(true)
-    expect(getMaterial(12).name).toBe('water')
-    expect(getMaterial(12).transparent).toBe(true)
-    for (const name of ['concrete', 'brick', 'stone', 'metal']) {
+    for (const name of ['concrete', 'brick', 'asphalt', 'metal']) {
       const m = MATERIALS.find((x) => x.name === name)!
       expect(m.transparent, name).toBe(false)
     }
+  })
+
+  it('render ids match the sim authority table (V13 — single I.mat source)', () => {
+    expect(getMaterial(3).name).toBe('asphalt')
+    expect(getMaterial(6).name).toBe('wood')
+    expect(getMaterial(9).name).toBe('metal')
   })
 
   it('wood floats and burns (buoyancy + fire gameplay hooks)', () => {

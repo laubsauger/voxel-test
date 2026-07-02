@@ -1,15 +1,11 @@
-import {
-  ACESFilmicToneMapping,
-  AmbientLight,
-  Color,
-  DirectionalLight,
-  Mesh,
-  MeshStandardMaterial,
-  PlaneGeometry,
-  Scene,
-  WebGPURenderer,
-} from 'three/webgpu'
+import { Color, Scene, WebGPURenderer, ACESFilmicToneMapping } from 'three/webgpu'
 import { FlyCam } from './render/flycam'
+import { WorldRenderer } from './render/world-renderer'
+import { FixedStepDriver, Sim } from './sim/loop'
+import { registerEditOps } from './sim/edit-ops'
+import { generateLayout } from './sim/gen/layout'
+import { stampScene } from './sim/gen/stamper'
+import { placeholderProps } from './sim/gen/props'
 
 const app = document.getElementById('app')!
 const hud = document.getElementById('hud')!
@@ -24,6 +20,20 @@ function die(msg: string): never {
 // §C: WebGPU only, no fallback. Fail loud.
 if (!('gpu' in navigator)) die('WebGPU not available. Desktop Chrome required.')
 
+// I.boot (interim until T31): ?seed=N picks the map; fixed default keeps
+// CDP smoke deterministic.
+const params = new URLSearchParams(location.search)
+const seed = Number(params.get('seed') ?? 1337) >>> 0
+
+// --- sim (authoritative, deterministic) -------------------------------------
+const sim = new Sim(seed)
+registerEditOps(sim)
+const layout = generateLayout(seed)
+const { waterFills } = stampScene(sim.world, layout, placeholderProps())
+void waterFills // handed to water sim at T15 integration
+const driver = new FixedStepDriver()
+
+// --- render ------------------------------------------------------------------
 const renderer = new WebGPURenderer({ antialias: true })
 renderer.toneMapping = ACESFilmicToneMapping
 renderer.shadowMap.enabled = true
@@ -34,47 +44,40 @@ app.appendChild(renderer.domElement)
 const scene = new Scene()
 scene.background = new Color(0x87b5e0)
 
-const sun = new DirectionalLight(0xfff4e0, 3)
-sun.position.set(60, 100, 40)
-sun.castShadow = true
-sun.shadow.camera.left = -80
-sun.shadow.camera.right = 80
-sun.shadow.camera.top = 80
-sun.shadow.camera.bottom = -80
-sun.shadow.mapSize.set(2048, 2048)
-scene.add(sun)
-scene.add(new AmbientLight(0xb0c8e0, 0.6))
-
-// Placeholder ground until chunk meshes land (T6).
-const ground = new Mesh(
-  new PlaneGeometry(102.4, 102.4),
-  new MeshStandardMaterial({ color: 0x5a7d4a }),
-)
-ground.rotation.x = -Math.PI / 2
-ground.position.set(51.2, 0, 51.2)
-ground.receiveShadow = true
-scene.add(ground)
-
 const cam = new FlyCam(renderer.domElement, innerWidth / innerHeight)
+cam.camera.position.set(30, 12, 30)
+
+const world = new WorldRenderer({
+  renderer,
+  scene,
+  world: sim.world,
+  camera: cam.camera,
+})
 
 addEventListener('resize', () => {
   cam.camera.aspect = innerWidth / innerHeight
   cam.camera.updateProjectionMatrix()
   renderer.setSize(innerWidth, innerHeight)
+  world.resize()
 })
 
 let last = performance.now()
 let frames = 0
 let fpsAt = last
 renderer.setAnimationLoop((now: number) => {
-  const dt = Math.min((now - last) / 1000, 0.1)
+  const dtMs = Math.min(now - last, 100)
   last = now
-  cam.update(dt)
+  driver.advance(dtMs, sim) // fixed-tick sim (V11)
+  cam.update(dtMs / 1000)
+  world.update(dtMs / 1000) // dirty → remesh budget → geometry swaps (V7)
   frames++
   if (now - fpsAt > 500) {
-    hud.textContent = `${Math.round((frames * 1000) / (now - fpsAt))} fps  |  click: capture mouse, WASD+QE fly, shift fast`
+    hud.textContent =
+      `${Math.round((frames * 1000) / (now - fpsAt))} fps  |  tick ${sim.tick}` +
+      `  |  meshes ${world.chunks.chunkMeshCount} pending ${world.chunks.pendingCount}` +
+      `  |  click: mouse, WASD+QE fly, shift fast`
     frames = 0
     fpsAt = now
   }
-  renderer.render(scene, cam.camera)
+  world.render() // bloom pipeline; replaces renderer.render
 })
