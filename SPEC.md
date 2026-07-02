@@ -113,6 +113,7 @@ T67|.|[C] power poles + wires: wooden poles along roads, catenary-sagging wires 
 T68|.|[C] hood district: rundown vibe — worn/boarded houses, chain-link fences, dumpsters, cracked asphalt+patches, faded paint, overgrown lots, corner store|T50|B6
 T69|.|[C+R] beach/ocean district: arena edge becomes sand beach + boardwalk, shallow CA water surf zone, infinite ocean visual plane beyond arena (horizon), palms|T50|B6,V9
 T70|x|[UI] map + minimap: Google-Maps-style styled map generated from layout data (roads/lots/districts/water/POI), minimap HUD w/ player arrow + heading, M = fullscreen pan/zoom map|T50|I.settings,§C
+T76|.|[V] two-wheelers: bicycle (pedal power, balance-assist, chain/freewheel sounds) + delivery moto-scooter (uber-eats style topbox, moped engine) via Jolt MotorcycleController|T64|V1,V2
 T73|.|[W] weapons: rocket launcher (fast projectile, impact-detonated T55 explosion, backblast+trail FX, hotbar slot) + TNT (placeable block prop, interact-to-light fuse ~3s spark, BIG zoned boom, chainable), SFX via pipeline|T54,T55|V1,V2
 T74|.|[R] birds: occasional small flocks — simple boid-ish sprite/voxel birds, lazy loops over the town, day-only, render-only|T58|B22
 T75|.|[R] flashlight: toggleable spotlight (L), camera-anchored in FP, warm beam, night-useful, subtle battery-free v1|T58|§C

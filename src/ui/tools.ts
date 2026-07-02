@@ -26,7 +26,9 @@ export type ToolFireEvent =
 
 const hitMeters = (hit: ToolHit) => ({ x: hit.mx, y: hit.my, z: hit.mz, mat: hit.mat })
 
-/** reach for dig/build, meters */
+/** shovel reach, meters — melee-ish tool, deliberately short */
+export const DIG_RANGE = 5
+/** build reach, meters */
 export const EDIT_RANGE = 9
 /** bomb toss targeting range, meters (unused since T54 made the bomb a projectile) */
 export const BOMB_RANGE = 80
@@ -118,7 +120,7 @@ export class ToolController {
 
     switch (hud.tool.id) {
       case 'dig': {
-        const hit = raycastWorld(game.sim.world, o.x, o.y, o.z, d.x, d.y, d.z, EDIT_RANGE)
+        const hit = raycastWorld(game.sim.world, o.x, o.y, o.z, d.x, d.y, d.z, DIG_RANGE)
         if (!hit) return
         push({ kind: 'dig', x: hit.x, y: hit.y, z: hit.z, r: 4 })
         hud.hitmarker()
