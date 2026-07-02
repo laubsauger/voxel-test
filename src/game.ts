@@ -263,9 +263,15 @@ export class Game {
     if (this.flying) this.toggleFly()
   }
 
+  /**
+   * B29 — fly now MOVES THE BODY: F rides the deterministic noclip op
+   * (player entity flies via move commands, works in lockstep), so exiting
+   * fly drops you where you are. The camera stays the player cam (fp/tp).
+   * The old detached SpectatorCam remains only for the menu orbit.
+   */
   toggleFly(): void {
     this.flying = !this.flying
-    if (this.flying) this.spectator.enter()
+    this.toggleNoclip() // deterministic sim op; move input flies the capsule
     this.onFlyChange?.(this.flying)
   }
 
@@ -361,7 +367,7 @@ export class Game {
     if (this.spawned && !this.movePending) {
       this.net.node.submitLocal({
         kind: 'move',
-        input: this.flying ? 0 : this.input.inputBits(),
+        input: this.input.inputBits(), // B29: noclip-fly consumes input too
         yaw: this.input.yaw,
         pitch: this.input.pitch,
       })
@@ -406,7 +412,7 @@ export class Game {
         if (this.spawned) {
           // flying: spectator cam roams, capsule stays put → empty move bits (T45)
           this.sim.queue.push(
-            this.input.moveCommand(this.sim.tick, this.localPlayerId, this.flying ? 0 : undefined),
+            this.input.moveCommand(this.sim.tick, this.localPlayerId),
           )
         }
         this.driver.advance(dtMs, this.sim) // fixed-tick sim (V11)
@@ -422,7 +428,7 @@ export class Game {
         // T64 — seated players get the chase cam; on-foot restores fp/tp
         const seatedV =
           player.seatedVehicle !== 0 ? this.phys.vehicles.get(player.seatedVehicle) : undefined
-        if (this.state === 'play' && !this.flying) {
+        if (this.state === 'play') {
           if (seatedV) this.cam.updateVehicle(seatedV, this.sim.world, dt)
           else this.cam.update(player, this.sim.world)
         }
@@ -448,7 +454,7 @@ export class Game {
       }
 
       if (this.state === 'orbit') this.orbitUpdate(now, dt)
-      else if (this.flying) this.spectator.update(dt)
+
 
       this.world.update(dt, this.sim.tick) // remesh budget, debris, CSM, day cycle (V7/T58)
       this.bodyMeshes.update(this.phys.bodies)
