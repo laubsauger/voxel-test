@@ -1,4 +1,4 @@
-# Render track (T6–T9, T14) — integration guide
+# Render track (T6–T9, T14, T35) — integration guide
 
 Wiring the render pipeline into `src/main.ts`. The render layer never
 mutates sim state (V6); its only sim input is `ChunkStore` reads +
@@ -39,9 +39,10 @@ const world = new WorldRenderer({
   world: sim.world,
   camera: cam.camera,
   // optional knobs:
-  // workerCount: 4,           // default min(4, cores-1)
-  // maxDispatchPerFrame: 12,  // V7 budget: worker jobs started per frame
-  // maxApplyPerFrame: 12,     // V7 budget: geometry swaps per frame
+  // workerCount: 4,              // default min(4, cores-1)
+  // maxDispatchPerFrame: 12,     // V7 budget: worker jobs started per frame
+  // maxApplyPerFrame: 12,        // V7 budget: chunk mesh-data applies per frame
+  // maxRegionBuildsPerFrame: 8,  // V7 budget: region geometry rebuilds per frame (T35)
   // bloom: true,
   // debris: true,
 })
@@ -89,7 +90,10 @@ world.particles.burst({ x, y, z }, 40) // world meters, render-only
 
 - `world.chunks.pendingCount` — chunks awaiting remesh (drains over frames
   after big edits; that's the V7 budget working, not a bug).
-- `world.chunks.chunkMeshCount` — live chunk meshes.
+- `world.chunks.chunkMeshCount` — chunks with live mesh data (drawn merged
+  into region meshes since T35, not one Mesh per chunk).
+- `world.chunks.regionMeshCount` — merged region meshes in the scene =
+  world draw calls per pass (T35).
 
 ## Open issues / limitations
 
@@ -123,11 +127,35 @@ world.particles.burst({ x, y, z }, 40) // world meters, render-only
 
 ## Perf notes
 
+- **Region batching (T35, B2 fix):** chunks are drawn as merged 4×4×4-chunk
+  region meshes, not one Mesh per chunk. The settled suburb is ~2437
+  non-empty chunks; per-chunk meshes meant ~10k draws/frame across main +
+  3 CSM cascade passes (23fps). Merged regions cut that to ~60 draws per
+  pass (~240 total) → 120fps settled in the CDP smoke. Worker output per
+  chunk is cached CPU-side; a dirty chunk marks its region and regions
+  rebuild by typed-array concatenation (positions offset, indices rebased),
+  budgeted by `maxRegionBuildsPerFrame` (V7). Edit latency: dirty chunk →
+  worker remesh → region rebuild, still a few frames end to end.
+- **Initial-load burst (B3):** until the remesh pipeline first drains
+  completely, dispatch/apply/region budgets and worker queue depth run at
+  burst values (24/64/32, depth 4), then drop to the steady-state options
+  above. All still bounded per frame (V7). Steady state keeps each worker
+  fed with up to 2 queued jobs.
+- **Movement-aware remesh priority (B3):** `WorldRenderer.update` leads the
+  scheduler focus along the camera velocity (0.5 s, clamped to one region),
+  so chunks ahead of a fast-moving camera mesh first.
+- **Shadow config (B4):** the chunk material renders **front faces** into
+  the shadow map (`shadowSide = FrontSide`) — voxel walls are 10 cm thin,
+  and back-face depth let light leak through wall/roof/floor joins into
+  interiors. The sun's `normalBias` is scaled per CSM cascade after the
+  first render (CSMShadowNode only scales `bias`). If you add another
+  world-geometry material, set `shadowSide = FrontSide` on it too or
+  interiors will leak again.
 - Meshing runs in `min(4, cores-1)` module workers; padded chunk copies
   (34³ = 39 KB) transfer, results transfer back — zero structured-clone
   copies of bulk data.
-- Geometry swap disposes the old `BufferGeometry`; bounding spheres are
-  set analytically (no vertex scan).
+- Region geometry swap disposes the old `BufferGeometry`; bounding spheres
+  are set analytically from member chunk bounds (no vertex scan).
 - Per-chunk job versions drop stale worker results (rapid re-edits of
   the same chunk while a job is in flight).
 - Particle pool: 4096 instanced sprites, motion fully on GPU; `update()`
