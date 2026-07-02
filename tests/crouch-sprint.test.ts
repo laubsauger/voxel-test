@@ -23,7 +23,7 @@ beforeAll(async () => {
 async function makeSim(): Promise<{ sim: Sim; phys: PhysicsWorld }> {
   const sim = new Sim(9)
   registerEditOps(sim)
-  sim.world.fillBox(400, 0, 400, 640, 7, 640, 3) // ground, top at y=0.8m
+  sim.world.fillBox(912, 0, 912, 1152, 7, 1152, 3) // ground, top at y=0.8m
   const phys = await createPhysics(sim)
   return { sim, phys }
 }
@@ -43,7 +43,7 @@ async function walkDistance(input: number, ticks: number): Promise<number> {
   sim.queue.push(SPAWN)
   pushMoves(sim, 1, ticks, input)
   for (let t = 0; t <= ticks; t++) sim.step()
-  const d = 51.2 - phys.players.get(1)!.pz
+  const d = 102.4 - phys.players.get(1)!.pz
   phys.dispose()
   return d
 }
@@ -62,15 +62,15 @@ describe('sprint + crouch speeds (T44)', () => {
 })
 
 /**
- * Low corridor: ceiling slab at y 22..24 (2.2..2.5m) over z 49.5..50.5m — a
+ * Low corridor: ceiling slab at y 22..24 (2.2..2.5m) over z 100.7..101.7m — a
  * 1.4m gap above the 0.8m floor. Side walls carry the slab so the
  * connectivity pass keeps it static (an unsupported slab would fall as an
- * island). The player (x=52.2m, voxel 522) walks between the walls.
+ * island). The player (x=103.4m, voxel 1034) walks between the walls.
  */
 function buildTunnel(sim: Sim): void {
-  sim.world.fillBox(505, 8, 495, 507, 21, 505, 4) // west wall
-  sim.world.fillBox(533, 8, 495, 535, 21, 505, 4) // east wall
-  sim.world.fillBox(505, 22, 495, 535, 24, 505, 4) // ceiling
+  sim.world.fillBox(1017, 8, 1007, 1019, 21, 1017, 4) // west wall
+  sim.world.fillBox(1045, 8, 1007, 1047, 21, 1017, 4) // east wall
+  sim.world.fillBox(1017, 22, 1007, 1047, 24, 1017, 4) // ceiling
 }
 
 describe('functional crouch (T44)', () => {
@@ -91,11 +91,11 @@ describe('functional crouch (T44)', () => {
     }
 
     const standing = await through(INPUT_FWD)
-    expect(standing.pz).toBeGreaterThan(50.2) // stopped at the tunnel mouth
+    expect(standing.pz).toBeGreaterThan(101.4) // stopped at the tunnel mouth
     expect(standing.crouching).toBe(false)
 
     const crouched = await through(INPUT_FWD | INPUT_CROUCH)
-    expect(crouched.pz).toBeLessThan(49.0) // came out the far side
+    expect(crouched.pz).toBeLessThan(100.2) // came out the far side
     expect(crouched.crouching).toBe(true)
   }, 30000)
 
@@ -103,20 +103,20 @@ describe('functional crouch (T44)', () => {
     const { sim, phys } = await makeSim()
     buildTunnel(sim)
     sim.queue.push(SPAWN)
-    // crouch-walk to the middle of the tunnel: 2 m/s → 36 ticks ≈ 1.2m → z≈50.0
+    // crouch-walk to the middle of the tunnel: 2 m/s → 36 ticks ≈ 1.2m → z≈101.2
     let t = pushMoves(sim, 1, 36, INPUT_FWD | INPUT_CROUCH)
     // stop, release crouch under the ceiling
     t = pushMoves(sim, t, 30, 0)
     while (sim.tick < t) sim.step()
     const p = phys.players.get(1)!
-    expect(p.pz).toBeGreaterThan(49.6)
-    expect(p.pz).toBeLessThan(50.4) // we ARE under the slab
+    expect(p.pz).toBeGreaterThan(100.8)
+    expect(p.pz).toBeLessThan(101.6) // we ARE under the slab
     expect(p.crouching).toBe(true) // no headroom → still crouched
     // crouch-walk out the far side, then release
     t = pushMoves(sim, sim.tick, 60, INPUT_FWD | INPUT_CROUCH)
     t = pushMoves(sim, t, 10, 0)
     while (sim.tick < t) sim.step()
-    expect(p.pz).toBeLessThan(49.4)
+    expect(p.pz).toBeLessThan(100.6)
     expect(p.crouching).toBe(false) // open sky → stood back up
     phys.dispose()
   }, 30000)

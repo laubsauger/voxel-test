@@ -16,8 +16,8 @@ beforeAll(async () => {
 async function makeSim() {
   const sim = new Sim(9)
   registerEditOps(sim)
-  // ground around the spawn column (spawn is at 51.2m + playerId → voxel ~512)
-  sim.world.fillBox(400, 0, 400, 640, 7, 640, 3)
+  // ground around the spawn column (spawn is at 102.4m + playerId → voxel ~1024, T50)
+  sim.world.fillBox(912, 0, 912, 1152, 7, 1152, 3)
   const phys = await createPhysics(sim)
   return { sim, phys }
 }
@@ -58,8 +58,8 @@ describe('player character controller (T21, I.jolt, V1, V2)', () => {
     for (const c of moveCmds(60, INPUT_FWD, 0)) sim.queue.push(c)
     for (let t = 0; t <= 60; t++) sim.step()
     const p = phys.players.get(1)!
-    expect(p.pz).toBeLessThan(51.2 - 1) // walked at least 1m in -z
-    expect(Math.abs(p.px - 52.2)).toBeLessThan(0.01) // playerId 1 spawns at x=52.2, no drift
+    expect(p.pz).toBeLessThan(102.4 - 1) // walked at least 1m in -z
+    expect(Math.abs(p.px - 103.4)).toBeLessThan(0.01) // playerId 1 spawns at x=103.4, no drift
     expect(p.py).toBeCloseTo(0.8, 1) // standing on ground (slab top at y=0.8m)
     phys.dispose()
   }, 30000)

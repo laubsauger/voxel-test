@@ -155,14 +155,18 @@ export class PlayerMesh {
   }
 
   /**
-   * First-person: legs-only rig (T49). Hiding the whole torso pivot (torso +
-   * head + arms) keeps the view clean — a chunky 6×4-voxel torso right under
-   * the camera reads as a dark mass, while legs/feet still show when looking
-   * down. The FP arms come from the viewmodel instead.
+   * First-person body rig (T49): torso + legs stay visible (looking down
+   * shows your own chest/legs/feet, not a floating pair of legs); head is
+   * hidden (camera lives inside it) and the body arms are hidden because the
+   * FP viewmodel supplies the arms. The body-tuck offset in update() keeps
+   * the torso from filling the frame.
    */
   setFirstPerson(fp: boolean): void {
     this.firstPerson = fp
-    this.torsoPivot.visible = !fp
+    this.torsoPivot.visible = true
+    this.headPivot.visible = !fp
+    this.armLPivot.visible = !fp
+    this.armRPivot.visible = !fp
   }
 
   /**
@@ -189,9 +193,11 @@ export class PlayerMesh {
       },
       dt,
     )
-    // FP: tuck the legs slightly behind the eye so looking straight down
-    // shows the feet in front of the camera instead of underneath it
-    const back = this.firstPerson ? 0.15 : 0
+    // FP: tuck the body behind the eye so looking down shows chest/legs/feet
+    // in front of the camera instead of a chest-plane filling the frame.
+    // Tuck grows with downward pitch (0.25 level → 0.45 looking straight down).
+    const down = Math.max(0, -player.pitch) / 1.55
+    const back = this.firstPerson ? 0.25 + down * 0.2 : 0
     this.group.position.set(
       player.px + Math.sin(this.anim.bodyYaw) * back,
       player.py,

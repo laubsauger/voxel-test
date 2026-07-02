@@ -7,6 +7,7 @@ import { SnapshotCodec, rleDecode, rleEncode, type SnapshotSection } from '../sr
 import { FrameAssembler, MAX_FRAME_BYTES, frameTransfer } from '../src/net/framing'
 import { MockChannel } from '../src/net/channel'
 import { Prng } from '../src/sim/prng'
+import { CHUNK_COUNT } from '../src/world/chunks'
 
 // T26 (V3): a restored snapshot must be hash-identical to the source sim —
 // otherwise a late joiner starts desynced by construction.
@@ -71,8 +72,9 @@ describe('snapshot round-trip (T26, V3)', () => {
     const sim = new Sim(1)
     sim.world.fillBox(0, 0, 0, 1023, 511, 1023, 3) // every chunk uniform
     const buf = new SnapshotCodec().serialize(sim)
-    // 16384 chunks * 2B + headers — nowhere near the 512MB dense equivalent
-    expect(buf.byteLength).toBeLessThan(40_000)
+    // CHUNK_COUNT * 2B + headers — nowhere near the ~3GB dense equivalent
+    // (T50: 98304 chunks now; the invariant stays 2B per non-dense chunk)
+    expect(buf.byteLength).toBeLessThan(CHUNK_COUNT * 2 + 8192)
   })
 
   it('rejects snapshots with unknown sections — loud, never skipped (V10)', () => {

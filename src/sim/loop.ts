@@ -1,6 +1,7 @@
 import { CommandQueue, type Command, type Op } from './commands'
 import { Prng } from './prng'
 import { ChunkStore } from '../world/chunks'
+import type { SimEvent } from './events'
 
 export const TICK_RATE = 60
 export const TICK_MS = 1000 / TICK_RATE
@@ -12,6 +13,8 @@ export type OpHandler<K extends Op['kind'] = Op['kind']> = (
 ) => void
 
 export type System = (sim: Sim) => void
+
+const EMPTY_EVENTS: SimEvent[] = []
 
 /**
  * Authoritative deterministic sim (V1, V2). Advances only via step().
@@ -32,6 +35,26 @@ export class Sim {
 
   allocEntityId(): number {
     return this.nextEntityId++ // V8: deterministic counter, part of sim state
+  }
+
+  /**
+   * T53/T55 — sim → render event outbox. Sim appends during op handling /
+   * systems; render drains once per frame after the tick(s). Same one-way
+   * handoff as ChunkStore.dirty → phys.drainRemesh (V6). NOT sim state:
+   * never read by sim logic, never hashed (V3 unaffected).
+   */
+  private readonly events: SimEvent[] = []
+
+  emit(ev: SimEvent): void {
+    this.events.push(ev)
+  }
+
+  /** render-side drain — returns and clears all pending events */
+  drainEvents(): SimEvent[] {
+    if (this.events.length === 0) return EMPTY_EVENTS
+    const out = this.events.slice()
+    this.events.length = 0
+    return out
   }
 
   onOp<K extends Op['kind']>(kind: K, handler: OpHandler<K>): void {
