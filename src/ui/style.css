@@ -324,6 +324,51 @@
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* ============================== quick-access icon buttons (T52) */
+.bb-quick {
+  display: flex;
+  gap: 8px;
+}
+.bb-quick-screen {
+  /* main menu: top-right corner of the screen */
+  position: absolute;
+  top: clamp(28px, 5vw, 72px);
+  right: clamp(28px, 5vw, 72px);
+  animation: bb-rise 700ms var(--ease-out) 340ms both;
+}
+.bb-quick-panel {
+  /* pause menu: inside the glass panel, under the items */
+  margin-top: 18px;
+  justify-content: flex-end;
+}
+.bb-icon-btn {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: border-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out);
+}
+.bb-icon-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--ink-dim);
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 180ms var(--ease-out);
+}
+.bb-icon-btn:hover {
+  border-color: var(--amber);
+  box-shadow: 0 0 14px var(--amber-glow);
+}
+.bb-icon-btn:hover svg { stroke: var(--ink); }
+.bb-icon-btn.bb-off svg { stroke: var(--red); }
+
 /* ============================================================ pause menu */
 .bb-pause {
   display: grid;

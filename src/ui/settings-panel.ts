@@ -6,6 +6,7 @@
  */
 import { SettingsStore, type SettingsPath } from './settings-store'
 import { bootUrl, type BootConfig } from './boot-params'
+import type { FullscreenControl } from './fullscreen'
 
 type TabId = 'graphics' | 'audio' | 'controls' | 'gameplay' | 'dev'
 
@@ -35,12 +36,16 @@ export class SettingsPanel {
   private readonly body: HTMLElement
   private readonly tabs = new Map<TabId, HTMLElement>()
   private active: TabId = 'graphics'
+  /** live-state subscription of the current tab (fullscreen toggle) */
+  private tabUnsub: (() => void) | null = null
   onClose: (() => void) | null = null
 
   constructor(
     root: HTMLElement,
     private readonly store: SettingsStore,
     private readonly boot: BootConfig,
+    /** T52 — fullscreen is transient, bound live (never persisted) */
+    private readonly fullscreen?: FullscreenControl,
   ) {
     this.el = document.createElement('div')
     this.el.className = 'bb-screen bb-settings bb-leave'
@@ -83,6 +88,8 @@ export class SettingsPanel {
 
   private showTab(id: TabId): void {
     this.active = id
+    this.tabUnsub?.()
+    this.tabUnsub = null
     for (const [tid, el] of this.tabs) el.classList.toggle('bb-active', tid === id)
     this.body.replaceChildren()
     this[id]()
@@ -187,6 +194,17 @@ export class SettingsPanel {
     )
     const [fov, fovV] = this.slider('graphics.fov', 60, 110, 1, (v) => `${v}°`)
     this.row('Field of view', fov, fovV)
+    if (this.fullscreen) {
+      // live toggle bound to the real document state (transient — not persisted)
+      const fs = this.fullscreen
+      const b = document.createElement('button')
+      b.className = 'bb-toggle'
+      const sync = () => b.classList.toggle('bb-on', fs.active)
+      b.addEventListener('click', () => fs.toggle())
+      this.tabUnsub = fs.onChange(sync)
+      sync()
+      this.row('Fullscreen', b)
+    }
     const note = document.createElement('div')
     note.className = 'bb-set-section-title'
     note.textContent = 'Preset maps resolution + shadows live · bloom applies on next boot'
@@ -203,6 +221,8 @@ export class SettingsPanel {
       const [s, v] = this.slider(path, 0, 100, 1)
       this.row(label, s, v)
     }
+    // T52 — same flag the quick-access mute buttons flip (stays consistent)
+    this.row('Mute all', this.toggle('audio.muted'))
   }
 
   private controls(): void {

@@ -5,9 +5,17 @@
  *   3. route by URL params: ?boot=game&seed=N straight into gameplay
  *      (agent/CDP smoke path), ?dev=1 profiling overlay, default → menu.
  * All sim/render wiring lives in src/game.ts; all UI in src/ui/**.
+ *
+ * T52 (B9) — audio wiring per src/audio/INTEGRATION-audio.md: engine unlock
+ * on the first user gesture, listener sync + footstep poller per frame,
+ * tool/damage event hooks, UI sounds, menu↔game music crossfade. Plus
+ * fullscreen + mute quick-access and Esc-closes-pause (B10).
  */
+import { Vector3 } from 'three/webgpu'
 import './ui/style.css'
-import { Game } from './game'
+import { Game, LOCAL_PLAYER } from './game'
+import { AudioEngine, type AudioContextLike, type PlayOptions } from './audio/engine'
+import { GameAudio } from './audio/game-audio'
 import { parseBootParams } from './ui/boot-params'
 import { SettingsStore } from './ui/settings-store'
 import { Preloader } from './ui/preloader'
@@ -16,6 +24,8 @@ import { ToolController } from './ui/tools'
 import { MainMenu, PauseMenu } from './ui/menu'
 import { SettingsPanel } from './ui/settings-panel'
 import { DevOverlay } from './ui/dev-overlay'
+import { wireAudioSettings, attachUiSounds } from './ui/audio-wiring'
+import { FullscreenControl } from './ui/fullscreen'
 
 const app = document.getElementById('app')!
 const root = document.getElementById('ui-root')!
@@ -33,6 +43,43 @@ if (!('gpu' in navigator)) die('WebGPU not available. Desktop Chrome required.')
 const boot = parseBootParams(location.search)
 const store = new SettingsStore()
 
+// --- audio engine (T52/B9) ----------------------------------------------------
+// The engine gets a null storage: SettingsStore is the single persistence
+// authority for volumes (0..100 ints under settings.audio.*); wireAudioSettings
+// converts to the engine's linear 0..1 live. createContext is wrapped to keep
+// a debug view (context state + the three bus gain nodes) for CDP verification.
+const audioDebug: { ctx: AudioContext | null; buses: GainNode[] } = { ctx: null, buses: [] }
+const audio = new AudioEngine({
+  storage: { getItem: () => null, setItem: () => {} },
+  createContext: () => {
+    const ctx = new AudioContext()
+    audioDebug.ctx = ctx
+    const orig = ctx.createGain.bind(ctx)
+    ctx.createGain = () => {
+      const g = orig()
+      if (audioDebug.buses.length < 3) audioDebug.buses.push(g) // unlock order: master, music, sfx
+      return g
+    }
+    return ctx as unknown as AudioContextLike // same cast as the engine default
+  },
+})
+// manifest downloads in parallel with world/physics boot
+const manifestReady = audio.loadManifest().catch((e: unknown) => {
+  console.error('[audio] manifest load failed:', e)
+})
+wireAudioSettings(store, audio)
+
+let scheduledCount = 0
+/** guarded play: silent before unlock/manifest (nicety), loud on real failures */
+function sfxPlay(name: string, opts?: PlayOptions): Promise<unknown> | null {
+  if (!audio.loaded || !audio.unlocked) return null
+  const p = audio.play(name, opts)
+  p.then((h) => {
+    if (h) scheduledCount++
+  }).catch((e: unknown) => console.error(`[audio] play '${name}' failed:`, e))
+  return p
+}
+
 // --- phase 2: preloader + game construction ----------------------------------
 const pre = new Preloader(root, boot.seed)
 const game = await Game.create({
@@ -41,6 +88,73 @@ const game = await Game.create({
   onStage: (s) => pre.stage(s),
   graphics: { quality: store.get('graphics.quality'), fov: store.get('graphics.fov') },
 }).catch((e: unknown) => die(`boot failed: ${e instanceof Error ? e.message : String(e)}`))
+
+const gameAudio = new GameAudio({ play: sfxPlay }, game.sim.world)
+
+// unlock on the FIRST user gesture (autoplay policy); menu PLAY / any click works
+let bedsStarted = false
+const startAudio = () => {
+  audio.unlock() // idempotent
+  void manifestReady.then(() => {
+    if (bedsStarted || !audio.loaded) return
+    bedsStarted = true
+    void audio
+      .playMusic(game.state === 'play' ? 'music-game-ambient' : 'music-menu')
+      .then((h) => {
+        if (h) scheduledCount++
+      })
+      .catch((e: unknown) => console.error('[audio] music failed:', e))
+    void sfxPlay('ambience-suburb-day') // looping bed, sfx bus
+  })
+}
+addEventListener('pointerdown', startAudio, { once: true })
+addEventListener('keydown', startAudio, { once: true })
+
+/** menu ↔ game music crossfade (1.5s default) */
+function setMusic(name: 'music-menu' | 'music-game-ambient'): void {
+  if (!bedsStarted) return // startAudio picks the right bed once the manifest lands
+  void audio
+    .playMusic(name)
+    .then((h) => {
+      if (h) scheduledCount++
+    })
+    .catch((e: unknown) => console.error('[audio] music failed:', e))
+}
+
+// per-frame: listener follows the active camera; footstep/jump/land poller
+const listenerFwd = new Vector3()
+const listenerUp = new Vector3()
+game.addFrameHook((dt) => {
+  const cam = game.cam.camera
+  cam.getWorldDirection(listenerFwd)
+  listenerUp.set(0, 1, 0).applyQuaternion(cam.quaternion)
+  audio.setListener(
+    cam.position.x,
+    cam.position.y,
+    cam.position.z,
+    listenerFwd.x,
+    listenerFwd.y,
+    listenerFwd.z,
+    listenerUp.x,
+    listenerUp.y,
+    listenerUp.z,
+  )
+  const p = game.phys.players.get(LOCAL_PLAYER)
+  gameAudio.update(
+    dt,
+    p
+      ? {
+          px: p.px,
+          py: p.py,
+          pz: p.pz,
+          vx: p.vx,
+          vy: p.vy,
+          vz: p.vz,
+          grounded: p.char.GetGroundState() === game.phys.api.EGroundState_OnGround,
+        }
+      : null,
+  )
+})
 
 // --- settings wiring (I.settings — live apply, render-layer only, V6) --------
 const applyControls = () => {
@@ -68,25 +182,69 @@ syncDev()
 
 // --- HUD + tools (T28) --------------------------------------------------------
 const hud = new Hud(root)
-new ToolController(game, hud)
+new ToolController(game, hud, (e) => {
+  // T52 — tool feedback → material-aware impact/explosion sounds
+  switch (e.kind) {
+    case 'dig':
+    case 'place':
+      gameAudio.onImpact(e.x, e.y, e.z, e.mat)
+      break
+    case 'shoot':
+      gameAudio.onShoot()
+      if (e.hit) gameAudio.onImpact(e.hit.x, e.hit.y, e.hit.z, e.hit.mat)
+      break
+    case 'explode':
+      gameAudio.onExplosion(e.x, e.y, e.z, e.power)
+      break
+  }
+})
+hud.onSelect = () => void sfxPlay('ui-hotbar')
 game.onFlyChange = (f) => hud.setFly(f)
-game.onPlayerDamaged = () => hud.damageFlash()
+game.onPlayerDamaged = () => {
+  hud.damageFlash()
+  gameAudio.onHurt()
+}
 hud.setLockHint(false)
 
 // --- menus (T33) ----------------------------------------------------------------
 let settingsReturn: 'menu' | 'pause' | null = null
 
-const settings = new SettingsPanel(root, store, boot)
+const fullscreen = new FullscreenControl()
+const quickHooks = {
+  // mute flips the shared settings flag — Audio tab + both menus stay consistent
+  onToggleMute: () => store.set('audio.muted', !store.get('audio.muted')),
+  onToggleFullscreen: () => fullscreen.toggle(),
+}
+
+const settings = new SettingsPanel(root, store, boot, fullscreen)
 const menu = new MainMenu(root, {
   seed: boot.seed,
   onPlay: () => startPlay(true),
   onSettings: () => openSettings('menu'),
+  ...quickHooks,
 })
 const pause = new PauseMenu(root, {
   onResume: resume,
   onSettings: () => openSettings('pause'),
   onQuit: quitToMenu,
+  ...quickHooks,
 })
+
+const syncMuted = () => {
+  const m = store.get('audio.muted')
+  menu.setMuted(m)
+  pause.setMuted(m)
+}
+store.subscribe('audio.muted', syncMuted)
+syncMuted()
+const syncFullscreen = (on: boolean) => {
+  menu.setFullscreen(on)
+  pause.setFullscreen(on)
+}
+fullscreen.onChange(syncFullscreen)
+syncFullscreen(fullscreen.active)
+
+attachUiSounds(root, { play: sfxPlay }) // hover/click/back on all menu controls
 
 function lock(): void {
   // may reject during Chrome's post-Esc cooldown — the click hint stays available
@@ -98,6 +256,7 @@ function startPlay(requestLock: boolean): void {
   menu.hide()
   game.enterPlay(store.get('gameplay.camera'))
   hud.show()
+  setMusic('music-game-ambient')
   if (requestLock) lock()
   else hud.setLockHint(true)
 }
@@ -111,6 +270,7 @@ function quitToMenu(): void {
   pause.hide()
   hud.hide()
   game.enterOrbit()
+  setMusic('music-menu')
   menu.show()
 }
 
@@ -129,7 +289,15 @@ settings.onClose = () => {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.code === 'Escape' && settings.visible) settings.onClose?.()
+  if (e.code !== 'Escape') return
+  if (settings.visible) {
+    settings.onClose?.()
+    return
+  }
+  // B10: Esc while the pause menu is up resumes. Chrome may reject the
+  // re-lock during its ~1.5s post-Esc cooldown — lock() falls back to the
+  // click hint (click the canvas to re-lock).
+  if (pause.visible && game.state === 'play') resume()
 })
 
 // pointer-lock lost in play (Esc) → pause menu
@@ -142,6 +310,21 @@ document.addEventListener('pointerlockchange', () => {
   }
   if (game.state === 'play' && !settings.visible && settingsReturn === null) pause.show()
 })
+
+// --- T52 debug handle (CDP audio verification — read-side state only) ---------
+;(window as unknown as { __bbAudio: unknown }).__bbAudio = {
+  engine: audio,
+  store,
+  get ctxState() {
+    return audioDebug.ctx?.state ?? 'none'
+  },
+  get busGains() {
+    return audioDebug.buses.map((g) => g.gain.value)
+  },
+  get scheduled() {
+    return scheduledCount
+  },
+}
 
 // --- phase 3: route (I.boot) ---------------------------------------------------
 await pre.done()

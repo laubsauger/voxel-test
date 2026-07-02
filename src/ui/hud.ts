@@ -44,6 +44,8 @@ export class Hud {
   private readonly flyChip: HTMLElement
   private readonly lockHint: HTMLElement
   selected = 0
+  /** T52 — fires when the selected tool actually changes (hotbar switch sound) */
+  onSelect: ((tool: ToolDef) => void) | null = null
 
   constructor(root: HTMLElement) {
     this.el = document.createElement('div')
@@ -88,8 +90,11 @@ export class Hud {
   }
 
   select(i: number): void {
-    this.selected = ((i % TOOLS.length) + TOOLS.length) % TOOLS.length
+    const next = ((i % TOOLS.length) + TOOLS.length) % TOOLS.length
+    const changed = next !== this.selected
+    this.selected = next
     this.slots.forEach((s, n) => s.classList.toggle('bb-selected', n === this.selected))
+    if (changed) this.onSelect?.(this.tool)
   }
 
   get tool(): ToolDef {

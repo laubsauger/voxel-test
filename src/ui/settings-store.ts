@@ -23,6 +23,8 @@ export interface Settings {
     master: number
     music: number
     sfx: number
+    /** T52 — mute gates the master bus; master keeps its value for restore */
+    muted: boolean
   }
   controls: {
     /** mouse sensitivity multiplier */
@@ -41,7 +43,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   graphics: { quality: 'high', fov: 75 },
-  audio: { master: 80, music: 60, sfx: 80 },
+  audio: { master: 80, music: 60, sfx: 80, muted: false },
   controls: { sensitivity: 1.0, invertY: false },
   gameplay: { camera: 'fp' },
   dev: { profiling: false },
