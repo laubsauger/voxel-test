@@ -45,6 +45,10 @@ export class DevOverlay {
     try {
       this.inspector = new Inspector()
       this.game.renderer.inspector = this.inspector
+      // the renderer only calls inspector.init() during its own init — we
+      // attach after boot, so mount the inspector UI explicitly (idempotent:
+      // it only appends its domElement if not already parented)
+      this.inspector.init()
     } catch (e) {
       console.warn('[dev] three Inspector init failed:', e)
       this.inspector = null

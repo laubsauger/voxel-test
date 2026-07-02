@@ -29,17 +29,16 @@ export class Preloader {
         </div>
         <div class="bb-pre-stages"></div>
         <div class="bb-pre-bar"><div class="bb-pre-bar-fill"></div></div>
+        <div class="bb-pre-seed">seed ${seed}</div>
       </div>`
     const list = this.el.querySelector('.bb-pre-stages')!
     for (const s of STAGES) {
       const row = document.createElement('div')
       row.className = 'bb-pre-stage'
-      row.innerHTML = `<span class="bb-pre-dot"></span><span>${s.label}</span><span class="bb-pre-note"></span>`
+      row.innerHTML = `<span class="bb-pre-dot"></span><span>${s.label}</span>`
       list.appendChild(row)
       this.rows.set(s.id, row)
     }
-    const note = this.el.querySelector('.bb-pre-note') as HTMLElement
-    note.textContent = `seed ${seed}`
     this.bar = this.el.querySelector('.bb-pre-bar-fill') as HTMLElement
     root.appendChild(this.el)
   }

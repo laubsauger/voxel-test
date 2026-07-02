@@ -16,7 +16,7 @@ export const TOOLS: ToolDef[] = [
   {
     id: 'dig',
     label: 'Dig',
-    icon: '<path d="M17.5 3.5l3 3-8.5 8.5-3-3z"/><path d="M9 12l-4.2 4.2a2.7 2.7 0 0 0 3 3L12 15"/>',
+    icon: '<path d="M2 22v-5l5-5 5 5-5 5z"/><path d="M9.5 14.5L16 8"/><path d="m17 2 5 5-.5.5a3.53 3.53 0 0 1-5 0 3.53 3.53 0 0 1 0-5L17 2"/>',
   },
   {
     id: 'build',
@@ -26,7 +26,7 @@ export const TOOLS: ToolDef[] = [
   {
     id: 'gun',
     label: 'Gun',
-    icon: '<path d="M3.5 8.5h17v4h-6.5l-1 5.5h-4l1-5.5h-3.5a3 3 0 0 1-3-3z"/><path d="M17 12.5v2.5"/>',
+    icon: '<path d="M3 7h18v5h-8.2l-1.3 5H6.8l1.3-5H4a1 1 0 0 1-1-1z"/><path d="M17.5 12v2.5H15"/><path d="M21 7V5"/>',
   },
   {
     id: 'bomb',

@@ -251,8 +251,6 @@ export class Game {
       this.bodyMeshes.update(this.phys.bodies)
       this.waterSurface.update(this.water, this.sim.world)
 
-      for (const fn of this.frameHooks) fn(dt)
-
       frames++
       if (now - fpsAt > 500) {
         if (this.hudEl) {
@@ -265,6 +263,8 @@ export class Game {
         fpsAt = now
       }
       this.world.render()
+      // post-render: renderer.info counters are valid here (dev overlay reads them)
+      for (const fn of this.frameHooks) fn(dt)
     })
   }
 
