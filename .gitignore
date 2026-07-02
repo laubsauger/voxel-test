@@ -3,6 +3,7 @@ dist/
 *.local
 .DS_Store
 smoke-artifacts/
-.claude/
+.claude/*
+!.claude/skills/
 .env*
 !.env.example
