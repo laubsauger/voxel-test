@@ -1,18 +1,24 @@
 /**
- * T6 — pure greedy chunk mesher. Render-layer code (V6: read-only view of
- * voxel data, never mutates sim state).
+ * T6/T7 — pure greedy chunk mesher with per-vertex voxel AO. Render-layer
+ * code (V6: read-only view of voxel data, never mutates sim state).
  *
  * No three.js, no Worker, no DOM — unit-testable in vitest; production runs
  * it inside mesh-worker.ts so main-thread frames never stall on meshing (V7).
  *
  * Input: a padded (32+2)³ voxel grid — the chunk plus a 1-voxel shell copied
- * from neighbor chunks — so boundary faces (and later AO) resolve without
+ * from neighbor chunks — so boundary faces and boundary AO resolve without
  * touching the ChunkStore from the worker.
  *
  * Output: indexed quads. Positions in voxel units, [0..32] per axis; the
  * mesh manager scales by VOXEL_SIZE and offsets by the chunk origin.
+ *
+ * AO (T7): classic corner trick — per quad vertex, the 2 side + 1 corner
+ * neighbors in the face's air layer give 4 levels, 0 (dark) .. 3 (open),
+ * baked into a vertex attribute.
+ *
  * Greedy rule: coplanar faces merge into maximal rectangles only when their
- * merge key (material id) matches.
+ * merge key (material id AND the 4 packed AO levels) matches — merging
+ * across differing AO would smear the corner darkening.
  */
 import { CHUNK } from '../world/chunks'
 
@@ -48,6 +54,20 @@ export function buildPaddedChunk(sample: VoxelSampler, cx: number, cy: number, c
     }
   }
   return out
+}
+
+/**
+ * AO level for one quad corner (T7). `nb` is the padded index of the air
+ * voxel the face looks into; du/dv are padded-index strides toward the
+ * corner along the face's two tangent axes.
+ * Both sides solid ⇒ fully pinched corner ⇒ 0, else 3 − occupied neighbors.
+ */
+function aoCorner(padded: Uint8Array, nb: number, du: number, dv: number): number {
+  const s1 = padded[nb + du] !== 0 ? 1 : 0
+  const s2 = padded[nb + dv] !== 0 ? 1 : 0
+  if (s1 !== 0 && s2 !== 0) return 0
+  const c = padded[nb + du + dv] !== 0 ? 1 : 0
+  return 3 - (s1 + s2 + c)
 }
 
 export interface ChunkMesh {
@@ -95,6 +115,11 @@ export function meshChunk(padded: Uint8Array): ChunkMesh {
     key: number,
   ): void => {
     const mat = key & 0xff
+    const aoPack = key >>> 8
+    const ao00 = aoPack & 3
+    const ao10 = (aoPack >>> 2) & 3
+    const ao11 = (aoPack >>> 4) & 3
+    const ao01 = (aoPack >>> 6) & 3
     const base = quadCount * 4
     // corners in (u,v): c00=(a,b) c10=(a+w,b) c11=(a+w,b+h) c01=(a,b+h)
     for (const [ua, vb] of [[a, b], [a + w, b], [a + w, b + h], [a, b + h]]) {
@@ -106,12 +131,20 @@ export function meshChunk(padded: Uint8Array): ChunkMesh {
       scratch[axis] = sign
       normals.push(scratch[0], scratch[1], scratch[2])
       materials.push(mat)
-      ao.push(3)
     }
+    ao.push(ao00, ao10, ao11, ao01)
     uvs.push(0, 0, w, 0, w, h, 0, h)
-    // e_u × e_v = e_axis (cyclic axes) ⇒ c00→c10→c11 is CCW around +axis
-    if (sign > 0) indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
-    else indices.push(base, base + 2, base + 1, base, base + 3, base + 2)
+    // e_u × e_v = e_axis (cyclic axes) ⇒ c00→c10→c11 is CCW around +axis.
+    // Flip the diagonal when AO would interpolate across the wrong pair
+    // (standard anisotropy fix for the corner trick).
+    const flip = ao00 + ao11 > ao10 + ao01
+    if (sign > 0) {
+      if (flip) indices.push(base + 1, base + 2, base + 3, base + 1, base + 3, base)
+      else indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
+    } else {
+      if (flip) indices.push(base + 1, base + 3, base + 2, base + 1, base, base + 3)
+      else indices.push(base, base + 2, base + 1, base, base + 3, base + 2)
+    }
     quadCount++
   }
 
@@ -119,6 +152,8 @@ export function meshChunk(padded: Uint8Array): ChunkMesh {
     const u = (axis + 1) % 3
     const v = (axis + 2) % 3
     const sa = STRIDE[axis]
+    const su = STRIDE[u]
+    const sv = STRIDE[v]
     for (let side = 0; side < 2; side++) {
       const sign = side === 0 ? 1 : -1
       for (let s = 0; s < CHUNK; s++) {
@@ -132,9 +167,19 @@ export function meshChunk(padded: Uint8Array): ChunkMesh {
             const pi = paddedIndex(pos[0], pos[1], pos[2])
             const m = padded[pi]
             let key = 0
-            if (m !== 0 && padded[pi + sign * sa] === 0) {
-              key = m
-              hasFaces = true
+            if (m !== 0) {
+              const nb = pi + sign * sa
+              if (padded[nb] === 0) {
+                // 4 corner AO levels packed 2 bits each (T7); part of the
+                // merge key so differing AO never merges (no smearing)
+                const aoPack =
+                  aoCorner(padded, nb, -su, -sv) |
+                  (aoCorner(padded, nb, su, -sv) << 2) |
+                  (aoCorner(padded, nb, su, sv) << 4) |
+                  (aoCorner(padded, nb, -su, sv) << 6)
+                key = m | (aoPack << 8)
+                hasFaces = true
+              }
             }
             mask[a + b * CHUNK] = key
           }
