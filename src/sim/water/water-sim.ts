@@ -82,6 +82,8 @@ export class WaterSim {
   private readonly pages = new Map<number, Uint8Array>()
   /** chunk index → remaining awake steps */
   private readonly wake = new Map<number, number>()
+  /** chunks with changed water since last drainRenderDirty() — render-only (B26) */
+  private readonly renderDirty = new Set<number>()
   private readonly pool: Uint8Array[] = []
   /** CA steps actually executed (does not advance while settled) — part of hashed state */
   stepCount = 0
@@ -102,6 +104,24 @@ export class WaterSim {
    */
   isChunkAwake(ci: number): boolean {
     return this.wake.has(ci)
+  }
+
+  /** render-side page accessor (surface extraction) — read-only, may be null */
+  pageAt(ci: number): Uint8Array | null {
+    return this.pages.get(ci) ?? null
+  }
+
+  /**
+   * Chunks whose water content changed since the last drain — consumed by the
+   * render layer for incremental surface rebuilds (B26). Render-only
+   * bookkeeping (same pattern as PhysicsWorld.drainRemesh); never hashed,
+   * never read by rules.
+   */
+  drainRenderDirty(): number[] {
+    if (this.renderDirty.size === 0) return []
+    const out = [...this.renderDirty].sort((a, b) => a - b)
+    this.renderDirty.clear()
+    return out
   }
 
   levelAt(x: number, y: number, z: number): number {
@@ -130,6 +150,7 @@ export class WaterSim {
     }
     page[vi] = cur + add
     this.wake.set(ci, WAKE_TTL)
+    this.renderDirty.add(ci)
     this.version++
     return add
   }
@@ -147,19 +168,43 @@ export class WaterSim {
     page[vi] -= take
     this.freeIfEmpty(ci, page)
     this.wake.set(ci, WAKE_TTL)
+    this.renderDirty.add(ci)
     this.version++
     return take
   }
 
   /**
    * MUST be called for every voxel edit that could touch water (contract with
-   * edit ops). Wakes the region; if the cell became solid, destroys the
+   * edit ops). Wakes the region ONLY when water is actually nearby (B26 —
+   * a dig on the far side of the arena must cost nothing here and must not
+   * trigger a surface rebuild); if the cell became solid, destroys the
    * displaced water and returns the destroyed amount (explicit sink).
+   *
+   * "Nearby" = any cell whose CA rule reads this voxel's solidity holds
+   * water: self, the 6 face neighbors (vertical flow + lateral pairing),
+   * and the 4 lateral neighbors of the cell ABOVE (their donor-support /
+   * waterfall-receiver checks read this voxel as a below-cell). If all 11
+   * are dry, every flow term involving this voxel stays 0 — skipping the
+   * wake is exact, not an approximation.
    */
   notifyVoxelChanged(x: number, y: number, z: number): number {
     if (!inBounds(x, y, z)) return 0
+    const nearby =
+      this.levelAt(x, y, z) > 0 ||
+      this.levelAt(x, y + 1, z) > 0 ||
+      this.levelAt(x, y - 1, z) > 0 ||
+      this.levelAt(x + 1, y, z) > 0 ||
+      this.levelAt(x - 1, y, z) > 0 ||
+      this.levelAt(x, y, z + 1) > 0 ||
+      this.levelAt(x, y, z - 1) > 0 ||
+      this.levelAt(x + 1, y + 1, z) > 0 ||
+      this.levelAt(x - 1, y + 1, z) > 0 ||
+      this.levelAt(x, y + 1, z + 1) > 0 ||
+      this.levelAt(x, y + 1, z - 1) > 0
+    if (!nearby) return 0
     const ci = chunkIndex(x >> 5, y >> 5, z >> 5)
     this.wake.set(ci, WAKE_TTL)
+    this.renderDirty.add(ci)
     this.version++
     if (this.world.getVoxel(x, y, z) === 0) return 0
     const page = this.pages.get(ci)
@@ -205,8 +250,14 @@ export class WaterSim {
     for (const ci of active) {
       if (changed.has(ci)) continue
       const ttl = this.wake.get(ci)! - 1
-      if (ttl <= 0) this.wake.delete(ci)
-      else this.wake.set(ci, ttl)
+      if (ttl <= 0) {
+        this.wake.delete(ci)
+        // sleep transition is render-observable: the surface bakes the wake
+        // state into the waterFlow (disturbance) attribute — rebuild once so
+        // a settled chunk stops shimmering (T61)
+        this.renderDirty.add(ci)
+        this.version++
+      } else this.wake.set(ci, ttl)
     }
     for (const ci of changed) this.wake.set(ci, WAKE_TTL)
     this.stepCount = (this.stepCount + 1) >>> 0
@@ -257,6 +308,7 @@ export class WaterSim {
       }
       if (old) this.release(old)
       changedOut.add(r.ci)
+      this.renderDirty.add(r.ci)
       this.version++
     }
   }

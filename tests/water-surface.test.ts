@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ChunkStore, VOXEL_SIZE } from '../src/world/chunks'
 import { WaterSim, hashWater } from '../src/sim/water/water-sim'
 import { MAX_LEVEL } from '../src/sim/water/rules'
-import { extractWaterSurface } from '../src/render/water/surface'
+import { WaterSurface, extractWaterSurface } from '../src/render/water/surface'
 
 // T16 — surface extraction is render-layer: it must produce a closed skin
 // around exposed water and must never mutate sim state (V6).
@@ -104,6 +104,69 @@ describe('water surface extraction (T16, V6)', () => {
     // partial cell top + blob top; blob underside + (partial cell over solid floor -> none)
     expect(tops).toBe(2)
     expect(bottoms).toBe(1)
+  })
+
+  it('B26: edits far from water are free — no wake, no version bump, no rebuild', () => {
+    const world = new ChunkStore()
+    world.fillBox(0, 0, 0, 63, 4, 63, 2)
+    const w = new WaterSim(world)
+    world.onVoxelChanged = (x, y, z) => w.notifyVoxelChanged(x, y, z)
+    // small pond in one corner
+    for (let x = 4; x <= 8; x++) for (let z = 4; z <= 8; z++) w.addWater(x, 5, z, 200)
+    for (let i = 0; i < 500 && w.activeChunkCount > 0; i++) w.step()
+    expect(w.activeChunkCount).toBe(0)
+
+    const surface = new WaterSurface()
+    expect(surface.update(w, world)).toBe(true) // initial build
+    expect(surface.chunkMeshCount).toBeGreaterThan(0)
+
+    // dig on the far side of the map (same world, nowhere near water)
+    const version = w.version
+    world.setVoxel(60, 4, 60, 0)
+    world.setVoxel(60, 3, 60, 0)
+    expect(w.version, 'far edit must not bump water version').toBe(version)
+    expect(w.activeChunkCount, 'far edit must not wake water').toBe(0)
+    expect(surface.update(w, world), 'far edit must not rebuild the surface').toBe(false)
+
+    // an edit NEXT to the pond still wakes + rebuilds
+    world.setVoxel(9, 5, 6, 2) // solid beside the water
+    expect(w.version).toBeGreaterThan(version)
+    expect(surface.update(w, world)).toBe(true)
+    surface.dispose()
+  })
+
+  it('B26: incremental rebuild equals a from-scratch extraction mid-drain', { timeout: 30000 }, () => {
+    const world = new ChunkStore()
+    world.fillBox(0, 0, 0, 63, 7, 63, 2)
+    world.fillBox(28, 8, 28, 40, 12, 40, 2) // basin crossing the x/z=32 corner
+    world.fillBox(29, 8, 29, 39, 12, 39, 0)
+    const w = new WaterSim(world)
+    world.onVoxelChanged = (x, y, z) => w.notifyVoxelChanged(x, y, z)
+    for (let y = 8; y <= 11; y++)
+      for (let z = 29; z <= 39; z++)
+        for (let x = 29; x <= 39; x++) w.addWater(x, y, z, MAX_LEVEL)
+    const surface = new WaterSurface()
+    surface.update(w, world)
+
+    // breach, then keep flowing; drain the dirty set only every few steps so
+    // accumulation across steps is exercised too (render frame < sim rate)
+    for (let y = 8; y <= 11; y++) world.setVoxel(28, y, 34, 0)
+    for (let i = 0; i < 1200; i++) {
+      w.step()
+      if (i % 4 === 3) surface.update(w, world)
+    }
+    surface.update(w, world)
+
+    // mid-flow incremental state must equal a from-scratch extraction
+    const full = extractWaterSurface(w, world)
+    let incrementalVerts = 0
+    surface.mesh.traverse((o) => {
+      const g = (o as { geometry?: { getAttribute(n: string): { count: number } } }).geometry
+      if (g) incrementalVerts += g.getAttribute('position').count
+    })
+    expect(incrementalVerts).toBe(full.positions.length / 3)
+    expect(surface.chunkMeshCount).toBeGreaterThan(1) // actually spanned chunks
+    surface.dispose()
   })
 
   it('extraction never mutates sim state (V6)', () => {
