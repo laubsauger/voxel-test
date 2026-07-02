@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { generateLayout, GROUND_Y, type Rect } from '../src/sim/gen/layout'
+import {
+  generateLayout,
+  GROUND_Y,
+  STAIR_RISE,
+  STAIR_RUN,
+  STAIR_STEPS,
+  STAIR_TREAD,
+  STAIR_W,
+  STORY_H,
+  WALL_T,
+  type Rect,
+} from '../src/sim/gen/layout'
 import { WORLD_VX, WORLD_VY, WORLD_VZ } from '../src/world/chunks'
 
 function overlaps(a: Rect, b: Rect): boolean {
@@ -91,6 +102,40 @@ describe('suburb layout generator (T19, V2)', () => {
       expect(prop.z).toBeLessThan(WORLD_VZ)
       expect(prop.y).toBeGreaterThan(0)
       expect(prop.y).toBeLessThan(WORLD_VY)
+    }
+  })
+
+  it('stairs: every multi-story house has a walkable straight run that never blocks the door (T41)', () => {
+    // WHY: upper floors are gameplay space — they must be reachable by the Jolt
+    // capsule (step-climb 0.4 m) through the front door without obstruction.
+    for (const seed of [42, 7, 99]) {
+      const l = generateLayout(seed)
+      let multi = 0
+      for (const h of l.houses) {
+        if (h.floors < 2) {
+          expect(h.stairs).toBeNull()
+          continue
+        }
+        multi++
+        const s = h.stairs!
+        // rise/run within capsule limits: riser 0.2 m < Jolt 0.4 m step-up,
+        // tread ≥ 0.3 m ≥ capsule radius, integer step count covers the story
+        expect(STAIR_RISE).toBeLessThanOrEqual(4)
+        expect(STAIR_TREAD).toBeGreaterThanOrEqual(3)
+        expect(STAIR_STEPS * STAIR_RISE).toBe(STORY_H)
+        expect(s.rect.x1 - s.rect.x0 + 1).toBe(STAIR_RUN)
+        expect(s.rect.z1 - s.rect.z0 + 1).toBe(STAIR_W)
+        // inside the interior (walls are WALL_T thick)
+        expect(s.rect.x0).toBeGreaterThanOrEqual(h.rect.x0 + WALL_T)
+        expect(s.rect.x1).toBeLessThanOrEqual(h.rect.x1 - WALL_T)
+        expect(s.rect.z0).toBeGreaterThanOrEqual(h.rect.z0 + WALL_T)
+        expect(s.rect.z1).toBeLessThanOrEqual(h.rect.z1 - WALL_T)
+        // against the back wall, far from the front-wall door
+        const frontZ = h.door.side === 'z-' ? h.rect.z0 : h.rect.z1
+        const distToFront = Math.min(Math.abs(s.rect.z0 - frontZ), Math.abs(s.rect.z1 - frontZ))
+        expect(distToFront).toBeGreaterThanOrEqual(10)
+      }
+      expect(multi, `seed ${seed} should have multi-story houses`).toBeGreaterThan(0)
     }
   })
 

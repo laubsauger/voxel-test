@@ -109,6 +109,34 @@ describe('scene stamper (T20, V2, V5)', () => {
     expect(store.getVoxel(p.x + 5, p.y + 5, p.z + 5)).toBe(MAT_METAL)
   })
 
+  it('stairs: solid treads with capsule headroom and a carved ceiling opening (T41)', () => {
+    // WHY: stairs exist so the player can WALK to the upper floor — each tread
+    // must be solid, have 18 voxels (1.8 m capsule) of clear air above it, and
+    // the upper slab must be opened where the head passes through its plane.
+    const multi = layout.houses.filter((h) => h.floors > 1)
+    expect(multi.length).toBeGreaterThan(0)
+    for (const h of multi) {
+      const s = h.stairs!
+      const zc = (s.rect.z0 + s.rect.z1) >> 1
+      const steps = h.storyH / 2 // STAIR_RISE
+      for (let i = 0; i < steps; i++) {
+        const top = g + (i + 1) * 2
+        const x0 = s.dir === 1 ? s.rect.x0 + i * 3 : s.rect.x1 - i * 3 - 2
+        const xc = x0 + 1
+        expect(store.getVoxel(xc, top, zc), `tread ${i} top solid`).toBe(MAT_WOOD)
+        for (let y = top + 1; y <= top + 18; y++) {
+          expect(store.getVoxel(xc, y, zc), `air above tread ${i} at y=${y}`).toBe(MAT_AIR)
+        }
+      }
+      // top step lands flush with the upper floor slab
+      expect(g + steps * 2).toBe(g + h.storyH)
+      // upper floor next to the opening is still walkable slab
+      const midX = (h.rect.x0 + h.rect.x1) >> 1
+      const midZ = (h.rect.z0 + h.rect.z1) >> 1
+      expect(store.getVoxel(midX, g + h.storyH, midZ)).toBe(MAT_WOOD)
+    }
+  })
+
   it('is deterministic: same seed → identical chunk hash; different seed differs', () => {
     const a = stamped(42)
     expect(hashStore(a.store)).toBe(hashStore(store))

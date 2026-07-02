@@ -25,7 +25,17 @@ import {
   MAT_GRASS,
   MAT_WOOD,
 } from '../materials'
-import { WALL_T, type Box, type House, type Layout, type Opening, type Rect } from './layout'
+import {
+  STAIR_RISE,
+  STAIR_STEPS,
+  STAIR_TREAD,
+  WALL_T,
+  type Box,
+  type House,
+  type Layout,
+  type Opening,
+  type Rect,
+} from './layout'
 import type { VoxelGrid } from '../vox/remap'
 
 export interface WaterFillRequest {
@@ -129,6 +139,27 @@ function stampHouse(store: ChunkStore, layout: Layout, h: House): void {
   // openings
   stampOpening(store, h, h.door, MAT_AIR, g)
   for (const win of h.windows) stampOpening(store, h, win, MAT_GLASS, g)
+
+  // interior stairs (T41): solid stepped run + matching opening in the upper slab
+  if (h.stairs) {
+    const s = h.stairs
+    // carve the slab over the whole run so a climbing capsule never bonks:
+    // grown 1 laterally toward the room interior and 3 past the top end (landing)
+    const nearBackZplus = s.rect.z1 === r.z1 - WALL_T
+    const oz0 = nearBackZplus ? s.rect.z0 - 1 : s.rect.z0
+    const oz1 = nearBackZplus ? s.rect.z1 : s.rect.z1 + 1
+    const ox0 = Math.max(r.x0 + WALL_T, s.dir === 1 ? s.rect.x0 : s.rect.x0 - 3)
+    const ox1 = Math.min(r.x1 - WALL_T, s.dir === 1 ? s.rect.x1 + 3 : s.rect.x1)
+    const slabY = g + h.storyH // first upper slab; stairs reach floor 1 only
+    store.fillBox(ox0, slabY - 1, oz0, ox1, slabY, oz1, MAT_AIR)
+    // steps: solid wood columns floor→tread top (structurally sound, connectivity-friendly)
+    for (let i = 0; i < STAIR_STEPS; i++) {
+      const top = g + (i + 1) * STAIR_RISE
+      const a = i * STAIR_TREAD
+      const x0 = s.dir === 1 ? s.rect.x0 + a : s.rect.x1 - a - (STAIR_TREAD - 1)
+      store.fillBox(x0, g + 1, s.rect.z0, x0 + STAIR_TREAD - 1, top, s.rect.z1, MAT_WOOD)
+    }
+  }
 
   // roof
   const roofY = wallTop + 1

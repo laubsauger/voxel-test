@@ -59,6 +59,20 @@ export interface Opening {
   sill: number
 }
 
+/**
+ * Interior straight-run stairs (T41). rect = footprint of the solid stepped
+ * run against the back wall; the stamper carves a matching opening in the
+ * upper-floor slab. Rise/tread sized for the Jolt character step-climb
+ * (STAIR_RISE=2 voxels = 0.2 m < 0.4 m default mWalkStairsStepUp).
+ */
+export interface Stairs {
+  rect: Rect
+  /** run axis (along the house width) */
+  axis: 'x'
+  /** ascending direction along the axis */
+  dir: 1 | -1
+}
+
 export interface House {
   lotId: number
   rect: Rect
@@ -72,6 +86,8 @@ export interface House {
   door: Opening
   windows: Opening[]
   driveway: Rect
+  /** interior stairs to the upper floor; null for single-story houses */
+  stairs: Stairs | null
 }
 
 export interface Pool {
@@ -120,6 +136,14 @@ const WIN_H = 12
 const WIN_SILL = 10
 const DRIVE_W = 20
 export const POOL_DEPTH = 14
+
+// stairs (T41): riser 2 voxels (0.2 m — under Jolt's 0.4 m step-climb),
+// tread 3 voxels deep, run width 9 (0.9 m > capsule diameter 0.6 m)
+export const STAIR_RISE = 2
+export const STAIR_TREAD = 3
+export const STAIR_W = 9
+export const STAIR_STEPS = STORY_H / STAIR_RISE // 13, integer by construction
+export const STAIR_RUN = STAIR_STEPS * STAIR_TREAD // 39
 
 function makeRoads(): Road[] {
   const roads: Road[] = []
@@ -196,6 +220,9 @@ export function generateLayout(seed: number): Layout {
   for (const lot of lots) {
     const lotW = lot.rect.x1 - lot.rect.x0 + 1
     const frontZneg = lot.front === 'z-'
+    // detail features (T41-T43) draw from a per-lot derived stream so adding
+    // them never reshuffles the base suburb (houses/pools/cars stay put)
+    const detail = new Prng((seed ^ 0x51ab7e0d ^ Math.imul(lot.id + 1, 0x9e3779b9)) >>> 0)
 
     // footprint
     const w = 80 + prng.nextInt(41) // 8–12 m
@@ -242,6 +269,17 @@ export function generateLayout(seed: number): Layout {
       ...wallWindows('x+', d, floors, null),
     ]
 
+    // interior stairs against the back wall (opposite the door — never blocks it)
+    let stairs: Stairs | null = null
+    if (floors > 1) {
+      const fromLeft = detail.nextInt(2) === 0
+      const sx0 = fromLeft ? rect.x0 + WALL_T : rect.x1 - WALL_T - STAIR_RUN + 1
+      const srect: Rect = frontZneg
+        ? { x0: sx0, z0: rect.z1 - WALL_T - STAIR_W + 1, x1: sx0 + STAIR_RUN - 1, z1: rect.z1 - WALL_T }
+        : { x0: sx0, z0: rect.z0 + WALL_T, x1: sx0 + STAIR_RUN - 1, z1: rect.z0 + WALL_T + STAIR_W - 1 }
+      stairs = { rect: srect, axis: 'x', dir: fromLeft ? 1 : -1 }
+    }
+
     // driveway: strip from the street-side lot edge to the front wall
     const driveLeft = prng.nextInt(2) === 0
     const dvx0 = driveLeft ? rect.x0 + 4 : rect.x1 - 4 - DRIVE_W + 1
@@ -249,7 +287,7 @@ export function generateLayout(seed: number): Layout {
       ? { x0: dvx0, z0: lot.rect.z0 - LOT_GAP, x1: dvx0 + DRIVE_W - 1, z1: rect.z0 - 1 }
       : { x0: dvx0, z0: rect.z1 + 1, x1: dvx0 + DRIVE_W - 1, z1: lot.rect.z1 + LOT_GAP }
 
-    houses.push({ lotId: lot.id, rect, ell, floors, storyH: STORY_H, wallMat, roof, ridgeAxis, door, windows, driveway })
+    houses.push({ lotId: lot.id, rect, ell, floors, storyH: STORY_H, wallMat, roof, ridgeAxis, door, windows, driveway, stairs })
 
     // parked car on ~half the driveways (placeholder .vox prop spot)
     if (prng.nextInt(2) === 0) {
