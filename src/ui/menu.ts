@@ -8,6 +8,8 @@
  * (live document state, transient — see fullscreen.ts).
  */
 
+import { createSocialFooter } from './social-footer'
+
 const ICON_SOUND_ON =
   '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/>'
 const ICON_SOUND_OFF = '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="m16.5 9.5 5 5M21.5 9.5l-5 5"/>'
@@ -82,6 +84,7 @@ export class MainMenu {
         <button class="bb-menu-item" data-act="settings"><span class="bb-mi-index">03</span>Settings</button>
       </nav>
       <div class="bb-menu-footer">
+        <div class="bb-social-slot"></div>
         <div class="bb-menu-meta">
           <span>seed <b>${hooks.seed}</b></span>
           <span>build <b>${import.meta.env.MODE}</b></span>
@@ -100,6 +103,7 @@ export class MainMenu {
     this.quick = new QuickAccess(hooks)
     this.quick.el.classList.add('bb-quick-screen')
     this.el.appendChild(this.quick.el)
+    this.el.querySelector('.bb-social-slot')!.appendChild(createSocialFooter())
     root.appendChild(this.el)
   }
 
@@ -147,6 +151,9 @@ export class PauseMenu {
     this.quick = new QuickAccess(hooks)
     this.quick.el.classList.add('bb-quick-panel')
     this.el.querySelector('.bb-pause-panel')!.appendChild(this.quick.el)
+    const pauseSocial = createSocialFooter()
+    pauseSocial.classList.add('bb-social-pause')
+    this.el.appendChild(pauseSocial)
     root.appendChild(this.el)
   }
 

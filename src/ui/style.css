@@ -887,3 +887,38 @@
   0% { opacity: 1; }
   100% { opacity: 0; }
 }
+
+/* --- social footer (main menu + pause), bottom-center ------------------- */
+.bb-social-footer {
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  color: rgba(255, 255, 255, 0.4);
+}
+.bb-menu-footer .bb-social-slot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 72px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.bb-social-pause {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 26px;
+}
+.bb-social-link {
+  pointer-events: auto;
+  color: inherit;
+  display: inline-flex;
+  transition: color 0.18s ease, filter 0.18s ease, transform 0.18s ease;
+}
+.bb-social-link:hover {
+  color: var(--hover-color);
+  filter: drop-shadow(0 0 8px var(--hover-glow));
+  transform: translateY(-1px);
+}
