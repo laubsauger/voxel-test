@@ -32,6 +32,13 @@ export interface BundleMsg {
   t: 'ls/bundle'
   tick: number
   cmds: Command[]
+  /**
+   * T71 — players the host dropped effective THIS tick (stall timeout / peer
+   * loss). From this tick on their inputs are empty on every peer identically
+   * (empty-input substitution). Announced in the bundle so the substitution is
+   * part of the ordered command stream — deterministic on all peers.
+   */
+  dropped?: number[]
 }
 
 /** parse a wire message if it belongs to the lockstep protocol, else null */
@@ -54,6 +61,7 @@ export class LockstepNode {
   private seq = 0
   private readonly bundles = new Map<number, Command[]>()
   private readonly stepHooks: ((sim: Sim) => void)[] = []
+  private readonly dropHooks: ((playerId: number, tick: number) => void)[] = []
 
   constructor(
     readonly sim: Sim,
@@ -74,12 +82,18 @@ export class LockstepNode {
     this.stepHooks.push(hook)
   }
 
+  /** T71 — host announced a player drop (empty-input substitution). UI hook. */
+  onPlayerDropped(hook: (playerId: number, tick: number) => void): void {
+    this.dropHooks.push(hook)
+  }
+
   receiveBundle(msg: BundleMsg): void {
     if (msg.tick < this.sim.tick || this.bundles.has(msg.tick)) {
       // V10: a re-released tick means host/protocol corruption — never ignore
       throw new Error(`lockstep: duplicate or stale bundle for tick ${msg.tick} (sim at ${this.sim.tick})`)
     }
     this.bundles.set(msg.tick, msg.cmds)
+    if (msg.dropped) for (const pid of msg.dropped) for (const hook of this.dropHooks) hook(pid, msg.tick)
   }
 
   /** true when the barrier for the current tick is open */
@@ -123,8 +137,12 @@ export class LockstepNode {
  */
 export class LockstepHost {
   readonly node: LockstepNode
-  private readonly peers: { playerId: number; channel: Channel }[] = []
+  private peers: { playerId: number; channel: Channel }[] = []
   private readonly playerIds = new Set<number>()
+  /** T71 — players dropped mid-session (stall timeout); their late traffic is ignored */
+  private readonly droppedIds = new Set<number>()
+  /** drops not yet announced in a released bundle */
+  private pendingDropAnnounce: number[] = []
   /** tick -> playerId -> stamped commands */
   private readonly collectors = new Map<number, Map<number, Command[]>>()
   private nextRelease = 0
@@ -142,6 +160,7 @@ export class LockstepHost {
     this.playerIds.add(playerId)
     this.peers.push({ playerId, channel })
     channel.onMessage((raw) => {
+      if (this.droppedIds.has(playerId)) return // T71: dropped peer, late traffic is void
       const msg = parseLockstep(raw)
       if (!msg) return
       if (msg.t !== 'ls/input') throw new Error(`lockstep host: unexpected '${msg.t}' from peer`) // V10
@@ -150,6 +169,34 @@ export class LockstepHost {
       }
       this.receiveInput(msg)
     })
+  }
+
+  /**
+   * T71 — drop a stalled/disconnected player mid-session. Deterministic
+   * empty-input substitution: the host stops waiting for (and discards any
+   * buffered) input from that player, so every bundle from the next released
+   * tick on simply carries no commands for them — identical on all peers.
+   * The drop is announced in that bundle (BundleMsg.dropped).
+   */
+  dropPlayer(playerId: number): void {
+    if (playerId === this.node.playerId) throw new Error('lockstep host: cannot drop the host')
+    if (!this.playerIds.has(playerId) || this.droppedIds.has(playerId)) return
+    this.playerIds.delete(playerId)
+    this.droppedIds.add(playerId)
+    this.peers = this.peers.filter((p) => p.playerId !== playerId)
+    for (const collector of this.collectors.values()) collector.delete(playerId)
+    this.pendingDropAnnounce.push(playerId)
+    this.tryRelease()
+  }
+
+  /**
+   * T71 — stall introspection for the waiting-banner UX: players whose input
+   * for the next unreleased tick hasn't arrived. Empty while flowing.
+   */
+  waitingOn(): number[] {
+    if (!this.started) return []
+    const collector = this.collectors.get(this.nextRelease)
+    return [...this.playerIds].filter((pid) => !collector?.has(pid)).sort((a, b) => a - b)
   }
 
   /**
@@ -198,6 +245,10 @@ export class LockstepHost {
 
   private release(tick: number, cmds: Command[]): void {
     const msg: BundleMsg = { t: 'ls/bundle', tick, cmds }
+    if (this.pendingDropAnnounce.length > 0) {
+      msg.dropped = this.pendingDropAnnounce
+      this.pendingDropAnnounce = []
+    }
     const raw = JSON.stringify(msg)
     for (const peer of this.peers) peer.channel.send(raw)
     this.node.receiveBundle(msg)
