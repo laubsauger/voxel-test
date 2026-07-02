@@ -4,6 +4,13 @@
  * sim state. Math.random is fine here — visual salt on the render layer,
  * never inside src/sim or src/world (V2).
  *
+ * T53/B13 DEMOTION: these chunk-center bursts were the old "explosion" — they
+ * rained up/down from chunk centers with no relation to the blast. Explosions
+ * and gun impacts now come from real sim events (src/render/fx/fx-system.ts,
+ * seeded with removed-voxel positions and blast-radial velocities). This pool
+ * remains only as a LIGHT edit puff for dig/place feedback, so burst() clamps
+ * count and dampens speed/size/life regardless of what callers pass.
+ *
  * GPU-instanced: one THREE.Sprite drawn `capacity` times. Motion is fully
  * analytic in the vertex stage (spawn + v·t + ½g·t²) from per-instance
  * attributes, so update() only bumps a time uniform — CPU touches buffers
@@ -53,7 +60,7 @@ export class DebrisParticles {
     material.scaleNode = select(alive, m.z.mul(float(1).sub(t.mul(0.6))), float(0))
     material.rotationNode = m.w.mul(6.283).add(age.mul(m.w.sub(0.5).mul(10)))
     material.colorNode = mix(color(0x54483a), color(0xa89a86), m.w)
-    material.opacityNode = float(1).sub(t).mul(0.85)
+    material.opacityNode = float(1).sub(t).mul(0.55) // demoted (T53): subtle edit puff
     material.transparent = true
     material.depthWrite = false
 
@@ -67,7 +74,9 @@ export class DebrisParticles {
    * oldest slots when the ring wraps — bounded memory, no allocation.
    */
   burst(center: Vec3Like, count = 32, speed = 3.5): void {
-    const n = Math.min(count, this.capacity)
+    // T53 demotion: light edit puff only — real destruction FX live in fx/
+    const n = Math.min(count, 10, this.capacity)
+    const s0 = speed * 0.45
     for (let i = 0; i < n; i++) {
       const j = this.cursor
       this.cursor = (this.cursor + 1) % this.capacity
@@ -75,15 +84,15 @@ export class DebrisParticles {
       const yaw = Math.random() * Math.PI * 2
       const up = Math.random()
       const horiz = Math.sqrt(Math.max(0, 1 - up * up)) * (0.4 + 0.6 * Math.random())
-      const s = speed * (0.35 + 0.65 * Math.random())
+      const s = s0 * (0.35 + 0.65 * Math.random())
       this.velocity.setXYZ(j, Math.cos(yaw) * horiz * s, (0.4 + 0.6 * up) * s, Math.sin(yaw) * horiz * s)
       this.spawn.setXYZ(
         j,
-        center.x + (Math.random() - 0.5) * 0.8,
-        center.y + (Math.random() - 0.5) * 0.8,
-        center.z + (Math.random() - 0.5) * 0.8,
+        center.x + (Math.random() - 0.5) * 0.6,
+        center.y + (Math.random() - 0.5) * 0.6,
+        center.z + (Math.random() - 0.5) * 0.6,
       )
-      this.meta.setXYZW(j, this.now, 0.5 + Math.random() * 0.9, 0.05 + Math.random() * 0.09, Math.random())
+      this.meta.setXYZW(j, this.now, 0.35 + Math.random() * 0.4, 0.03 + Math.random() * 0.04, Math.random())
     }
     this.spawn.needsUpdate = true
     this.velocity.needsUpdate = true
