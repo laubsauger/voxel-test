@@ -28,6 +28,7 @@ import { wireAudioSettings, attachUiSounds } from './ui/audio-wiring'
 import { FullscreenControl } from './ui/fullscreen'
 import { MapSystem } from './ui/map/map-system'
 import { adaptLayout } from './ui/map/layout-adapter'
+import { installVehicleDevControls } from './render/vehicle-meshes'
 import { generateLayout } from './sim/gen/layout'
 import { WORLD_VX, WORLD_VZ } from './world/chunks'
 
@@ -199,6 +200,9 @@ document.addEventListener('keydown', (e) => {
 })
 
 const dev = new DevOverlay(game)
+// T64 — vehicle dev controls: KeyG summon (dev-gated), Enter enter/exit
+installVehicleDevControls(game.sim, game.phys, LOCAL_PLAYER, () => boot.dev || store.get('dev.profiling'))
+
 // T47 — noclip on N, dev-gated (deterministic sim op, lockstep-safe)
 document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyN' && (boot.dev || store.get('dev.profiling')) && game.state === 'play') {
@@ -237,7 +241,25 @@ game.phys.onSplash = (e) => {
 }
 game.onSimEvents = (events) => {
   for (const e of events) {
-    if (e.kind === 'explosion') gameAudio.onExplosion(e.x, e.y, e.z, e.power)
+    switch (e.kind) {
+      case 'explosion':
+        gameAudio.onExplosion(e.x, e.y, e.z, e.power)
+        break
+      case 'vehicle_crash':
+        void sfxPlay(e.large ? 'car-crash-large' : 'car-crash-small', {
+          position: { x: e.x, y: e.y, z: e.z },
+          volume: Math.min(1, 0.35 + e.dv * 0.06),
+        })
+        break
+      case 'vehicle_door':
+        void sfxPlay('car-door-open', { position: { x: e.x, y: e.y, z: e.z } })
+        if (e.enter) setTimeout(() => void sfxPlay('car-door-close', { position: { x: e.x, y: e.y, z: e.z } }), 350)
+        break
+      case 'vehicle_wheel_loss':
+        void sfxPlay('car-crash-small', { position: { x: e.x, y: e.y, z: e.z } })
+        void sfxPlay('impact-metal', { position: { x: e.x, y: e.y, z: e.z } })
+        break
+    }
   }
 }
 game.equippedTool = () => tools.equipped // T49 — FP viewmodel reads the hotbar

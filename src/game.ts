@@ -19,6 +19,7 @@ import { PlayerVisuals } from './render/player-visuals'
 import { SpectatorCam } from './render/spectator-cam'
 import { WaterSurface } from './render/water/surface'
 import { BodyMeshes } from './render/body-meshes'
+import { VehicleMeshes } from './render/vehicle-meshes'
 import { Birds } from './render/birds'
 import { Flashlight } from './render/flashlight'
 import { UnderwaterOverlay } from './render/water/underwater'
@@ -87,6 +88,7 @@ export class Game {
   private readonly waterSurface: WaterSurface
   private readonly bodyMeshes: BodyMeshes
   private readonly fx: FxSystem
+  private readonly vehicleMeshes: VehicleMeshes
   private readonly birds = new Birds()
   readonly flashlight: Flashlight
   private readonly underwater = new UnderwaterOverlay()
@@ -125,6 +127,12 @@ export class Game {
     this.waterSurface = new WaterSurface()
     this.scene.add(this.waterSurface.mesh)
     this.bodyMeshes = new BodyMeshes(this.scene, this.world.chunks.material)
+    // T64 — vehicle rendering (chassis via chunk materials, spinning wheels)
+    this.vehicleMeshes = new VehicleMeshes(
+      this.scene,
+      this.world.chunks.material,
+      this.world.chunks.transparentMaterial,
+    )
     // T53 — event-driven destruction/combat VFX (V6: reads events, writes nothing)
     this.fx = new FxSystem(this.sim.world)
     this.scene.add(this.fx.group)
@@ -273,7 +281,13 @@ export class Game {
       const camMode = this.state !== 'play' ? 'orbit' : this.flying ? 'fly' : this.cam.mode
       this.playerVisuals.update(dt, player, camMode, this.equippedTool?.() ?? 'dig')
       if (player) {
-        if (this.state === 'play' && !this.flying) this.cam.update(player, this.sim.world)
+        // T64 — seated players get the chase cam; on-foot restores fp/tp
+        const seatedV =
+          player.seatedVehicle !== 0 ? this.phys.vehicles.get(player.seatedVehicle) : undefined
+        if (this.state === 'play' && !this.flying) {
+          if (seatedV) this.cam.updateVehicle(seatedV, this.sim.world, dt)
+          else this.cam.update(player, this.sim.world)
+        }
 
         // T28 hit feedback: segment damage → HUD flash
         let dmg = 0
@@ -287,6 +301,7 @@ export class Game {
 
       this.world.update(dt, this.sim.tick) // remesh budget, debris, CSM, day cycle (V7/T58)
       this.bodyMeshes.update(this.phys.bodies)
+      this.vehicleMeshes.update(this.phys.vehicles)
       this.fx.update(dt, fxEvents, this.cam.camera)
       this.projectileMeshes.update(this.phys.projectiles, dt)
       this.birds.update(dt, this.world.dayFactor)

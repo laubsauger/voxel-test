@@ -54,4 +54,6 @@ export interface ShotEvent {
   mat: number
 }
 
-export type SimEvent = ExplosionEvent | ShotEvent
+import type { VehicleEvent } from './vehicle'
+
+export type SimEvent = ExplosionEvent | ShotEvent | VehicleEvent
