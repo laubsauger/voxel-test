@@ -51,12 +51,26 @@ describe('connectivity flood-fill (T11, V2)', () => {
     expect(islands[0].voxels.length).toBe(27)
   })
 
-  it('escape hatch: structure reaching the region boundary with solid beyond → supported', () => {
+  it('B15: small floating fragment crossing the region boundary is resolved to an island', () => {
     const w = world()
-    // floating beam far above ground, extends past the region's +x face
+    // floating beam far above ground, extends past the region's +x face.
+    // Pre-B15 the escape hatch marked it supported forever (stuck mid-air);
+    // now the boundary-supported component is re-flooded with a growing
+    // region until fully enclosed → correctly unsupported, ALL voxels
+    // (including those outside the original region) come out as the island.
     w.fillBox(10, 30, 10, 60, 30, 10, 4)
     const islands = findUnsupportedIslands(w, { x0: 0, y0: 20, z0: 0, x1: 40, y1: 40, z1: 20 })
-    // beam continues at x=41+ outside the region ⇒ treated as connected
+    expect(islands.length).toBe(1)
+    expect(islands[0].voxels.length).toBe(51) // x 10..60 inclusive
+  })
+
+  it('B15: boundary-crossing structure that reaches ground outside the region stays supported', () => {
+    const w = world()
+    // beam crossing the +x face into a pillar that stands on the ground —
+    // resolution follows it out of the region, finds y=0, keeps it static
+    w.fillBox(30, 30, 10, 50, 30, 10, 4)
+    w.fillBox(50, 0, 10, 50, 29, 10, 4)
+    const islands = findUnsupportedIslands(w, { x0: 0, y0: 20, z0: 0, x1: 40, y1: 40, z1: 20 })
     expect(islands).toEqual([])
   })
 

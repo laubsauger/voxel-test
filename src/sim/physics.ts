@@ -25,11 +25,14 @@ import {
   CONNECTIVITY_MARGIN,
   findUnsupportedIslands,
   type Island,
+  type IslandVoxel,
   type Region,
 } from './connectivity'
 import { material, VOXEL_VOLUME } from './materials'
 import { registerDestructionOps } from './destruction'
 import { registerPlayerOps, updatePlayers, type PlayerEntity } from './player'
+import { registerProjectileOps, tickProjectiles, type Projectile } from './projectiles'
+import { attachEditPhysics } from './edit-ops'
 
 type JoltApi = typeof Jolt
 
@@ -170,6 +173,20 @@ export interface DynamicBody {
   version: number
 }
 
+/** B17 — result of a ray cast against dynamic island bodies */
+export interface BodyRayHit {
+  body: DynamicBody
+  fraction: number
+  /** hit point, world meters */
+  px: number
+  py: number
+  pz: number
+  /** surface normal at the hit */
+  nx: number
+  ny: number
+  nz: number
+}
+
 export class PhysicsWorld {
   readonly api: JoltApi
   readonly joltInterface: Jolt.JoltInterface
@@ -189,6 +206,9 @@ export class PhysicsWorld {
   /** player entities keyed by playerId (T21) — see player.ts */
   readonly players = new Map<number, PlayerEntity>()
 
+  /** T54 bomb projectiles keyed by entity id (V8) — see projectiles.ts */
+  readonly projectiles = new Map<number, Projectile>()
+
   /** total bodies removed by the kill plane — hashed sim state (T40, V3) */
   removedBodies = 0
 
@@ -202,6 +222,9 @@ export class PhysicsWorld {
   readonly bodyFilter: Jolt.BodyFilter
   readonly shapeFilter: Jolt.ShapeFilter
   readonly tempAllocator: Jolt.TempAllocator
+  // pass-all filters for narrow-phase ray queries (B17)
+  private readonly allBPFilter: Jolt.BroadPhaseLayerFilter
+  private readonly allObjFilter: Jolt.ObjectLayerFilter
 
   constructor(api: JoltApi) {
     this.api = api
@@ -239,6 +262,8 @@ export class PhysicsWorld {
     this.bodyFilter = new api.BodyFilter()
     this.shapeFilter = new api.ShapeFilter()
     this.tempAllocator = this.joltInterface.GetTempAllocator()
+    this.allBPFilter = new api.BroadPhaseLayerFilter()
+    this.allObjFilter = new api.ObjectLayerFilter()
 
     // Jolt defaults to deterministic simulation; assert loudly rather than assume (V10).
     const phys = this.physicsSystem.GetPhysicsSettings()
@@ -269,6 +294,7 @@ export class PhysicsWorld {
     this.structuralPass(sim)
     this.joltInterface.Step(DT, 1)
     updatePlayers(this, sim) // character controllers, fixed order (T21)
+    tickProjectiles(sim, this) // T54 — bomb arcs/fuses; detonation spawns ejecta this tick
     this.readbackBodies()
     this.killPlanePass()
   }
@@ -333,8 +359,44 @@ export class PhysicsWorld {
    * Bodies stay dynamic after settling (V12) — sleep is allowed, re-weld is not.
    */
   extractIsland(sim: Sim, island: Island): DynamicBody {
-    const vs = island.voxels
-    if (vs.length === 0) throw new Error('extractIsland: empty island')
+    for (const v of island.voxels) sim.world.setVoxel(v.x, v.y, v.z, 0)
+    return this.buildVoxelBody(sim, island.voxels)
+  }
+
+  /**
+   * T55 — ejecta clump → dynamic body. Voxels were already removed from the
+   * ChunkStore by the explosion scan; this only creates the body entity.
+   */
+  spawnDebrisBody(sim: Sim, voxels: IslandVoxel[]): DynamicBody {
+    return this.buildVoxelBody(sim, voxels)
+  }
+
+  /**
+   * T55 — set a fresh body's linear + angular velocity (clamped to the T40
+   * caps). Deterministic: called from op handlers only.
+   */
+  setBodyVelocity(b: DynamicBody, vx: number, vy: number, vz: number, wx: number, wy: number, wz: number): void {
+    const api = this.api
+    const vlen = Math.sqrt(vx * vx + vy * vy + vz * vz)
+    if (vlen > MAX_BODY_LINEAR_VELOCITY) {
+      const s = MAX_BODY_LINEAR_VELOCITY / vlen
+      vx *= s; vy *= s; vz *= s
+    }
+    const wlen = Math.sqrt(wx * wx + wy * wy + wz * wz)
+    if (wlen > MAX_BODY_ANGULAR_VELOCITY) {
+      const s = MAX_BODY_ANGULAR_VELOCITY / wlen
+      wx *= s; wy *= s; wz *= s
+    }
+    const v = new api.Vec3(vx, vy, vz)
+    const w = new api.Vec3(wx, wy, wz)
+    this.bodyInterface.SetLinearAndAngularVelocity(b.body.GetID(), v, w)
+    api.destroy(v)
+    api.destroy(w)
+  }
+
+  /** Shared body construction for islands (T12) and ejecta clumps (T55). */
+  private buildVoxelBody(sim: Sim, vs: IslandVoxel[]): DynamicBody {
+    if (vs.length === 0) throw new Error('buildVoxelBody: empty voxel set')
     let x0 = vs[0].x, y0 = vs[0].y, z0 = vs[0].z
     let x1 = x0, y1 = y0, z1 = z0
     for (const v of vs) {
@@ -355,7 +417,6 @@ export class PhysicsWorld {
       grid[v.x - x0 + (v.z - z0) * sx + (v.y - y0) * sx * sz] = v.mat
       mass += material(v.mat).density * VOXEL_VOLUME
       matCounts[v.mat]++
-      sim.world.setVoxel(v.x, v.y, v.z, 0)
     }
     // dominant material: most voxels, ties broken by lowest id (deterministic)
     let mat = 0
@@ -503,6 +564,169 @@ export class PhysicsWorld {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // B17 — dynamic bodies react to shooting/digging/blasts
+  // ---------------------------------------------------------------------------
+
+  /**
+   * B17 — narrow-phase ray vs Jolt bodies. Returns the closest DYNAMIC island
+   * body hit within maxDist (meters), or null. Static chunk bodies may be the
+   * closest hit — they carry userdata 0 and map to no entity, which correctly
+   * yields null (the world DDA owns voxel hits). Deterministic: Jolt query
+   * over deterministic body state (V2).
+   */
+  castRayBody(
+    ox: number, oy: number, oz: number,
+    dx: number, dy: number, dz: number,
+    maxDist: number,
+  ): BodyRayHit | null {
+    const api = this.api
+    const origin = new api.RVec3(ox, oy, oz)
+    const dir = new api.Vec3(dx * maxDist, dy * maxDist, dz * maxDist)
+    const ray = new api.RRayCast(origin, dir)
+    const settings = new api.RayCastSettings()
+    const collector = new api.CastRayClosestHitCollisionCollector()
+    this.physicsSystem
+      .GetNarrowPhaseQuery()
+      .CastRay(ray, settings, collector, this.allBPFilter, this.allObjFilter, this.bodyFilter, this.shapeFilter)
+    let out: BodyRayHit | null = null
+    if (collector.HadHit()) {
+      const hit = collector.mHit
+      const body = this.bodies.get(this.bodyInterface.GetUserData(hit.mBodyID))
+      if (body) {
+        const f = hit.mFraction
+        const px = ox + dx * maxDist * f
+        const py = oy + dy * maxDist * f
+        const pz = oz + dz * maxDist * f
+        const pos = new api.RVec3(px, py, pz)
+        const n = body.body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, pos)
+        out = { body, fraction: f, px, py, pz, nx: n.GetX(), ny: n.GetY(), nz: n.GetZ() }
+        api.destroy(pos)
+      }
+    }
+    api.destroy(collector)
+    api.destroy(settings)
+    api.destroy(ray)
+    api.destroy(origin)
+    api.destroy(dir)
+    return out
+  }
+
+  /** B17 — impulse on a body at a world point (shot response). */
+  impulseBodyAt(b: DynamicBody, ix: number, iy: number, iz: number, px: number, py: number, pz: number): void {
+    const api = this.api
+    this.bodyInterface.ActivateBody(b.body.GetID())
+    const imp = new api.Vec3(ix, iy, iz)
+    const at = new api.RVec3(px, py, pz)
+    b.body.AddImpulse(imp, at)
+    api.destroy(imp)
+    api.destroy(at)
+  }
+
+  /**
+   * B17 — remove voxels from a body's mini grid inside a world-space sphere
+   * (same falloff·power ≥ strength rule as world destruction). Rebuilds the
+   * compound collider + mass on change; despawns the body when it empties.
+   * Returns the number of voxels removed. Deterministic (fixed y→z→x scan).
+   */
+  damageBodySphere(
+    b: DynamicBody,
+    wx: number,
+    wy: number,
+    wz: number,
+    rMeters: number,
+    power: number,
+    snapToVoxel = false,
+  ): number {
+    // world → body-local (grid corner origin): l = R⁻¹ · (w − p)
+    const tx = wx - b.px
+    const ty = wy - b.py
+    const tz = wz - b.pz
+    // rotate by conjugate quaternion: v' = v + 2 q̄×(q̄×v + w·v), q̄ = -q.xyz
+    const qx = -b.qx, qy = -b.qy, qz = -b.qz, qw = b.qw
+    const cx1 = qy * tz - qz * ty + qw * tx
+    const cy1 = qz * tx - qx * tz + qw * ty
+    const cz1 = qx * ty - qy * tx + qw * tz
+    let lx = tx + 2 * (qy * cz1 - qz * cy1)
+    let ly = ty + 2 * (qz * cx1 - qx * cz1)
+    let lz = tz + 2 * (qx * cy1 - qy * cx1)
+    if (snapToVoxel) {
+      // center the sphere on the containing voxel's center — matches the
+      // world path (destroySphere at hit voxel center + 0.5), so a shot
+      // kills the hit voxel instead of grazing between cells
+      lx = (Math.floor(lx / VOXEL_SIZE) + 0.5) * VOXEL_SIZE
+      ly = (Math.floor(ly / VOXEL_SIZE) + 0.5) * VOXEL_SIZE
+      lz = (Math.floor(lz / VOXEL_SIZE) + 0.5) * VOXEL_SIZE
+    }
+
+    const { grid, sx, sy, sz } = b
+    let removed = 0
+    for (let y = 0; y < sy; y++) {
+      for (let z = 0; z < sz; z++) {
+        for (let x = 0; x < sx; x++) {
+          const mat = grid[x + z * sx + y * sx * sz]
+          if (mat === 0) continue
+          const dx = (x + 0.5) * VOXEL_SIZE - lx
+          const dy = (y + 0.5) * VOXEL_SIZE - ly
+          const dz = (z + 0.5) * VOXEL_SIZE - lz
+          const d = Math.sqrt(dx * dx + dy * dy + dz * dz)
+          if (d > rMeters) continue
+          const falloff = 1 - d / rMeters
+          if (falloff * power >= material(mat).strength) {
+            grid[x + z * sx + y * sx * sz] = 0
+            b.mass -= material(mat).density * VOXEL_VOLUME
+            b.count--
+            removed++
+          }
+        }
+      }
+    }
+    if (removed === 0) return 0
+    b.version++
+    if (b.count <= 0) {
+      this.despawnBody(b)
+      return removed
+    }
+    const boxes = greedyBoxes(grid, sx, sy, sz)
+    if (boxes.length === 0) {
+      this.despawnBody(b)
+      return removed
+    }
+    const shape = this.buildBoxesShape(boxes)
+    this.bodyInterface.SetShape(b.body.GetID(), shape, false, this.api.EActivation_Activate)
+    // keep the explicit voxel mass authoritative (inertia stays shape-derived)
+    b.body.GetMotionProperties().SetInverseMass(1 / Math.max(b.mass, 0.001))
+    return removed
+  }
+
+  /**
+   * B17 — blast damage to body voxels: every body near the blast center loses
+   * voxels by the same strength rule the world uses. Deterministic id order.
+   * Coordinates in meters.
+   */
+  damageBodiesSphere(wx: number, wy: number, wz: number, rMeters: number, power: number, onlyIds?: number[]): void {
+    const ids = onlyIds ?? [...this.bodies.keys()] // snapshot: despawn mutates the map
+    for (const id of ids) {
+      const b = this.bodies.get(id)
+      if (!b) continue
+      // coarse cull on the body's bounding sphere around its grid center
+      const hx = b.px + (b.sx * VOXEL_SIZE) / 2 - wx
+      const hy = b.py + (b.sy * VOXEL_SIZE) / 2 - wy
+      const hz = b.pz + (b.sz * VOXEL_SIZE) / 2 - wz
+      const reach = rMeters + (Math.sqrt(b.sx * b.sx + b.sy * b.sy + b.sz * b.sz) * VOXEL_SIZE) / 2
+      if (hx * hx + hy * hy + hz * hz > reach * reach) continue
+      this.damageBodySphere(b, wx, wy, wz, rMeters, power)
+    }
+  }
+
+  /** Remove a body from the sim + Jolt (emptied by damage). Hash-visible via removedBodies. */
+  private despawnBody(b: DynamicBody): void {
+    this.bodyInterface.RemoveBody(b.body.GetID())
+    this.bodyInterface.DestroyBody(b.body.GetID())
+    this.bodies.delete(b.id)
+    this.removedBodies++
+  }
+
   /** Radial impulse to dynamic bodies near a blast (T13). Deterministic id order. */
   applyRadialImpulse(cx: number, cy: number, cz: number, radius: number, strength: number): void {
     const api = this.api
@@ -537,6 +761,7 @@ export class PhysicsWorld {
       this.bodyInterface.DestroyBody(b.body.GetID())
     }
     this.bodies.clear()
+    this.projectiles.clear()
     api.destroy(this.gravity)
     api.destroy(this.joltInterface)
     api.destroy(this.settings)
@@ -562,6 +787,17 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.u32(b.mat)
     h.u32(b.sx).u32(b.sy).u32(b.sz)
     h.bytes(b.grid)
+  }
+  // T54 — projectiles are sim state (V3)
+  h.u32(phys.projectiles.size)
+  const projIds = [...phys.projectiles.keys()].sort((a, b) => a - b)
+  for (const id of projIds) {
+    const p = phys.projectiles.get(id)!
+    h.u32(id)
+    h.f64(p.x).f64(p.y).f64(p.z)
+    h.f64(p.vx).f64(p.vy).f64(p.vz)
+    h.u32(p.fuse)
+    h.u8(p.resting ? 1 : 0)
   }
   h.u32(phys.players.size)
   const pids = [...phys.players.keys()].sort((a, b) => a - b)
@@ -593,6 +829,9 @@ export async function createPhysics(sim: Sim): Promise<PhysicsWorld> {
   const phys = new PhysicsWorld(api)
   registerDestructionOps(sim, phys)
   registerPlayerOps(sim, phys)
+  registerProjectileOps(sim, phys) // T54 — 'throw' op; integration runs in phys.tick
+  attachEditPhysics(sim, phys) // B17 — dig pushes rubble
+
   phys.initStatic(sim.world)
   sim.addSystem(() => phys.tick(sim))
   return phys

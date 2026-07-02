@@ -16,8 +16,12 @@ import type { Hud } from './hud'
 
 /** reach for dig/build, meters */
 export const EDIT_RANGE = 9
-/** bomb toss targeting range, meters */
+/** bomb toss targeting range, meters (unused since T54 made the bomb a projectile) */
 export const BOMB_RANGE = 80
+/** T54 — bomb toss speed along the view ray, m/s */
+export const BOMB_THROW_SPEED = 14
+/** T54 — extra upward velocity for a satisfying lob arc, m/s */
+export const BOMB_THROW_LOFT = 2.5
 
 interface ToolSpec {
   cooldownMs: number
@@ -101,10 +105,17 @@ export class ToolController {
         break
       }
       case 'bomb': {
-        const hit = raycastWorld(game.sim.world, o.x, o.y, o.z, d.x, d.y, d.z, BOMB_RANGE)
-        if (!hit) return
-        push({ kind: 'explode', x: hit.x, y: hit.y, z: hit.z, r: 14, power: 4 })
-        hud.hitmarker()
+        // T54: lob a bomb projectile — the sim integrates arc/bounce/fuse and
+        // detonates the T55 zoned explosion where it lies (B13/B14)
+        push({
+          kind: 'throw',
+          ox: o.x + d.x * 0.4,
+          oy: o.y + d.y * 0.4,
+          oz: o.z + d.z * 0.4,
+          vx: d.x * BOMB_THROW_SPEED,
+          vy: d.y * BOMB_THROW_SPEED + BOMB_THROW_LOFT,
+          vz: d.z * BOMB_THROW_SPEED,
+        })
         break
       }
     }

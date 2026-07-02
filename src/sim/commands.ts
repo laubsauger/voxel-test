@@ -60,7 +60,20 @@ export interface NoclipOp {
   kind: 'noclip'
 }
 
-export type Op = DigOp | PlaceOp | ShootOp | ExplodeOp | MoveOp | SpawnOp | NoclipOp
+/** T54 — throw a bomb projectile: arcs, bounces, 3s fuse → T55 explosion */
+export interface ThrowOp {
+  kind: 'throw'
+  /** spawn position, world meters */
+  ox: number
+  oy: number
+  oz: number
+  /** initial velocity, m/s */
+  vx: number
+  vy: number
+  vz: number
+}
+
+export type Op = DigOp | PlaceOp | ShootOp | ExplodeOp | MoveOp | SpawnOp | NoclipOp | ThrowOp
 
 export interface Command {
   tick: number
