@@ -523,23 +523,37 @@ export class PhysicsWorld {
   buildBoxesShape(boxes: Box[]): Jolt.Shape {
     const api = this.api
     const half = VOXEL_SIZE * 0.5
-    const makeBox = (b: Box) =>
-      new api.BoxShapeSettings(new api.Vec3(b.sx * half, b.sy * half, b.sz * half), 0)
-    const center = (b: Box) =>
-      new api.Vec3((b.x + b.sx * 0.5) * VOXEL_SIZE, (b.y + b.sy * 0.5) * VOXEL_SIZE, (b.z + b.sz * 0.5) * VOXEL_SIZE)
+    // T63 (B23): reusable temporaries — Jolt copies constructor/AddShape args,
+    // so one Vec3 each suffices. The old per-box `new api.Vec3` pair was never
+    // destroyed: a WASM heap leak plus 2 allocs per box on every chunk rebuild.
+    const halfExtent = new api.Vec3(0, 0, 0)
+    const center = new api.Vec3(0, 0, 0)
+    const makeBox = (b: Box) => {
+      halfExtent.Set(b.sx * half, b.sy * half, b.sz * half)
+      return new api.BoxShapeSettings(halfExtent, 0)
+    }
+    const setCenter = (b: Box) =>
+      center.Set((b.x + b.sx * 0.5) * VOXEL_SIZE, (b.y + b.sy * 0.5) * VOXEL_SIZE, (b.z + b.sz * 0.5) * VOXEL_SIZE)
 
     let settings: Jolt.ShapeSettings
     if (boxes.length === 1) {
       const rot = new api.Quat(0, 0, 0, 1)
-      settings = new api.RotatedTranslatedShapeSettings(center(boxes[0]), rot, makeBox(boxes[0]))
+      setCenter(boxes[0])
+      settings = new api.RotatedTranslatedShapeSettings(center, rot, makeBox(boxes[0]))
       api.destroy(rot)
     } else {
       const compound = new api.StaticCompoundShapeSettings()
       const rot = new api.Quat(0, 0, 0, 1)
-      for (const b of boxes) compound.AddShape(center(b), rot, makeBox(b), 0)
+      for (const b of boxes) {
+        const bs = makeBox(b)
+        setCenter(b)
+        compound.AddShape(center, rot, bs, 0)
+      }
       api.destroy(rot)
       settings = compound
     }
+    api.destroy(halfExtent)
+    api.destroy(center)
     const result = settings.Create()
     if (result.HasError()) {
       throw new Error(`Jolt shape build failed: ${result.GetError().c_str()}`)

@@ -232,6 +232,12 @@ world.particles.burst({ x, y, z }, 40) // world meters, render-only
   rebuild by typed-array concatenation (positions offset, indices rebased),
   budgeted by `maxRegionBuildsPerFrame` (V7). Edit latency: dirty chunk →
   worker remesh → region rebuild, still a few frames end to end.
+- **Region rebuild coalescing (T63, B23):** at steady state a dirty region
+  defers its rebuild while any member chunk still has a remesh queued or in
+  flight (8-frame staleness cap), so one edit produces ONE concat + upload
+  instead of one per worker-result wave; the build loop is also wall-clock
+  gated (~3 ms/frame) so V7 bounds the concat work itself, not just the
+  rebuild count. Initial-build burst (B3) skips both gates.
 - **Initial-load burst (B3):** until the remesh pipeline first drains
   completely, dispatch/apply/region budgets and worker queue depth run at
   burst values (24/64/32, depth 4), then drop to the steady-state options
