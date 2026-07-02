@@ -38,6 +38,8 @@ export interface WorldRendererOptions {
   bloom?: boolean
   /** debris/dust bursts on edits (default true) */
   debris?: boolean
+  /** dirty-chunk feed override — see ChunkMeshManagerOptions.dirtySource */
+  dirtySource?: () => number[]
 }
 
 /** max debris bursts per frame — a huge explosion dirties many chunks */
@@ -85,6 +87,7 @@ export class WorldRenderer {
       workerCount: opts.workerCount,
       maxDispatchPerFrame: opts.maxDispatchPerFrame,
       maxApplyPerFrame: opts.maxApplyPerFrame,
+      dirtySource: opts.dirtySource,
     })
     // pick up chunks written before construction (world gen), then let the
     // per-frame drainDirty catch everything after

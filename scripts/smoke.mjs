@@ -14,7 +14,8 @@ import puppeteer from 'puppeteer-core'
 import { PNG } from 'pngjs'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-const PORT = 5199
+// per-process port: parallel agent worktrees run smoke concurrently
+const PORT = Number(process.env.SMOKE_PORT ?? 5300 + (process.pid % 500))
 const HEADED = process.argv.includes('--headed')
 const ARTIFACTS = 'smoke-artifacts'
 
