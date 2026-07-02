@@ -42,6 +42,7 @@ describe('generated audio manifest (I.audio)', () => {
     expect(count('ambience')).toBe(3)
     expect(count('ui')).toBe(5)
     expect(count('player')).toBe(4)
+    expect(count('vehicle')).toBe(10) // T64: engine loops, skid, crashes, doors, horns
     expect(count('music')).toBe(2) // T38: menu + in-game bed
   })
 

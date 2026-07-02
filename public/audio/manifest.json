@@ -668,6 +668,96 @@
       "roundRobin": "chunk-crumble"
     },
     {
+      "id": "engine-idle-loop-1",
+      "path": "/audio/sfx/vehicle/engine-idle-loop-1.mp3",
+      "category": "vehicle",
+      "loop": true,
+      "volume": 0.55,
+      "positional": true,
+      "roundRobin": "engine-idle-loop"
+    },
+    {
+      "id": "engine-rev-loop-1",
+      "path": "/audio/sfx/vehicle/engine-rev-loop-1.mp3",
+      "category": "vehicle",
+      "loop": true,
+      "volume": 0.7,
+      "positional": true,
+      "roundRobin": "engine-rev-loop"
+    },
+    {
+      "id": "skid-loop-1",
+      "path": "/audio/sfx/vehicle/skid-loop-1.mp3",
+      "category": "vehicle",
+      "loop": true,
+      "volume": 0.8,
+      "positional": true,
+      "roundRobin": "skid-loop"
+    },
+    {
+      "id": "car-crash-small-1",
+      "path": "/audio/sfx/vehicle/car-crash-small-1.mp3",
+      "category": "vehicle",
+      "loop": false,
+      "volume": 0.85,
+      "positional": true,
+      "roundRobin": "car-crash-small"
+    },
+    {
+      "id": "car-crash-small-2",
+      "path": "/audio/sfx/vehicle/car-crash-small-2.mp3",
+      "category": "vehicle",
+      "loop": false,
+      "volume": 0.85,
+      "positional": true,
+      "roundRobin": "car-crash-small"
+    },
+    {
+      "id": "car-crash-large-1",
+      "path": "/audio/sfx/vehicle/car-crash-large-1.mp3",
+      "category": "vehicle",
+      "loop": false,
+      "volume": 1,
+      "positional": true,
+      "roundRobin": "car-crash-large"
+    },
+    {
+      "id": "car-door-open-1",
+      "path": "/audio/sfx/vehicle/car-door-open-1.mp3",
+      "category": "vehicle",
+      "loop": false,
+      "volume": 0.6,
+      "positional": true,
+      "roundRobin": "car-door-open"
+    },
+    {
+      "id": "car-door-close-1",
+      "path": "/audio/sfx/vehicle/car-door-close-1.mp3",
+      "category": "vehicle",
+      "loop": false,
+      "volume": 0.65,
+      "positional": true,
+      "roundRobin": "car-door-close"
+    },
+    {
+      "id": "car-horn-1",
+      "path": "/audio/sfx/vehicle/car-horn-1.mp3",
+      "category": "vehicle",
+      "loop": false,
+      "volume": 0.85,
+      "positional": true,
+      "roundRobin": "car-horn"
+    },
+    {
+      "id": "car-horn-2",
+      "path": "/audio/sfx/vehicle/car-horn-2.mp3",
+      "category": "vehicle",
+      "loop": false,
+      "volume": 0.85,
+      "positional": true,
+      "roundRobin": "car-horn"
+    },
+    {
       "id": "splash-small-1",
       "path": "/audio/sfx/water/splash-small-1.mp3",
       "category": "water",
