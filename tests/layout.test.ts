@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { generateLayout, GROUND_Y, type Rect } from '../src/sim/gen/layout'
+import {
+  generateLayout,
+  GROUND_Y,
+  STAIR_RISE,
+  STAIR_RUN,
+  STAIR_STEPS,
+  STAIR_TREAD,
+  STAIR_W,
+  STORY_H,
+  WALL_T,
+  type Rect,
+} from '../src/sim/gen/layout'
 import { WORLD_VX, WORLD_VY, WORLD_VZ } from '../src/world/chunks'
 
 function overlaps(a: Rect, b: Rect): boolean {
@@ -91,6 +102,105 @@ describe('suburb layout generator (T19, V2)', () => {
       expect(prop.z).toBeLessThan(WORLD_VZ)
       expect(prop.y).toBeGreaterThan(0)
       expect(prop.y).toBeLessThan(WORLD_VY)
+    }
+    for (const t of l.trees) {
+      expect(t.x - t.canopyR).toBeGreaterThanOrEqual(0)
+      expect(t.x + 1 + t.canopyR).toBeLessThan(WORLD_VX)
+      expect(t.z - t.canopyR).toBeGreaterThanOrEqual(0)
+      expect(t.z + 1 + t.canopyR).toBeLessThan(WORLD_VZ)
+      expect(GROUND_Y + t.trunkH + 2 * t.canopyR).toBeLessThan(WORLD_VY)
+    }
+    for (const s of l.shrubs) {
+      expect(s.x - s.r).toBeGreaterThanOrEqual(0)
+      expect(s.x + s.r).toBeLessThan(WORLD_VX)
+      expect(s.z - s.r).toBeGreaterThanOrEqual(0)
+      expect(s.z + s.r).toBeLessThan(WORLD_VZ)
+    }
+  })
+
+  it('stairs: every multi-story house has a walkable straight run that never blocks the door (T41)', () => {
+    // WHY: upper floors are gameplay space — they must be reachable by the Jolt
+    // capsule (step-climb 0.4 m) through the front door without obstruction.
+    for (const seed of [42, 7, 99]) {
+      const l = generateLayout(seed)
+      let multi = 0
+      for (const h of l.houses) {
+        if (h.floors < 2) {
+          expect(h.stairs).toBeNull()
+          continue
+        }
+        multi++
+        const s = h.stairs!
+        // rise/run within capsule limits: riser 0.2 m < Jolt 0.4 m step-up,
+        // tread ≥ 0.3 m ≥ capsule radius, integer step count covers the story
+        expect(STAIR_RISE).toBeLessThanOrEqual(4)
+        expect(STAIR_TREAD).toBeGreaterThanOrEqual(3)
+        expect(STAIR_STEPS * STAIR_RISE).toBe(STORY_H)
+        expect(s.rect.x1 - s.rect.x0 + 1).toBe(STAIR_RUN)
+        expect(s.rect.z1 - s.rect.z0 + 1).toBe(STAIR_W)
+        // inside the interior (walls are WALL_T thick)
+        expect(s.rect.x0).toBeGreaterThanOrEqual(h.rect.x0 + WALL_T)
+        expect(s.rect.x1).toBeLessThanOrEqual(h.rect.x1 - WALL_T)
+        expect(s.rect.z0).toBeGreaterThanOrEqual(h.rect.z0 + WALL_T)
+        expect(s.rect.z1).toBeLessThanOrEqual(h.rect.z1 - WALL_T)
+        // against the back wall, far from the front-wall door
+        const frontZ = h.door.side === 'z-' ? h.rect.z0 : h.rect.z1
+        const distToFront = Math.min(Math.abs(s.rect.z0 - frontZ), Math.abs(s.rect.z1 - frontZ))
+        expect(distToFront).toBeGreaterThanOrEqual(10)
+      }
+      expect(multi, `seed ${seed} should have multi-story houses`).toBeGreaterThan(0)
+    }
+  })
+
+  it('pool guarantee: ≥2 pools and one within 200 voxels of spawn, any seed', () => {
+    // WHY: spawn is the central road crossing (voxel 512,512) — pools are a
+    // headline water-sim feature and must be reachable without a map hike,
+    // regardless of what the per-lot 35% roll produced.
+    for (const seed of [1337, 1, 42, 7, 99, 31337]) {
+      const l = generateLayout(seed)
+      expect(l.pools.length, `seed ${seed} pool count`).toBeGreaterThanOrEqual(2)
+      const min = Math.min(
+        ...l.pools.map((p) => {
+          const dx = 512 < p.basin.x0 ? p.basin.x0 - 512 : 512 > p.basin.x1 ? 512 - p.basin.x1 : 0
+          const dz = 512 < p.basin.z0 ? p.basin.z0 - 512 : 512 > p.basin.z1 ? 512 - p.basin.z1 : 0
+          return Math.hypot(dx, dz)
+        }),
+      )
+      expect(min, `seed ${seed} nearest pool distance`).toBeLessThanOrEqual(200)
+      // forced pools still live inside their lot, clear of the house
+      const lotById = new Map(l.lots.map((lot) => [lot.id, lot]))
+      for (const p of l.pools) {
+        const lot = lotById.get(p.lotId)!
+        expect(contains(lot.rect, { x0: p.basin.x0, z0: p.basin.z0, x1: p.basin.x1, z1: p.basin.z1 })).toBe(true)
+        const h = l.houses[p.lotId]
+        expect(overlaps(h.rect, p.basin)).toBe(false)
+        if (h.ell) expect(overlaps(h.ell, p.basin)).toBe(false)
+        expect(overlaps(h.driveway, p.basin)).toBe(false)
+        expect(overlaps(h.path, p.basin)).toBe(false)
+      }
+    }
+  })
+
+  it('vegetation: trees exist and never intersect houses or driveways (T42)', () => {
+    // WHY: trees must add life without blocking gameplay routes — a canopy
+    // over a driveway clips parked cars, a trunk in a house corrupts walls.
+    for (const seed of [42, 7, 99]) {
+      const l = generateLayout(seed)
+      expect(l.trees.length, `seed ${seed} trees`).toBeGreaterThan(10)
+      expect(l.shrubs.length, `seed ${seed} shrubs`).toBeGreaterThan(5)
+      for (const t of l.trees) {
+        const canopy: Rect = { x0: t.x - t.canopyR, z0: t.z - t.canopyR, x1: t.x + 1 + t.canopyR, z1: t.z + 1 + t.canopyR }
+        for (const h of l.houses) {
+          expect(overlaps(canopy, h.rect), `tree(${t.x},${t.z}) r${t.canopyR} vs house`).toBe(false)
+          if (h.ell) expect(overlaps(canopy, h.ell), `tree(${t.x},${t.z}) vs ell`).toBe(false)
+          expect(overlaps(canopy, h.driveway), `tree(${t.x},${t.z}) vs driveway`).toBe(false)
+        }
+        // trunk never inside a pool basin (deck kept clear)
+        for (const p of l.pools) {
+          const trunk: Rect = { x0: t.x, z0: t.z, x1: t.x + 1, z1: t.z + 1 }
+          expect(overlaps(trunk, p.basin)).toBe(false)
+        }
+      }
     }
   })
 

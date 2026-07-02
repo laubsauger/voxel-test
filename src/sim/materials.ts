@@ -10,7 +10,7 @@
  *   0 air, 1 dirt, 2 grass, 3 asphalt, 4 concrete, 5 brick, 6 wood,
  *   7 plaster, 8 glass, 9 metal, 10 water-solid marker (water track: solid
  *   cells the CA treats as source volume), 11 leaves, 12 rooftile, 13 lamp,
- *   14 flesh (player body segments), 15 reserved (null).
+ *   14 flesh (player body segments), 15 paint (road markings).
  *
  * Strength scale: blast resistance ~0..10. Explode destroys where
  * falloff · power ≥ strength (src/sim/destruction.ts). Air/water 0.
@@ -58,6 +58,7 @@ export const MAT_LEAVES = 11
 export const MAT_ROOFTILE = 12
 export const MAT_LAMP = 13
 export const MAT_FLESH = 14
+export const MAT_PAINT = 15
 
 /** table indexed by material id; null = reserved slot */
 export const MATERIALS: (Material | null)[] = [
@@ -76,7 +77,7 @@ export const MATERIALS: (Material | null)[] = [
   { id: 12, name: 'rooftile', colorRamp: [0x5f342c, 0x8f4f42], strength: 2, density: 1800, flags: MatFlags.None },
   { id: 13, name: 'lamp', colorRamp: [0xffedb8, 0xfff9e0], strength: 1, density: 400, flags: MatFlags.None },
   { id: 14, name: 'flesh', colorRamp: [0xc08a7a, 0xd8a090], strength: 1, density: 1000, flags: MatFlags.None },
-  null,
+  { id: 15, name: 'paint', colorRamp: [0xf0f0ea, 0xffffff], strength: 1, density: 2400, flags: MatFlags.None },
 ]
 
 export function getMaterial(id: number): Material | null {
