@@ -12,6 +12,7 @@
 import {
   DirectionalLight,
   HemisphereLight,
+  PointLight,
   RenderPipeline,
   Vector3,
   type DirectionalLightShadow,
@@ -24,13 +25,24 @@ import { float, mix, mrt, normalView, output, pass, vec3, vec4 } from 'three/tsl
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { ao } from 'three/addons/tsl/display/GTAONode.js'
 import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js'
-import type { ChunkStore } from '../world/chunks'
-import { createAtmosphere } from './atmosphere'
+import { ChunkKind, CHUNK, CHUNK_COUNT, VOXEL_SIZE, WORLD_CX, WORLD_CZ, type ChunkStore } from '../world/chunks'
+import {
+  DayCycle,
+  computeCycleState,
+  createCycleState,
+  createAtmosphere,
+  type CycleState,
+} from './atmosphere'
 import { BlockyClouds } from './clouds'
 import { ChunkMeshManager } from './chunk-mesh-manager'
-import { createChunkMaterial, createTransparentChunkMaterial } from './chunk-material'
+import {
+  createChunkMaterial,
+  createTransparentChunkMaterial,
+  emissiveNightBoost,
+} from './chunk-material'
 import { createChunkTextures, type ChunkTextures } from './texture-arrays'
 import { DebrisParticles } from './particles'
+import { MATERIALS } from './materials'
 
 export interface WorldRendererOptions {
   renderer: WebGPURenderer
@@ -61,6 +73,29 @@ export interface WorldRendererOptions {
 const MAX_BURSTS_PER_FRAME = 8
 
 /**
+ * T58 — CSM stabilization for the moving sun (shadow-systems skill): commit
+ * the shadow light direction only when it drifts past this angle (radians).
+ * Between commits the light-space texel grid is frozen, so shadows are
+ * rock-stable; each ~0.09° step shifts shadow edges well under one voxel at
+ * scene distances. At the default 20-min cycle the sun moves 0.0052 rad/s →
+ * a coherent refresh roughly every 0.3 s.
+ */
+const LIGHT_DIR_EPSILON = 0.0015
+/** distance (m) the directional light sits from its origin target */
+const LIGHT_DIST = 120
+
+/**
+ * T58 — pooled real PointLights parked on the lamps nearest the camera at
+ * night (castShadow OFF — these are cheap local fill, the CSM light owns
+ * shadows). Budget-tested via the CDP probe; set to 0 to drop the feature.
+ */
+const LAMP_LIGHT_COUNT = 3
+/** lamp head scan: dense chunks scanned per frame until the index is built */
+const LAMP_SCAN_CHUNKS_PER_FRAME = 48
+/** re-pick nearest lamps at this interval (s) — avoids per-frame sorting */
+const LAMP_PICK_INTERVAL = 0.4
+
+/**
  * B3 — movement-aware remesh priority: the scheduler focus is the camera
  * position led along its velocity, so chunks ahead of a moving camera mesh
  * first instead of popping in late. Lead is clamped to one region.
@@ -73,6 +108,25 @@ export class WorldRenderer {
   readonly sun: DirectionalLight
   /** T14: debris/dust bursts, render-only (V6) */
   readonly particles: DebrisParticles
+  /**
+   * T58 day/night cycle params — plain options for the settings/dev UI:
+   * `cycle.cycleLengthSec` (real seconds per 24 h day, default 1200),
+   * `cycle.timeOfDayOffsetHours` (time at tick 0, default 15) and
+   * `cycle.overrideHours` (fixed-time override, null = tick-driven).
+   */
+  readonly cycle = new DayCycle()
+  private readonly cycleState: CycleState = createCycleState()
+  private readonly hemi: HemisphereLight
+  /** committed (texel-stable) shadow-light direction — see LIGHT_DIR_EPSILON */
+  private readonly committedLightDir = new Vector3()
+  /** dev preview: hours advanced per real second while > 0 (__bbCycle.demo) */
+  private demoSpeed = 0
+  // T58 lamp point-light pool + incremental lamp-head index
+  private readonly lampLights: PointLight[] = []
+  private readonly lampPositions: Vector3[] = []
+  private lampScanCursor = 0
+  private readonly lampClusters = new Map<number, { x: number; y: number; z: number; n: number }>()
+  private lampPickTimer = 0
   private readonly csm: CSMShadowNode
   private readonly pipeline: RenderPipeline | null
   private readonly atmosphere: ReturnType<typeof createAtmosphere> | null
@@ -81,6 +135,7 @@ export class WorldRenderer {
   private readonly renderer: WebGPURenderer
   private readonly scene: Scene
   private readonly camera: PerspectiveCamera
+  private readonly world: ChunkStore
   private firstUpdate = true
   private csmBiasTuned = false
   private readonly debrisEnabled: boolean
@@ -92,12 +147,19 @@ export class WorldRenderer {
     this.renderer = opts.renderer
     this.scene = opts.scene
     this.camera = opts.camera
+    this.world = opts.world
 
-    // sun + CSM-style cascaded shadows (T8). Direction: position → origin.
-    // T30: late-afternoon elevation (~35°) + warm color for the golden mood;
-    // the analytic sky's sun disc shares this exact direction.
-    this.sun = new DirectionalLight(0xffe2ba, 3.1)
-    this.sun.position.set(85, 62, 38)
+    // T58: initial cycle state at tick 0 (default 15:00 golden afternoon —
+    // ~the old static (85,62,38) sun) — lights and sky boot coherent.
+    computeCycleState(this.cycle.hoursAt(0), this.cycleState)
+
+    // sun/moon + CSM-style cascaded shadows (T8/T58). One DirectionalLight
+    // plays both bodies: sun by day, moon by night (dim, blue-ish); the
+    // direction swap happens while intensity ≈ 0 at twilight, so it is never
+    // visible and shadow-pass cost stays identical to the static build.
+    this.sun = new DirectionalLight(this.cycleState.lightColor, this.cycleState.lightIntensity)
+    this.committedLightDir.copy(this.cycleState.lightDir)
+    this.sun.position.copy(this.cycleState.lightDir).multiplyScalar(LIGHT_DIST)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
     // B4: chunk material renders front faces into the shadow map (see
@@ -115,7 +177,22 @@ export class WorldRenderer {
     opts.scene.add(this.sun.target)
     // sky/ground bounce — slightly warm ground for the afternoon mood (T30).
     // Intensity keeps ACES from crushing shaded grass/walls to black.
-    opts.scene.add(new HemisphereLight(0xa9c6ea, 0x8f7d62, 0.95))
+    // T58: colors + intensity follow the cycle (dims way down at night).
+    this.hemi = new HemisphereLight(
+      this.cycleState.hemiSky,
+      this.cycleState.hemiGround,
+      this.cycleState.hemiIntensity,
+    )
+    opts.scene.add(this.hemi)
+
+    // T58: pooled lamp point lights (parked dark until night; castShadow off)
+    for (let i = 0; i < LAMP_LIGHT_COUNT; i++) {
+      const l = new PointLight(0xffb46b, 0, 13, 2)
+      l.castShadow = false
+      l.visible = false
+      opts.scene.add(l)
+      this.lampLights.push(l)
+    }
 
     // T29: PBR texture arrays load async; material starts on placeholder
     // content (ramp midpoints) and re-uploads once. A failed set rejects
@@ -147,10 +224,11 @@ export class WorldRenderer {
     this.particles = new DebrisParticles()
     opts.scene.add(this.particles.object)
 
-    // T30: analytic sky (sun disc aligned with the CSM light) + aerial fog.
-    // backgroundNode takes priority over the Scene.background color.
+    // T30/T58: analytic sky (sun disc aligned with the CSM light) + aerial
+    // fog, both driven by the shared cycle state. backgroundNode takes
+    // priority over the Scene.background color.
     if (opts.sky !== false) {
-      const atmosphere = createAtmosphere(this.sun.position.clone().normalize())
+      const atmosphere = createAtmosphere(this.cycleState)
       opts.scene.backgroundNode = atmosphere.backgroundNode
       opts.scene.fogNode = atmosphere.fogNode
       this.atmosphere = atmosphere
@@ -158,12 +236,38 @@ export class WorldRenderer {
       this.atmosphere = null
     }
 
-    // T30: blocky drifting clouds (render-only, no shadows)
+    // T30/B22: blocky drifting clouds (render-only, no shadows), tinted by
+    // the cycle (white day / pink dusk / moon-silver night)
     if (opts.clouds !== false) {
       this.clouds = new BlockyClouds()
+      this.clouds.apply(this.cycleState)
       opts.scene.add(this.clouds.group)
     } else {
       this.clouds = null
+    }
+
+    // T58 dev handle (CDP probes + until the settings UI wires cycle knobs):
+    // window.__bbCycle.{setOverride(h|null), demo(hoursPerSec), stop(), hours,
+    // state, info}. Render-layer debug only — never touches sim state (V6).
+    const self = this
+    ;(globalThis as { __bbCycle?: unknown }).__bbCycle = {
+      cycle: this.cycle,
+      setOverride: (h: number | null) => {
+        this.cycle.overrideHours = h
+      },
+      demo: (hoursPerSec = 0.4) => {
+        if (this.cycle.overrideHours === null) this.cycle.overrideHours = this.cycleState.hours
+        this.demoSpeed = hoursPerSec
+      },
+      stop: () => {
+        this.demoSpeed = 0
+      },
+      get hours(): number {
+        return self.cycleState.hours
+      },
+      state: this.cycleState,
+      info: this.renderer.info,
+      lampCount: () => this.lampPositions.length,
     }
 
     // post stack (T8 bloom, T30 GTAO): scene → AO → bloom → tonemap.
@@ -205,8 +309,19 @@ export class WorldRenderer {
   /**
    * Per-frame, from the rAF loop, before render(). `dt` = render delta
    * seconds (render-side clock only — never fed back into the sim, V6).
+   *
+   * T58: `simTick` drives the day/night cycle — pass `sim.tick` here (render
+   * READS the tick, never writes: deterministic + multiplayer-synced for
+   * free). Omitted ⇒ the world stays at the default golden afternoon
+   * (15:00), which is what the smoke gate screenshots.
    */
-  update(dt: number): void {
+  update(dt: number, simTick?: number): void {
+    // --- T58 day/night cycle -------------------------------------------------
+    if (this.demoSpeed > 0 && this.cycle.overrideHours !== null) {
+      this.cycle.overrideHours = (this.cycle.overrideHours + dt * this.demoSpeed) % 24
+    }
+    this.applyCycle(this.cycle.hoursAt(simTick ?? 0))
+
     // B3: remesh focus = camera position led along its velocity
     const camPos = this.camera.position
     if (this.firstUpdate || dt <= 0) {
@@ -231,6 +346,130 @@ export class WorldRenderer {
     }
     this.particles.update(dt)
     this.clouds?.update(dt)
+    this.updateLampLights(dt)
+  }
+
+  /** T58 — apply one frame of the day cycle to lights, sky, clouds, exposure */
+  private applyCycle(hours: number): void {
+    const s = computeCycleState(hours, this.cycleState)
+
+    // shadow light: color/intensity every frame (cheap, no shimmer impact);
+    // DIRECTION only in epsilon steps so the CSM texel grid stays put between
+    // commits (shadow-systems skill: coherent refreshes, no per-frame crawl)
+    this.sun.color.copy(s.lightColor)
+    this.sun.intensity = s.lightIntensity
+    if (this.committedLightDir.dot(s.lightDir) < Math.cos(LIGHT_DIR_EPSILON)) {
+      this.committedLightDir.copy(s.lightDir)
+      this.sun.position.copy(s.lightDir).multiplyScalar(LIGHT_DIST)
+    }
+
+    this.hemi.color.copy(s.hemiSky)
+    this.hemi.groundColor.copy(s.hemiGround)
+    this.hemi.intensity = s.hemiIntensity
+
+    // mild exposure shift (readable-dark night); RenderPipeline's tone-map
+    // node reads renderer.toneMappingExposure live
+    this.renderer.toneMappingExposure = s.exposure
+    // lamp material emissive boost — streets glow after dark (bloom feed)
+    emissiveNightBoost.value = s.lampBoost
+
+    this.atmosphere?.apply(s)
+    this.clouds?.apply(s)
+  }
+
+  /**
+   * T58 — lamp point-light pool: an incremental one-time scan indexes lamp
+   * heads (material id from the canonical table, V13) from dense chunks,
+   * then the LAMP_LIGHT_COUNT lights park on the lamps nearest the camera
+   * while it's dark. Pure ChunkStore reads (V6).
+   */
+  private updateLampLights(dt: number): void {
+    if (this.lampLights.length === 0) return
+    this.scanLampChunks()
+
+    const darkness = (this.cycleState.lampBoost - 1) / 2.2 // 0 day → 1 night
+    if (darkness < 0.02 || this.lampPositions.length === 0) {
+      for (const l of this.lampLights) {
+        l.intensity = 0
+        l.visible = false
+      }
+      return
+    }
+
+    this.lampPickTimer -= dt
+    if (this.lampPickTimer <= 0) {
+      this.lampPickTimer = LAMP_PICK_INTERVAL
+      // pick the N nearest lamp clusters to the camera (N tiny, list ~dozens)
+      const cam = this.camera.position
+      const picked = [...this.lampPositions]
+        .sort((a, b) => a.distanceToSquared(cam) - b.distanceToSquared(cam))
+        .slice(0, this.lampLights.length)
+      for (let i = 0; i < this.lampLights.length; i++) {
+        const l = this.lampLights[i]
+        const p = picked[i]
+        if (p) {
+          // park just under the head so the pole/street catch the falloff
+          l.position.set(p.x, p.y - 0.3, p.z)
+          l.visible = true
+        } else {
+          l.visible = false
+        }
+      }
+    }
+    const target = 5.5 * darkness
+    for (const l of this.lampLights) {
+      if (!l.visible) continue
+      // ease intensity so pool re-picks never pop
+      l.intensity += (target - l.intensity) * Math.min(1, dt * 5)
+    }
+  }
+
+  /** budget-bounded pass over the chunk array collecting lamp-head clusters */
+  private scanLampChunks(): void {
+    if (this.lampScanCursor >= CHUNK_COUNT) return
+    const lampId = MATERIALS.findIndex((m) => m.name === 'lamp')
+    const end = Math.min(this.lampScanCursor + LAMP_SCAN_CHUNKS_PER_FRAME, CHUNK_COUNT)
+    for (let ci = this.lampScanCursor; ci < end; ci++) {
+      const c = this.world.chunkAt(ci)
+      if (c.kind !== ChunkKind.Dense) continue // uniform-lamp chunks don't exist
+      const data = c.data!
+      const cx = ci % WORLD_CX
+      const cz = ((ci / WORLD_CX) | 0) % WORLD_CZ
+      const cy = (ci / (WORLD_CX * WORLD_CZ)) | 0
+      for (let i = 0; i < data.length; i++) {
+        if (data[i] !== lampId) continue
+        const x = cx * CHUNK + (i & 31)
+        const z = cz * CHUNK + ((i >> 5) & 31)
+        const y = cy * CHUNK + (i >> 10)
+        // cluster on a 1.6 m grid — one entry per lamp head
+        const key = (x >> 4) | ((z >> 4) << 8) | ((y >> 4) << 16)
+        const e = this.lampClusters.get(key)
+        if (e) {
+          e.x += x
+          e.y += y
+          e.z += z
+          e.n++
+        } else {
+          this.lampClusters.set(key, { x, y, z, n: 1 })
+        }
+      }
+    }
+    this.lampScanCursor = end
+    if (this.lampScanCursor >= CHUNK_COUNT) {
+      // scan complete → freeze cluster centers as world-space points; merge
+      // heads that straddle a grid boundary (< 1.2 m apart = one lamp)
+      for (const e of this.lampClusters.values()) {
+        const p = new Vector3(
+          (e.x / e.n + 0.5) * VOXEL_SIZE,
+          (e.y / e.n + 0.5) * VOXEL_SIZE,
+          (e.z / e.n + 0.5) * VOXEL_SIZE,
+        )
+        if (!this.lampPositions.some((q) => q.distanceToSquared(p) < 1.44)) {
+          this.lampPositions.push(p)
+        }
+      }
+      this.lampClusters.clear()
+    }
   }
 
   /** renders the scene (through the bloom pipeline when enabled) */
@@ -260,5 +499,9 @@ export class WorldRenderer {
     this.csm.dispose()
     this.clouds?.dispose()
     this.aoPass?.dispose()
+    for (const l of this.lampLights) l.removeFromParent()
+    if ((globalThis as { __bbCycle?: unknown }).__bbCycle) {
+      delete (globalThis as { __bbCycle?: unknown }).__bbCycle
+    }
   }
 }
