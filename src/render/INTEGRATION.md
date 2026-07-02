@@ -1,4 +1,4 @@
-# Render track (T6–T9, T14, T35) — integration guide
+# Render track (T6–T9, T14, T29, T30, T35, T39) — integration guide
 
 Wiring the render pipeline into `src/main.ts`. The render layer never
 mutates sim state (V6); its only sim input is `ChunkStore` reads +
@@ -45,8 +45,35 @@ const world = new WorldRenderer({
   // maxRegionBuildsPerFrame: 8,  // V7 budget: region geometry rebuilds per frame (T35)
   // bloom: true,
   // debris: true,
+  // textures: true,              // T29 triplanar PBR arrays (false = flat ramp)
+  // sky: true,                   // T30 analytic sky + aerial fog (overrides scene.background)
+  // ao: true,                    // T30 half-res GTAO in the post stack
+  // clouds: true,                // T30 blocky drifting clouds
 })
 ```
+
+### T29 texture assets
+
+`WorldRenderer` (with `textures` on) loads `public/textures/<mat>/*.jpg`
+into two `DataArrayTexture`s (albedo + packed normal/rough/AO) at boot —
+run `node scripts/textures/fetch-textures.mjs` once (idempotent; assets are
+committed) or texture loading fails loudly (unhandled rejection). Until the
+arrays finish decoding (~1s) the world renders with per-material ramp
+midpoint placeholders, then re-uploads once. Untextured materials (glass,
+water-solid, lamp, flesh, leaves, reserved) keep the flat color-ramp path,
+selected per-fragment by the 'mat' attribute.
+
+### T30 atmosphere
+
+With `sky` on, `WorldRenderer` assigns `scene.backgroundNode` (analytic
+gradient sky + HDR sun disc aligned with the CSM sun + moon) and
+`scene.fogNode` (distance × height aerial tint sharing the sky palette) —
+both take priority over `scene.background`, so main.ts's flat clear color
+becomes dead code but is harmless. The post stack is
+scene → GTAO (half-res) → bloom (threshold 1.0) → ACES tonemap; tone
+mapping still comes from `renderer.toneMapping` and is applied exactly once
+by the RenderPipeline output. Sky sun elevation/azimuth are runtime
+parameters (`atmosphere.setSunDirection`) for a future day cycle.
 
 ## Per-frame (inside `renderer.setAnimationLoop`)
 
@@ -97,12 +124,18 @@ world.particles.burst({ x, y, z }, 40) // world meters, render-only
 
 ## Open issues / limitations
 
-1. **Transparent materials render opaque.** Glass/water voxels mesh into
-   the same opaque chunk material; faces between solid and transparent
-   voxels are culled like solid-solid. Proper handling needs a second
-   mesh pass per chunk (transparent quads, `transparent: true` material,
-   no face-cull against transparent neighbors). Water gets its own
-   surface extraction in T16 anyway; glass is cosmetic until then.
+1. **Transparency (T39, fixes B5).** The mesher emits TWO streams per chunk
+   (opaque + transparent, split by the I.mat Transparent flag from the
+   canonical sim table, V13): solid-vs-transparent boundaries keep the solid
+   face, transparent-vs-air emits into the transparent stream, same-material
+   transparent interior faces cull, different transparent materials emit
+   both sides of the seam. Each region gets a second Mesh with the fresnel
+   glass material (`createTransparentChunkMaterial`: alpha blend, depthWrite
+   off, `castShadow=false` — glass casts no shadow v1). Sorting is
+   region-level: three sorts transparent objects back-to-front by object
+   position, which is enough at ≤64 regions. Dynamic bodies (BodyMeshes)
+   merge both streams into their single opaque mesh — glass debris renders
+   opaque, as before T39.
 2. **Diagonal-chunk AO staleness.** An edit re-meshes the dirty chunk +
    6 face neighbors. AO of a vertex exactly on a chunk edge can also
    depend on diagonal neighbor chunks; those aren't re-enqueued, so a
@@ -151,6 +184,20 @@ world.particles.burst({ x, y, z }, 40) // world meters, render-only
   first render (CSMShadowNode only scales `bias`). If you add another
   world-geometry material, set `shadowSide = FrontSide` on it too or
   interiors will leak again.
+- **Per-voxel tint (B8):** the chunk materials vary color per VOXEL, never
+  within one — the spatial hash floors a cell sampled half a voxel behind
+  the face, with a 2e-3 voxel epsilon so f32 interpolation error across a
+  merged quad's triangle diagonal can't flicker the cell id. Amplitude is
+  per material (`variation` in render materials.ts): organic materials get
+  the full ramp swing, plaster/concrete/metal stay near-flat. Keep both
+  rules if you touch the salt.
+- **GTAO (T30):** half-res, radius 0.55 m (must stay well above one voxel,
+  B8 — the user does not want per-voxel occlusion noise), blended at 85%
+  into the scene color before bloom. `ao: false` drops the whole gather.
+- **Texture arrays (T29):** two 1K RGBA arrays × 9 layers ≈ 75 MB VRAM with
+  mips; payload on disk ~11 MB jpg. Layers map by material NAME from the
+  canonical table — adding a texture set = drop files in public/textures/
+  and extend TEXTURED_MATS + UV_SCALE in texture-arrays.ts.
 - Meshing runs in `min(4, cores-1)` module workers; padded chunk copies
   (34³ = 39 KB) transfer, results transfer back — zero structured-clone
   copies of bulk data.

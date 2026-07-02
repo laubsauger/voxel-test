@@ -70,21 +70,26 @@ function buildBodyGeometry(body: DynamicBody): BufferGeometry {
   for (let cy = 0; cy * CHUNK < sy; cy++) {
     for (let cz = 0; cz * CHUNK < sz; cz++) {
       for (let cx = 0; cx * CHUNK < sx; cx++) {
-        const m = meshChunk(buildPaddedChunk(sample, cx, cy, cz))
-        if (m.quadCount === 0) continue
-        const base = positions.length / 3
-        for (let i = 0; i < m.positions.length; i += 3) {
-          positions.push(
-            (m.positions[i] + cx * CHUNK) * VOXEL_SIZE,
-            (m.positions[i + 1] + cy * CHUNK) * VOXEL_SIZE,
-            (m.positions[i + 2] + cz * CHUNK) * VOXEL_SIZE,
-          )
+        const streams = meshChunk(buildPaddedChunk(sample, cx, cy, cz))
+        // T39: bodies keep a single mesh on the opaque chunk material —
+        // transparent faces (glass debris) merge in and render opaque, same
+        // as pre-T39 (fine for tumbling rubble)
+        for (const m of [streams.opaque, streams.transparent]) {
+          if (m.quadCount === 0) continue
+          const base = positions.length / 3
+          for (let i = 0; i < m.positions.length; i += 3) {
+            positions.push(
+              (m.positions[i] + cx * CHUNK) * VOXEL_SIZE,
+              (m.positions[i + 1] + cy * CHUNK) * VOXEL_SIZE,
+              (m.positions[i + 2] + cz * CHUNK) * VOXEL_SIZE,
+            )
+          }
+          for (let i = 0; i < m.normals.length; i++) normals.push(m.normals[i])
+          for (let i = 0; i < m.uvs.length; i++) uvs.push(m.uvs[i])
+          for (let i = 0; i < m.materials.length; i++) materials.push(m.materials[i])
+          for (let i = 0; i < m.ao.length; i++) ao.push(m.ao[i])
+          for (let i = 0; i < m.indices.length; i++) indices.push(m.indices[i] + base)
         }
-        for (let i = 0; i < m.normals.length; i++) normals.push(m.normals[i])
-        for (let i = 0; i < m.uvs.length; i++) uvs.push(m.uvs[i])
-        for (let i = 0; i < m.materials.length; i++) materials.push(m.materials[i])
-        for (let i = 0; i < m.ao.length; i++) ao.push(m.ao[i])
-        for (let i = 0; i < m.indices.length; i++) indices.push(m.indices[i] + base)
       }
     }
   }

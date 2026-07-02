@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { PAD, meshChunk, paddedIndex, type ChunkMesh } from '../src/render/mesher'
 
+/** T39 split the mesher output into streams; AO tests exercise opaque faces */
+const meshChunkOpaque = (p: Uint8Array): ChunkMesh => meshChunk(p).opaque
+
 // T7: per-vertex voxel AO (corner trick: 2 sides + 1 corner neighbor per
 // quad vertex → level 0..3). AO is why voxel scenes read as 3D — and greedy
 // merging across differing AO would smear it, so it gates merging too.
@@ -39,7 +42,7 @@ const isTopFaceAtY1 = (n: number[], verts: number[][]): boolean =>
 
 describe('voxel AO (T7)', () => {
   it('an isolated voxel is fully open: AO 3 on every vertex', () => {
-    const m = meshChunk(grid([[5, 5, 5, 1]]))
+    const m = meshChunkOpaque(grid([[5, 5, 5, 1]]))
     for (let i = 0; i < m.ao.length; i++) expect(m.ao[i]).toBe(3)
   })
 
@@ -47,7 +50,7 @@ describe('voxel AO (T7)', () => {
     // ground voxel at (2,0,2), occluder diagonally up at (3,1,2):
     // top-face vertices on the x=3 edge see one side neighbor → AO 2,
     // vertices on the x=2 edge stay fully open → AO 3.
-    const m = meshChunk(grid([[2, 0, 2, 1], [3, 1, 2, 2]]))
+    const m = meshChunkOpaque(grid([[2, 0, 2, 1], [3, 1, 2, 2]]))
     const ao = aoByVertex(m, isTopFaceAtY1)
     expect(ao.size).toBe(4)
     expect(ao.get('2,1,2')).toBe(3)
@@ -58,7 +61,7 @@ describe('voxel AO (T7)', () => {
 
   it('two side occluders pinch a corner to AO 0 (corner rule, not additive)', () => {
     // occluders at (3,1,2) and (2,1,3) share the top-face corner (3,1,3)
-    const m = meshChunk(grid([[2, 0, 2, 1], [3, 1, 2, 2], [2, 1, 3, 2]]))
+    const m = meshChunkOpaque(grid([[2, 0, 2, 1], [3, 1, 2, 2], [2, 1, 3, 2]]))
     const ao = aoByVertex(m, isTopFaceAtY1)
     expect(ao.get('3,1,3')).toBe(0) // both sides solid ⇒ fully dark
     expect(ao.get('2,1,2')).toBe(3) // opposite corner untouched
@@ -66,7 +69,7 @@ describe('voxel AO (T7)', () => {
 
   it('corner-only neighbor costs one level (side1+side2+corner sum)', () => {
     // occluder diagonal at (3,1,3): only the corner sample for vertex (3,1,3)
-    const m = meshChunk(grid([[2, 0, 2, 1], [3, 1, 3, 2]]))
+    const m = meshChunkOpaque(grid([[2, 0, 2, 1], [3, 1, 3, 2]]))
     const ao = aoByVertex(m, isTopFaceAtY1)
     expect(ao.get('3,1,3')).toBe(2)
     expect(ao.get('2,1,2')).toBe(3)
@@ -74,12 +77,12 @@ describe('voxel AO (T7)', () => {
 
   it('differing AO prevents greedy merging (no AO smearing)', () => {
     // ground pair along z, same material — merges into 1 top quad...
-    const plain = meshChunk(grid([[2, 0, 2, 1], [2, 0, 3, 1]]))
+    const plain = meshChunkOpaque(grid([[2, 0, 2, 1], [2, 0, 3, 1]]))
     const plainTop = aoByVertex(plain, isTopFaceAtY1)
     expect(plainTop.size).toBe(4) // one merged quad → 4 distinct vertices
 
     // ...but an occluder beside only one of them splits the AO keys
-    const occl = meshChunk(grid([[2, 0, 2, 1], [2, 0, 3, 1], [3, 1, 2, 2]]))
+    const occl = meshChunkOpaque(grid([[2, 0, 2, 1], [2, 0, 3, 1], [3, 1, 2, 2]]))
     let topQuads = 0
     for (let q = 0; q < occl.quadCount; q++) {
       const verts: number[][] = []
@@ -98,7 +101,7 @@ describe('voxel AO (T7)', () => {
   it('AO uses neighbor-chunk shell data at chunk boundaries', () => {
     // ground voxel at the chunk edge; occluder lives in the +x neighbor
     // chunk (shell coordinate 32) — AO must still darken the shared edge
-    const m = meshChunk(grid([[31, 0, 5, 1], [32, 1, 5, 2]]))
+    const m = meshChunkOpaque(grid([[31, 0, 5, 1], [32, 1, 5, 2]]))
     const ao = aoByVertex(m, isTopFaceAtY1)
     expect(ao.get('32,1,5')).toBe(2)
     expect(ao.get('32,1,6')).toBe(2)
