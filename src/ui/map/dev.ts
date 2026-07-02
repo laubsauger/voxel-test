@@ -1,18 +1,19 @@
 /**
  * T70 — standalone dev page for the map system (no game boot, no WebGPU).
- * Real generateLayout(1337) data through the full MapSystem, scripted player.
+ * Real adaptLayout(generateLayout(1337)) data through the full MapSystem, scripted player.
  * Serve: `npm run dev` → http://localhost:5173/src/ui/map/dev.html
  */
 
 import '../style.css' // design-system variables (glass/amber/type)
 import { generateLayout } from '../../sim/gen/layout'
+import { adaptLayout } from './layout-adapter'
 import { WORLD_VX, WORLD_VZ } from '../../world/chunks'
 import { MapSystem } from './map-system'
 
 const root = document.getElementById('ui-root')!
 root.style.pointerEvents = 'none'
 
-const layout = generateLayout(1337)
+const layout = adaptLayout(generateLayout(1337))
 const map = new MapSystem(layout, { vx: WORLD_VX, vz: WORLD_VZ })
 map.attach(root)
 

@@ -26,6 +26,10 @@ import { SettingsPanel } from './ui/settings-panel'
 import { DevOverlay } from './ui/dev-overlay'
 import { wireAudioSettings, attachUiSounds } from './ui/audio-wiring'
 import { FullscreenControl } from './ui/fullscreen'
+import { MapSystem } from './ui/map/map-system'
+import { adaptLayout } from './ui/map/layout-adapter'
+import { generateLayout } from './sim/gen/layout'
+import { WORLD_VX, WORLD_VZ } from './world/chunks'
 
 const app = document.getElementById('app')!
 const root = document.getElementById('ui-root')!
@@ -156,6 +160,11 @@ game.addFrameHook((dt) => {
   )
 })
 
+game.addFrameHook(() => {
+  const p = game.phys.players.get(LOCAL_PLAYER)
+  if (p) map.update(p.px, p.pz, p.yaw)
+})
+
 // --- settings wiring (I.settings — live apply, render-layer only, V6) --------
 const applyControls = () => {
   game.input.sensitivity = store.get('controls.sensitivity')
@@ -179,6 +188,13 @@ applyTime()
 applyCycleSpeed()
 store.subscribe('dev.timeOfDay', applyTime)
 store.subscribe('dev.cycleSpeed', applyCycleSpeed)
+
+// T70 — map + minimap (layout regenerated: pure fn of seed, cheap vs restamping)
+const map = new MapSystem(adaptLayout(generateLayout(boot.seed)), { vx: WORLD_VX, vz: WORLD_VZ })
+map.attach(root)
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyM' && game.state === 'play' && !settings.visible) map.toggleFullscreen()
+})
 
 const dev = new DevOverlay(game)
 // T47 — noclip on N, dev-gated (deterministic sim op, lockstep-safe)
@@ -340,7 +356,7 @@ document.addEventListener('pointerlockchange', () => {
     screenshotUnlock = false // deliberate unlock: no pause, HUD hint shows re-lock path
     return
   }
-  if (game.state === 'play' && !settings.visible && settingsReturn === null) pause.show()
+  if (game.state === 'play' && !settings.visible && settingsReturn === null && !map.isOpen) pause.show()
 })
 
 // --- T52 debug handle (CDP audio verification — read-side state only) ---------

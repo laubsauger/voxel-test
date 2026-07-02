@@ -11,23 +11,24 @@
  */
 import { describe, expect, it } from 'vitest'
 import { generateLayout } from '../src/sim/gen/layout'
+import { adaptLayout } from '../src/ui/map/layout-adapter'
 import { WORLD_VX, WORLD_VZ } from '../src/world/chunks'
 import { buildMapCommands, type DrawCmd, type MapLayout } from '../src/ui/map/map-render'
 import { MAP_INK, DISTRICT_STYLES, districtStyle, roadStyle } from '../src/ui/map/map-style'
 
 const DIMS = { vx: WORLD_VX, vz: WORLD_VZ }
-const layout = generateLayout(1337)
+const layout = adaptLayout(generateLayout(1337))
 
 describe('buildMapCommands — determinism digest', () => {
   it('same layout ⇒ identical command list (stable JSON digest)', () => {
     const a = buildMapCommands(layout, DIMS)
-    const b = buildMapCommands(generateLayout(1337), DIMS)
+    const b = buildMapCommands(adaptLayout(generateLayout(1337)), DIMS)
     expect(JSON.stringify(a)).toBe(JSON.stringify(b))
   })
 
   it('different seed ⇒ different map (commands actually depend on layout)', () => {
     const a = buildMapCommands(layout, DIMS)
-    const b = buildMapCommands(generateLayout(42), DIMS)
+    const b = buildMapCommands(adaptLayout(generateLayout(42)), DIMS)
     expect(JSON.stringify(a.cmds)).not.toBe(JSON.stringify(b.cmds))
   })
 })
@@ -46,26 +47,30 @@ describe('buildMapCommands — completeness', () => {
   })
 
   it('every road contributes one casing and one fill; every sidewalk drawn', () => {
-    expect(fills(roadStyle(undefined).fill).length).toBe(layout.roads.length)
-    expect(fills(roadStyle(undefined).casing).length).toBe(layout.roads.length)
+    // T50: arterials style differently — count per kind
+    const res = layout.roads.filter((r) => r.kind !== 'arterial')
+    const art = layout.roads.filter((r) => r.kind === 'arterial')
+    expect(fills(roadStyle(undefined).fill).length).toBe(res.length)
+    expect(fills(roadStyle('arterial').fill).length).toBe(art.length)
     expect(fills(MAP_INK.sidewalk).length).toBe(layout.roads.length * 2)
   })
 
   it('every house footprint (+ ell) appears as a building fill', () => {
     const bld = fills(DISTRICT_STYLES.suburban.building)
-    const expected = layout.houses.length + layout.houses.filter((h) => h.ell).length
+    const expected = layout.houses!.length + layout.houses!.filter((h) => h.ell).length
     expect(bld.length).toBe(expected)
   })
 
   it('every pool appears as water, every tree as a canopy dot', () => {
-    expect(fills(MAP_INK.waterFill).length).toBe(layout.pools.length)
-    expect(list.cmds.filter((c) => c.op === 'circle').length).toBe(layout.trees.length)
+    expect(fills(MAP_INK.waterFill).length).toBe(layout.pools!.length + (layout.ponds?.length ?? 0))
+    expect(list.cmds.filter((c) => c.op === 'circle').length).toBe(layout.trees!.length)
   })
 
-  it('emits a district label even when the layout has no districts yet', () => {
+  it('emits one label per district (T50) and a fallback label without districts', () => {
     const labels = list.cmds.filter((c) => c.op === 'label')
-    expect(labels.length).toBe(1)
-    if (labels[0].op === 'label') expect(labels[0].text).toBe(DISTRICT_STYLES.suburban.label)
+    expect(labels.length).toBe(layout.districts!.length)
+    const bare = buildMapCommands({ ...layout, districts: undefined }, DIMS)
+    expect(bare.cmds.filter((c) => c.op === 'label').length).toBe(1)
   })
 
   it('all geometry lands on the canvas (nothing projected out of bounds)', () => {
