@@ -96,6 +96,8 @@ T44|x|[PL] sprint (input bit 64, speed mult) + functional crouch (capsule shrink
 T45|.|[PL] fly/spectator mode: quick toggle (F), free camera detached from player (render-only, lockstep-safe), speed tiers|T21|V6
 T46|.|[PL] player visual detail: segment-based colors (skin/shirt/pants/shoes), better proportions, damage-visible voxel body|T22|§C
 T47|x|[PL] noclip dev mode: 'noclip' toggle op, player skips collision + direct velocity integration, deterministic (command-driven), dev-gated in UI|T21|V1,V2
+T48|.|[PL] procedural animation rig: render-side bone animation of voxel segments — walk/run cycles stride-matched to velocity (NO foot skating), idle sway, jump/fall/land, crouch pose, yaw/pitch aim. Sim segments stay authoritative for damage (V6)|T22,T46|§C,V6
+T49|.|[PL] FP viewmodel: hands (+feet when looking down) visible in first person, equipped hotbar tool rendered in hand, FP anims (swing/dig, place, recoil, bob synced to stride)|T48,T28|§C,V6
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 
