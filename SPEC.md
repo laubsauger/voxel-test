@@ -92,6 +92,9 @@ T40|.|[P] physics feel: density-true impulse response, per-material friction/res
 T41|.|[C] stairs: multi-story houses get interior stairs + floor openings, walkable slope for char controller|T20|B6
 T42|.|[C] vegetation: trees (trunk+leaf canopy, MAT_LEAVES), shrubs, yard/parkway placement from seed|T20|B6,V2
 T43|.|[C] street detail: road markings (id 15 = paint), fences, lamp posts (emissive), mailboxes, driveway/roof/palette variation — cute pass|T20|B6,V2
+T44|.|[PL] sprint (input bit 64, speed mult) + functional crouch (capsule shrink, slow) — sim-side, deterministic move op|T21|V1,V2
+T45|.|[PL] fly/spectator mode: quick toggle (F), free camera detached from player (render-only, lockstep-safe), speed tiers|T21|V6
+T46|.|[PL] player visual detail: segment-based colors (skin/shirt/pants/shoes), better proportions, damage-visible voxel body|T22|§C
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 
