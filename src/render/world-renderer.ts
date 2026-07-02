@@ -34,6 +34,7 @@ export interface WorldRendererOptions {
   workerCount?: number
   maxDispatchPerFrame?: number
   maxApplyPerFrame?: number
+  maxRegionBuildsPerFrame?: number
   /** bloom post-processing (default true) */
   bloom?: boolean
   /** debris/dust bursts on edits (default true) */
@@ -85,6 +86,7 @@ export class WorldRenderer {
       workerCount: opts.workerCount,
       maxDispatchPerFrame: opts.maxDispatchPerFrame,
       maxApplyPerFrame: opts.maxApplyPerFrame,
+      maxRegionBuildsPerFrame: opts.maxRegionBuildsPerFrame,
     })
     // pick up chunks written before construction (world gen), then let the
     // per-frame drainDirty catch everything after
