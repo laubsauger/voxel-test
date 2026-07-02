@@ -98,6 +98,7 @@ on this track; the runtime shape is already JSON-plain and correct).
 | `vehicle_crash` | x,y,z (m), dv, large (0/1) | `car-crash-small` / `car-crash-large` (large=1); volume ∝ dv |
 | `vehicle_door` | x,y,z, enter (1=enter) | enter: `car-door-open` then `car-door-close` (~350 ms later); exit: `car-door-open` |
 | `vehicle_wheel_loss` | x,y,z | `car-crash-small` + `impact-metal` layered |
+| `vehicle_plow` | removedByMat pairs, sample [vx,vy,vz,mat,…] | fence smash: `impact-wood`/`chunk-crumble` by dominant mat; glass in removedByMat → `glass-pane-shatter`. FX: spawn debris particles from `sample` (voxel coords) |
 
 Horn: not an op (render-only flair) — bind a key (e.g. H while seated) to
 `gameAudio`-style positional play of `car-horn` at the vehicle position.
@@ -142,11 +143,22 @@ Until gen converts, the dev key (KeyG) summons cars for testing.
 - Order inside `phys.tick`: structuralPass → vehicle pre-step (driver input)
   → Jolt step → vehicle post-step (readback, crash detection, seat sync,
   kill plane, wreck check) → updatePlayers (skips seated) → projectiles.
-- Crash model: gravity-corrected one-tick Δv ≥ 4 m/s at ≥ 3 m/s pre-speed →
-  world `destroySphere` at the contact (real crashes chew fences/walls, the
-  structural pass collapses what that undermines next tick) + chassis dent +
-  nearest-wheel damage (2 hits or Δv ≥ 10 → wheel breaks off as a debris
-  body; that corner loses steer/brake/grip). 10-tick per-vehicle cooldown.
+- Crash model — "through fences, stopped by walls" (momentum-scaled, mutual):
+  - PLOW pass (pre-step): a moving vehicle carves weak BUILT materials
+    (strength ≤ 2: wood, glass, plaster, rooftile, leaves, lamp, paint —
+    never dirt/grass/water) in its sweep path, paying 15 J·strength per voxel
+    from a ¼·½mv² per-tick budget; spent energy bleeds chassis speed. Chunk
+    colliders rebuild the SAME tick, so Jolt never collides with a plowed
+    fence. Brick/concrete/asphalt/metal are never plowed — Jolt stops the car.
+  - CRASH response (post-step): gravity-corrected one-tick Δv ≥ 4 m/s at
+    ≥ 3 m/s pre-speed → momentum-scaled (mass × Δv) `destroySphere` bite on
+    the world + damage to dynamic bodies at the contact + chassis dent +
+    nearest-wheel damage (2 hits or Δv ≥ 10 → wheel breaks off as debris;
+    that corner loses steer/brake/grip). 10-tick per-vehicle cooldown.
+  - Light debris (< 150 kg) overlapping a fast chassis is punted forward
+    (planks fly off the bumper instead of beaching the car).
+  - Structural pass runs on all vehicle-caused voxel damage via the normal
+    dirty-set path — plowing a load-bearing pillar collapses what it held.
 - Explosions: `damageBodiesSphere` also dents vehicles (strength capped at
   2.5 — sheet metal), `applyRadialImpulse` shoves them.
 - Hash: `hashPhysics` now covers vehicles (transforms, velocity, rpm, grid,
