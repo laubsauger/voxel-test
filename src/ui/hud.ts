@@ -59,6 +59,7 @@ export class Hud {
       </div>
       <div class="bb-hitmarker"><span></span><span></span><span></span><span></span></div>
       <div class="bb-fly-chip">Fly</div>
+      <div class="bb-prompt-chip"></div>
       <div class="bb-lock-hint">Click to take control</div>
       <div class="bb-hotbar"></div>`
     const hotbar = this.el.querySelector('.bb-hotbar')!
@@ -76,6 +77,7 @@ export class Hud {
     this.hitmarkerEl = this.el.querySelector('.bb-hitmarker') as HTMLElement
     this.damageEl = this.el.querySelector('.bb-damage') as HTMLElement
     this.flyChip = this.el.querySelector('.bb-fly-chip') as HTMLElement
+    this.promptChip = this.el.querySelector('.bb-prompt-chip') as HTMLElement
     this.lockHint = this.el.querySelector('.bb-lock-hint') as HTMLElement
     root.appendChild(this.el)
     this.select(0)
@@ -121,6 +123,18 @@ export class Hud {
     this.damageEl.classList.remove('bb-hit')
     void this.damageEl.offsetWidth
     this.damageEl.classList.add('bb-hit')
+  }
+
+  private promptChip!: HTMLElement
+  private promptText = ''
+
+  /** T64 — contextual action prompt ('⏎ Enter — drive'); null hides */
+  setPrompt(text: string | null): void {
+    const t = text ?? ''
+    if (t === this.promptText) return
+    this.promptText = t
+    this.promptChip.textContent = t
+    this.promptChip.classList.toggle('bb-on', t !== '')
   }
 
   setFly(on: boolean): void {

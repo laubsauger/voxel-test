@@ -1207,3 +1207,22 @@
   filter: drop-shadow(0 0 8px var(--hover-glow));
   transform: translateY(-1px);
 }
+
+/* --- contextual action prompt (T64: enter vehicle) ----------------------- */
+.bb-prompt-chip {
+  position: absolute;
+  left: 50%;
+  bottom: 130px;
+  transform: translateX(-50%) translateY(6px);
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: rgba(10, 12, 18, 0.72);
+  border: 1px solid rgba(255, 176, 60, 0.45);
+  color: #ffd9a0;
+  font: 600 13px/1 'Chakra Petch', system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.bb-prompt-chip.bb-on { opacity: 1; transform: translateX(-50%) translateY(0); }

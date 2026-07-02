@@ -247,6 +247,27 @@ const vehicleAudioHook = (): void => {
   }
 }
 
+// T64 — 'Enter to drive' prompt: nearest free vehicle within reach, on foot only
+const promptHook = (): void => {
+  if (game.state !== 'play') return hud.setPrompt(null)
+  const p = game.phys.players.get(game.localPlayerId)
+  if (!p) return hud.setPrompt(null)
+  if (p.seatedVehicle !== 0) return hud.setPrompt('⏎  EXIT VEHICLE')
+  let near = false
+  let arch = ''
+  for (const v of game.phys.vehicles.values()) {
+    const dx = v.px - p.px
+    const dy = v.py - p.py
+    const dz = v.pz - p.pz
+    if (dx * dx + dy * dy + dz * dz < 16) {
+      near = true
+      arch = v.archetype
+      break
+    }
+  }
+  hud.setPrompt(near ? `⏎  ${arch === 'bicycle' ? 'RIDE BIKE' : arch === 'scooter' ? 'RIDE SCOOTER' : 'DRIVE'}` : null)
+}
+
 const mapHook = (): void => {
   map.setVisible(game.state === 'play')
   const p = game.phys.players.get(game.localPlayerId)
@@ -338,6 +359,7 @@ function wireGame(g: Game): void {
   stopVehicleLoops()
   g.addFrameHook(vehicleAudioHook)
   g.addFrameHook(mapHook)
+  g.addFrameHook(promptHook)
   // T65 — re-apply time-of-day + cycle speed to the new world renderer
   applyTime()
   applyCycleSpeed()
