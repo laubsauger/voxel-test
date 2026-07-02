@@ -39,7 +39,7 @@ import {
   chunkIndex,
   type ChunkStore,
 } from '../world/chunks'
-import { buildPaddedChunk, type ChunkMesh } from './mesher'
+import { buildPaddedChunk, type ChunkMesh, type ChunkMeshStreams } from './mesher'
 import type { MeshRequest, MeshResponse } from './mesh-worker'
 import { RemeshScheduler, chunkCenter, chunkCoords, type Vec3Like } from './remesh-scheduler'
 
@@ -85,6 +85,12 @@ export interface ChunkMeshManagerOptions {
   /** read-only for us (V6): getVoxel/chunkAt reads + drainDirty handoff */
   world: ChunkStore
   material: Material
+  /**
+   * T39: material for the transparent geometry stream (glass, water-solid).
+   * Optional — without it transparent faces still build into the second
+   * region mesh with the opaque material (visible, just not see-through).
+   */
+  transparentMaterial?: Material
   workerCount?: number
   /** max worker dispatches per update() call (V7) */
   maxDispatchPerFrame?: number
@@ -112,9 +118,11 @@ export class ChunkMeshManager {
 
   readonly scheduler = new RemeshScheduler()
   /** CPU-side mesh data per non-empty chunk — region rebuilds concat these */
-  private readonly chunkData = new Map<number, ChunkMesh>()
-  /** one merged Mesh per non-empty region (T35) */
+  private readonly chunkData = new Map<number, ChunkMeshStreams>()
+  /** one merged opaque Mesh per non-empty region (T35) */
   private readonly regionMeshes = new Map<number, Mesh>()
+  /** one merged transparent Mesh per region with glass/water faces (T39) */
+  private readonly regionMeshesT = new Map<number, Mesh>()
   /** regions whose chunkData changed since their last rebuild */
   private readonly dirtyRegions = new Set<number>()
   private readonly workers: Worker[] = []
@@ -133,12 +141,14 @@ export class ChunkMeshManager {
   private readonly parent: Object3D
   private readonly world: ChunkStore
   readonly material: Material
+  readonly transparentMaterial: Material
   private readonly dirtySource: () => number[]
 
   constructor(opts: ChunkMeshManagerOptions) {
     this.parent = opts.parent
     this.world = opts.world
     this.material = opts.material
+    this.transparentMaterial = opts.transparentMaterial ?? opts.material
     this.dirtySource = opts.dirtySource ?? (() => this.world.drainDirty())
     this.maxDispatchPerFrame = opts.maxDispatchPerFrame ?? 12
     this.maxApplyPerFrame = opts.maxApplyPerFrame ?? 12
@@ -178,9 +188,14 @@ export class ChunkMeshManager {
     return this.chunkData.size
   }
 
-  /** merged region meshes in the scene = draw calls per pass (T35) */
+  /** merged opaque region meshes in the scene = draw calls per pass (T35) */
   get regionMeshCount(): number {
     return this.regionMeshes.size
+  }
+
+  /** merged transparent region meshes (T39) — extra draws in the main pass only */
+  get transparentRegionMeshCount(): number {
+    return this.regionMeshesT.size
   }
 
   /**
@@ -268,21 +283,24 @@ export class ChunkMeshManager {
   }
 
   private applyResult(r: MeshResponse): void {
-    if (r.indices.length === 0) this.chunkData.delete(r.ci)
-    else this.chunkData.set(r.ci, r)
+    if (r.opaque.indices.length === 0 && r.transparent.indices.length === 0) {
+      this.chunkData.delete(r.ci)
+    } else {
+      this.chunkData.set(r.ci, { opaque: r.opaque, transparent: r.transparent })
+    }
     this.dirtyRegions.add(regionIndex(r.ci))
   }
 
   /**
-   * Rebuild one region's merged geometry from its member chunks' cached
-   * mesh data (T35). Pure typed-array concatenation — positions offset by
-   * the chunk's origin within the region (voxel units), indices rebased.
+   * Rebuild one region's merged geometries from its member chunks' cached
+   * mesh data (T35) — opaque + transparent streams (T39) each get their own
+   * Mesh. Pure typed-array concatenation: positions offset by the chunk's
+   * origin within the region (voxel units), indices rebased.
    */
   private buildRegion(ri: number): void {
     const [rx, ry, rz] = regionCoords(ri)
-    const members: Array<[number, ChunkMesh]> = []
-    let vtx = 0
-    let idx = 0
+    const opaque: Array<[number, ChunkMesh]> = []
+    const transparent: Array<[number, ChunkMesh]> = []
     for (let dy = 0; dy < REGION; dy++) {
       const cy = ry * REGION + dy
       if (cy >= WORLD_CY) break
@@ -294,15 +312,34 @@ export class ChunkMeshManager {
           if (cx >= WORLD_CX) break
           const d = this.chunkData.get(chunkIndex(cx, cy, cz))
           if (!d) continue
-          members.push([chunkIndex(cx, cy, cz), d])
-          vtx += d.positions.length / 3
-          idx += d.indices.length
+          const ci = chunkIndex(cx, cy, cz)
+          if (d.opaque.indices.length > 0) opaque.push([ci, d.opaque])
+          if (d.transparent.indices.length > 0) transparent.push([ci, d.transparent])
         }
       }
     }
+    this.buildRegionStream(ri, opaque, this.regionMeshes, this.material, false)
+    this.buildRegionStream(ri, transparent, this.regionMeshesT, this.transparentMaterial, true)
+  }
+
+  /** build/replace/remove one region Mesh for one geometry stream */
+  private buildRegionStream(
+    ri: number,
+    members: Array<[number, ChunkMesh]>,
+    meshes: Map<number, Mesh>,
+    material: Material,
+    isTransparent: boolean,
+  ): void {
     if (members.length === 0) {
-      this.removeRegionMesh(ri)
+      removeRegionMesh(this.parent, meshes, ri)
       return
+    }
+    const [rx, ry, rz] = regionCoords(ri)
+    let vtx = 0
+    let idx = 0
+    for (const [, d] of members) {
+      vtx += d.positions.length / 3
+      idx += d.indices.length
     }
 
     const positions = new Float32Array(vtx * 3)
@@ -362,28 +399,22 @@ export class ChunkMeshManager {
       Math.sqrt(hx * hx + hy * hy + hz * hz) + 0.01,
     )
 
-    const existing = this.regionMeshes.get(ri)
+    const existing = meshes.get(ri)
     if (existing) {
       existing.geometry.dispose()
       existing.geometry = geo
       return
     }
-    const mesh = new Mesh(geo, this.material)
-    mesh.castShadow = true
+    const mesh = new Mesh(geo, material)
+    // T39: glass must not stamp full shadows — no shadow cast at all v1
+    // (soft partial glass shadows would need a custom depth material)
+    mesh.castShadow = !isTransparent
     mesh.receiveShadow = true
     const size = CHUNK * VOXEL_SIZE
     mesh.position.set(rx * REGION * size, ry * REGION * size, rz * REGION * size)
     mesh.scale.setScalar(VOXEL_SIZE) // mesher emits voxel units
-    this.regionMeshes.set(ri, mesh)
+    meshes.set(ri, mesh)
     this.parent.add(mesh)
-  }
-
-  private removeRegionMesh(ri: number): void {
-    const mesh = this.regionMeshes.get(ri)
-    if (!mesh) return
-    this.parent.remove(mesh)
-    mesh.geometry.dispose()
-    this.regionMeshes.delete(ri)
   }
 
   dispose(): void {
@@ -391,11 +422,20 @@ export class ChunkMeshManager {
     this.workers.length = 0
     this.jobCount.length = 0
     this.inFlight = 0
-    for (const ri of [...this.regionMeshes.keys()]) this.removeRegionMesh(ri)
+    for (const ri of [...this.regionMeshes.keys()]) removeRegionMesh(this.parent, this.regionMeshes, ri)
+    for (const ri of [...this.regionMeshesT.keys()]) removeRegionMesh(this.parent, this.regionMeshesT, ri)
     this.chunkData.clear()
     this.dirtyRegions.clear()
     this.scheduler.clear()
   }
+}
+
+function removeRegionMesh(parent: Object3D, meshes: Map<number, Mesh>, ri: number): void {
+  const mesh = meshes.get(ri)
+  if (!mesh) return
+  parent.remove(mesh)
+  mesh.geometry.dispose()
+  meshes.delete(ri)
 }
 
 function faceNeighbors(ci: number): number[] {

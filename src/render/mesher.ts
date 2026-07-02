@@ -9,18 +9,35 @@
  * from neighbor chunks — so boundary faces and boundary AO resolve without
  * touching the ChunkStore from the worker.
  *
- * Output: indexed quads. Positions in voxel units, [0..32] per axis; the
- * mesh manager scales by VOXEL_SIZE and offsets by the chunk origin.
+ * Output (T39): TWO indexed quad streams — opaque and transparent (glass,
+ * water-solid marker; I.mat Transparent flag, derived from the canonical
+ * sim table per V13). Face rules at a voxel boundary:
+ *   opaque      vs air/transparent → opaque face emitted (no cull — B5)
+ *   transparent vs air             → transparent face emitted
+ *   transparent vs SAME material   → culled (interior of a glass pane)
+ *   transparent vs OTHER transparent → both sides emit (glass|water seam)
+ *   transparent vs opaque          → nothing (the opaque side owns the face)
+ * Positions in voxel units, [0..32] per axis; the mesh manager scales by
+ * VOXEL_SIZE and offsets by the chunk origin.
  *
  * AO (T7): classic corner trick — per quad vertex, the 2 side + 1 corner
  * neighbors in the face's air layer give 4 levels, 0 (dark) .. 3 (open),
- * baked into a vertex attribute.
+ * baked into a vertex attribute. Transparent voxels count as occluders
+ * (cheap, and glass against a wall does read slightly seated).
  *
  * Greedy rule: coplanar faces merge into maximal rectangles only when their
  * merge key (material id AND the 4 packed AO levels) matches — merging
- * across differing AO would smear the corner darkening.
+ * across differing AO would smear the corner darkening. Material id in the
+ * key also keeps opaque/transparent quads in their own streams.
  */
 import { CHUNK } from '../world/chunks'
+import { MATERIALS, MAT_FLAG_TRANSPARENT } from '../sim/materials'
+
+/** voxel id → 1 if I.mat Transparent flag set (V13: derived, never redefined) */
+const TRANSPARENT = new Uint8Array(256)
+for (const m of MATERIALS) {
+  if (m && (m.flags & MAT_FLAG_TRANSPARENT) !== 0) TRANSPARENT[m.id] = 1
+}
 
 export const PAD = CHUNK + 2
 const PAD2 = PAD * PAD
@@ -70,6 +87,7 @@ function aoCorner(padded: Uint8Array, nb: number, du: number, dv: number): numbe
   return 3 - (s1 + s2 + c)
 }
 
+/** one geometry stream (opaque or transparent) of a meshed chunk */
 export interface ChunkMesh {
   /** vec3 per vertex, voxel units [0..32] */
   positions: Float32Array
@@ -85,18 +103,41 @@ export interface ChunkMesh {
   quadCount: number
 }
 
+/** T39 — meshChunk output: separate opaque + transparent geometry streams */
+export interface ChunkMeshStreams {
+  opaque: ChunkMesh
+  transparent: ChunkMesh
+}
+
+/** growable quad-soup accumulator for one stream */
+class StreamBuilder {
+  positions: number[] = []
+  normals: number[] = []
+  uvs: number[] = []
+  materials: number[] = []
+  ao: number[] = []
+  indices: number[] = []
+  quadCount = 0
+
+  build(): ChunkMesh {
+    return {
+      positions: new Float32Array(this.positions),
+      normals: new Float32Array(this.normals),
+      uvs: new Float32Array(this.uvs),
+      materials: new Float32Array(this.materials),
+      ao: new Float32Array(this.ao),
+      indices: new Uint32Array(this.indices),
+      quadCount: this.quadCount,
+    }
+  }
+}
+
 /**
- * Greedy-mesh one padded chunk. Faces are emitted where a solid voxel meets
- * air (material 0); same-material coplanar faces merge into maximal rects.
+ * Greedy-mesh one padded chunk into opaque + transparent streams (T39).
+ * Same-material coplanar faces merge into maximal rects per stream.
  */
-export function meshChunk(padded: Uint8Array): ChunkMesh {
-  const positions: number[] = []
-  const normals: number[] = []
-  const uvs: number[] = []
-  const materials: number[] = []
-  const ao: number[] = []
-  const indices: number[] = []
-  let quadCount = 0
+export function meshChunk(padded: Uint8Array): ChunkMeshStreams {
+  const streams = [new StreamBuilder(), new StreamBuilder()] // [opaque, transparent]
 
   const mask = new Int32Array(CHUNK * CHUNK)
   const pos = [0, 0, 0]
@@ -120,32 +161,33 @@ export function meshChunk(padded: Uint8Array): ChunkMesh {
     const ao10 = (aoPack >>> 2) & 3
     const ao11 = (aoPack >>> 4) & 3
     const ao01 = (aoPack >>> 6) & 3
-    const base = quadCount * 4
+    const s = streams[TRANSPARENT[mat]]
+    const base = s.quadCount * 4
     // corners in (u,v): c00=(a,b) c10=(a+w,b) c11=(a+w,b+h) c01=(a,b+h)
     for (const [ua, vb] of [[a, b], [a + w, b], [a + w, b + h], [a, b + h]]) {
       scratch[axis] = plane
       scratch[u] = ua
       scratch[v] = vb
-      positions.push(scratch[0], scratch[1], scratch[2])
+      s.positions.push(scratch[0], scratch[1], scratch[2])
       scratch[0] = scratch[1] = scratch[2] = 0
       scratch[axis] = sign
-      normals.push(scratch[0], scratch[1], scratch[2])
-      materials.push(mat)
+      s.normals.push(scratch[0], scratch[1], scratch[2])
+      s.materials.push(mat)
     }
-    ao.push(ao00, ao10, ao11, ao01)
-    uvs.push(0, 0, w, 0, w, h, 0, h)
+    s.ao.push(ao00, ao10, ao11, ao01)
+    s.uvs.push(0, 0, w, 0, w, h, 0, h)
     // e_u × e_v = e_axis (cyclic axes) ⇒ c00→c10→c11 is CCW around +axis.
     // Flip the diagonal when AO would interpolate across the wrong pair
     // (standard anisotropy fix for the corner trick).
     const flip = ao00 + ao11 > ao10 + ao01
     if (sign > 0) {
-      if (flip) indices.push(base + 1, base + 2, base + 3, base + 1, base + 3, base)
-      else indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
+      if (flip) s.indices.push(base + 1, base + 2, base + 3, base + 1, base + 3, base)
+      else s.indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
     } else {
-      if (flip) indices.push(base + 1, base + 3, base + 2, base + 1, base, base + 3)
-      else indices.push(base, base + 2, base + 1, base, base + 3, base + 2)
+      if (flip) s.indices.push(base + 1, base + 3, base + 2, base + 1, base, base + 3)
+      else s.indices.push(base, base + 2, base + 1, base, base + 3, base + 2)
     }
-    quadCount++
+    s.quadCount++
   }
 
   for (let axis = 0; axis < 3; axis++) {
@@ -169,7 +211,16 @@ export function meshChunk(padded: Uint8Array): ChunkMesh {
             let key = 0
             if (m !== 0) {
               const nb = pi + sign * sa
-              if (padded[nb] === 0) {
+              const n = padded[nb]
+              // T39 visibility rules (see header): opaque shows against air
+              // or any transparent neighbor; transparent shows against air
+              // or a DIFFERENT transparent material, never against opaque
+              // (the opaque side owns that face) or itself (interior cull).
+              const visible =
+                TRANSPARENT[m] === 0
+                  ? n === 0 || TRANSPARENT[n] === 1
+                  : n === 0 || (TRANSPARENT[n] === 1 && n !== m)
+              if (visible) {
                 // 4 corner AO levels packed 2 bits each (T7); part of the
                 // merge key so differing AO never merges (no smearing)
                 const aoPack =
@@ -215,13 +266,5 @@ export function meshChunk(padded: Uint8Array): ChunkMesh {
     }
   }
 
-  return {
-    positions: new Float32Array(positions),
-    normals: new Float32Array(normals),
-    uvs: new Float32Array(uvs),
-    materials: new Float32Array(materials),
-    ao: new Float32Array(ao),
-    indices: new Uint32Array(indices),
-    quadCount,
-  }
+  return { opaque: streams[0].build(), transparent: streams[1].build() }
 }

@@ -28,7 +28,7 @@ import type { ChunkStore } from '../world/chunks'
 import { createAtmosphere } from './atmosphere'
 import { BlockyClouds } from './clouds'
 import { ChunkMeshManager } from './chunk-mesh-manager'
-import { createChunkMaterial } from './chunk-material'
+import { createChunkMaterial, createTransparentChunkMaterial } from './chunk-material'
 import { createChunkTextures, type ChunkTextures } from './texture-arrays'
 import { DebrisParticles } from './particles'
 
@@ -129,6 +129,8 @@ export class WorldRenderer {
       parent: opts.scene,
       world: opts.world,
       material: createChunkMaterial(textures),
+      transparentMaterial: createTransparentChunkMaterial(), // T39 glass/water
+
       workerCount: opts.workerCount,
       maxDispatchPerFrame: opts.maxDispatchPerFrame,
       maxApplyPerFrame: opts.maxApplyPerFrame,

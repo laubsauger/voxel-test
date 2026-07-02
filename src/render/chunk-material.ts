@@ -23,6 +23,7 @@
 import { Color, FrontSide, MeshStandardNodeMaterial } from 'three/webgpu'
 import {
   attribute,
+  cameraPosition,
   float,
   hash,
   mix,
@@ -37,6 +38,39 @@ import { VOXEL_SIZE } from '../world/chunks'
 import { MATERIALS } from './materials'
 import type { ChunkTextures } from './texture-arrays'
 
+/** shared per-fragment nodes: material id, voxel AO shade, flat voxel salt */
+function chunkCommonNodes() {
+  // 'mat' is constant across a quad; +0.5 then truncate = round-to-nearest
+  const matId = attribute<'float'>('mat', 'float').add(0.5).toInt()
+  // AO level 0..3 → occlusion factor; keep a floor so pits stay readable
+  const ao = attribute<'float'>('ao', 'float').div(3)
+  const aoShade = mix(float(0.45), float(1.0), ao)
+
+  // B8: stable per-voxel cell — sample half a voxel behind the face so faces
+  // on voxel boundaries land inside their owning voxel; +2e-3 voxel epsilon
+  // keeps floor() away from exact-integer boundaries where f32 interpolation
+  // error across a merged quad's two triangles flickered the cell id
+  // (diagonal seams / per-voxel gradient noise)
+  const cell = positionWorld
+    .sub(normalWorld.mul(VOXEL_SIZE * 0.5))
+    .div(VOXEL_SIZE)
+    .add(0.002)
+    .floor()
+  const salt = hash(cell.dot(vec3(127.1, 311.7, 74.7)))
+
+  const variation = uniformArray<'float'>(MATERIALS.map((m) => m.variation), 'float')
+  // per-material amplitude: 0 → ramp midpoint (flat), 1 → full lo..hi swing
+  const rampT = mix(float(0.5), salt, variation.element(matId))
+
+  const rampLo = uniformArray<'color'>(MATERIALS.map((m) => new Color(m.colorRamp[0])), 'color')
+  const rampHi = uniformArray<'color'>(MATERIALS.map((m) => new Color(m.colorRamp[1])), 'color')
+  const lo = rampLo.element(matId)
+  const hi = rampHi.element(matId)
+  const rampColor = mix(lo, hi, rampT)
+
+  return { matId, aoShade, rampColor, lo, hi }
+}
+
 export function createChunkMaterial(textures?: ChunkTextures): MeshStandardNodeMaterial {
   const material = new MeshStandardNodeMaterial()
 
@@ -49,34 +83,11 @@ export function createChunkMaterial(textures?: ChunkTextures): MeshStandardNodeM
   // (world-renderer). Any other world-geometry material must do the same.
   material.shadowSide = FrontSide
 
-  const rampLo = uniformArray<'color'>(MATERIALS.map((m) => new Color(m.colorRamp[0])), 'color')
-  const rampHi = uniformArray<'color'>(MATERIALS.map((m) => new Color(m.colorRamp[1])), 'color')
   const roughness = uniformArray<'float'>(MATERIALS.map((m) => m.roughness), 'float')
   const metalness = uniformArray<'float'>(MATERIALS.map((m) => m.metalness), 'float')
   const emissive = uniformArray<'float'>(MATERIALS.map((m) => m.emissive), 'float')
-  const variation = uniformArray<'float'>(MATERIALS.map((m) => m.variation), 'float')
 
-  // 'mat' is constant across a quad; +0.5 then truncate = round-to-nearest
-  const matId = attribute<'float'>('mat', 'float').add(0.5).toInt()
-  // AO level 0..3 → occlusion factor; keep a floor so pits stay readable
-  const ao = attribute<'float'>('ao', 'float').div(3)
-  const aoShade = mix(float(0.45), float(1.0), ao)
-
-  // B8: stable per-voxel cell — sample half a voxel behind the face so faces
-  // on voxel boundaries land inside their owning voxel; +2e-3 voxel epsilon
-  // keeps floor() away from exact-integer boundaries (see header)
-  const cell = positionWorld
-    .sub(normalWorld.mul(VOXEL_SIZE * 0.5))
-    .div(VOXEL_SIZE)
-    .add(0.002)
-    .floor()
-  const salt = hash(cell.dot(vec3(127.1, 311.7, 74.7)))
-  // per-material amplitude: 0 → ramp midpoint (flat), 1 → full lo..hi swing
-  const rampT = mix(float(0.5), salt, variation.element(matId))
-
-  const lo = rampLo.element(matId)
-  const hi = rampHi.element(matId)
-  const rampColor = mix(lo, hi, rampT)
+  const { matId, aoShade, rampColor, lo, hi } = chunkCommonNodes()
 
   if (!textures) {
     // flat ramp path only (tests / fallback)
@@ -150,6 +161,37 @@ export function createChunkMaterial(textures?: ChunkTextures): MeshStandardNodeM
   material.metalnessNode = metalness.element(matId)
   // emissive materials (lamp) feed the bloom pass
   material.emissiveNode = base.mul(emissive.element(matId))
+
+  return material
+}
+
+/**
+ * T39 — material for the transparent geometry stream (glass 8, water-solid
+ * 10). Alpha-blended fresnel glass: mostly see-through head-on, tinted by
+ * the material ramp, more reflective/opaque at grazing angles. depthWrite
+ * off (blends against what's behind); region meshes using it must not cast
+ * shadows (ChunkMeshManager sets castShadow=false — B5 v1 call).
+ */
+export function createTransparentChunkMaterial(): MeshStandardNodeMaterial {
+  const material = new MeshStandardNodeMaterial()
+  material.transparent = true
+  material.depthWrite = false
+  material.shadowSide = FrontSide // B4 safety if castShadow is ever enabled
+
+  const roughness = uniformArray<'float'>(MATERIALS.map((m) => m.roughness), 'float')
+  const { matId, aoShade, rampColor } = chunkCommonNodes()
+
+  // fresnel: normal incidence stays glassy-clear, grazing angles pick up
+  // sky/sun response and read as a reflective pane
+  const viewDir = cameraPosition.sub(positionWorld).normalize()
+  const fresnel = float(1).sub(normalWorld.dot(viewDir).abs()).clamp(0, 1).pow(2.5)
+
+  material.colorNode = rampColor.mul(aoShade)
+  material.opacityNode = fresnel.mul(0.55).add(0.3)
+  material.roughnessNode = roughness.element(matId)
+  material.metalnessNode = float(0)
+  // faint emissive lift keeps panes visible against dark interiors
+  material.emissiveNode = rampColor.mul(fresnel.mul(0.25))
 
   return material
 }
