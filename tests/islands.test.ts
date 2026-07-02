@@ -3,7 +3,7 @@ import { Sim } from '../src/sim/loop'
 import { registerEditOps } from '../src/sim/edit-ops'
 import { createPhysics, loadJolt } from '../src/sim/physics'
 import { findUnsupportedIslands } from '../src/sim/connectivity'
-import { MATERIALS, VOXEL_VOLUME } from '../src/sim/materials'
+import { material, VOXEL_VOLUME } from '../src/sim/materials'
 
 // T12 — island extraction → dynamic body. The Teardown moment: voxels leave
 // the ChunkStore, become a rigid body with correct mass, and fall. If voxels
@@ -51,7 +51,7 @@ describe('island extraction → dynamic body (T12, V8, V12)', () => {
     expect([...body.grid].filter((v) => v === WOOD).length).toBe(12)
 
     // mass = voxel count × wood density × voxel volume
-    expect(body.mass).toBeCloseTo(12 * MATERIALS[WOOD].density * VOXEL_VOLUME, 10)
+    expect(body.mass).toBeCloseTo(12 * material(WOOD).density * VOXEL_VOLUME, 10)
 
     // spawn transform = grid origin corner, in meters
     expect(body.px).toBeCloseTo(2.0, 6)
@@ -76,7 +76,7 @@ describe('island extraction → dynamic body (T12, V8, V12)', () => {
     expect(phys.bodies.size).toBe(1)
     const body = [...phys.bodies.values()][0]
     expect(body.count).toBeGreaterThan(0)
-    expect(body.mass).toBeCloseTo(body.count * MATERIALS[WOOD].density * VOXEL_VOLUME, 10)
+    expect(body.mass).toBeCloseTo(body.count * material(WOOD).density * VOXEL_VOLUME, 10)
     // far end of the beam is no longer world voxels
     expect(sim.world.getVoxel(40, 15, 30)).toBe(0)
     expect(sim.world.getVoxel(40, 14, 31)).toBe(0)

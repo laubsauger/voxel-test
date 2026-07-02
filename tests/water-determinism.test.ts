@@ -36,7 +36,9 @@ function runScenario(steps: number): { w: WaterSim; hashes: number[] } {
 }
 
 describe('water determinism (V2, V3, I.hash)', () => {
-  it('two identical runs produce identical hash sequences', () => {
+  // 20s timeout: two 160-step runs are CPU-heavy and share cores with the
+  // Jolt WASM suites in a full run — 5s default flakes under contention.
+  it('two identical runs produce identical hash sequences', { timeout: 20000 }, () => {
     const a = runScenario(160)
     const b = runScenario(160)
     expect(a.hashes).toEqual(b.hashes)
