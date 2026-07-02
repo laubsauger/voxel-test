@@ -194,12 +194,23 @@ export class Game {
     // (render pipeline is owned by the perf track) — applies on next boot.
   }
 
-  /** resolves when initial meshing is presentable: pending drained or capped */
-  waitForMeshing(capMs = 15000): Promise<void> {
+  /**
+   * Resolves when initial meshing is PRESENTABLE — not complete. The remesh
+   * scheduler is near-camera-first, so the menu-orbit view meshes first;
+   * gating on ~45% coverage (or the cap) shows the menu in a few seconds
+   * while the far districts keep streaming in behind it. Full completion
+   * still happens in the background (HUD `pending` drains to 0).
+   */
+  waitForMeshing(capMs = 8000): Promise<void> {
     return new Promise((resolve) => {
       const start = performance.now()
+      let initial = 0
       const off = this.addFrameHook(() => {
-        if (this.world.chunks.pendingCount === 0 || performance.now() - start > capMs) {
+        const pending = this.world.chunks.pendingCount
+        initial = Math.max(initial, pending)
+        const presentable = initial > 0 && pending <= initial * 0.55
+        const minShown = performance.now() - start > 800 // let the burst fill the near view
+        if ((presentable && minShown) || pending === 0 || performance.now() - start > capMs) {
           off()
           resolve()
         }
