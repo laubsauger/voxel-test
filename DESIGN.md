@@ -16,7 +16,7 @@ Three.js WebGPU voxel game. Fully destructible world — terrain, structures, ve
 | Player | Voxel body, losable parts; FP/TP camera toggle | Destructibility "terrain to player" |
 | Gameplay | Sandbox first; combat shape decided after playtest | De-risk design |
 | Tools (day 1) | Dig (sphere remove), gun (raycast), explosives, builder (place) | Full edit-pipeline coverage |
-| Style | Teardown-ish: realistic lighting on voxel geometry | Lighting sells the tech |
+| Style | Teardown-ish: realistic lighting on voxel geometry, AAA aspiration — real PBR texture sets (CC0: ambientcg.com, freepbr.com) via triplanar mapping, physical sky/fog/AO/AA post stack | Lighting sells the tech |
 | Platform | Desktop Chrome, WebGPU only, 60 fps on mid-range dGPU / Apple Silicon | TSL compute is load-bearing; no WebGL fallback |
 | Multiplayer | Co-op 2–4, deterministic lockstep, WebRTC P2P (one peer hosts) | Tiny bandwidth; voxel edits and physics come "free" |
 | Authoring | Procedural layout (streets/lots/terrain) + MagicaVoxel `.vox` props (houses/cars) | Art-directable without editor scope |

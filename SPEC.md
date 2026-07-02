@@ -13,6 +13,7 @@ Browser voxel sandbox: fully destructible suburban arena (terrain→player), str
 - Voxel 10cm. Arena fixed ~100×100×50m (1000×1000×500 voxel space). No streaming.
 - 60fps target: mid-range dGPU / Apple Silicon.
 - Sandbox first. Combat shape deferred to post-M4 playtest.
+- Visual bar: AAA aspiration. Real PBR textures (CC0: ambientcg.com, freepbr.com), quality lighting + atmosphere. Voxel geo ≠ excuse for flat look.
 - Perf-critical sims GPU compute (TSL) or WASM. JS main thread = orchestration only.
 
 ## §I interfaces
@@ -71,6 +72,8 @@ T25|x|[N] lockstep transport: input delay buffer 2-3 ticks, tick barrier|T24|V2,
 T26|x|[N] join snapshot: serialize sim state, RLE chunks, fast-forward|T25|V3
 T27|x|[N] desync detector: periodic hash exchange, loud fail|T25|V10
 T28|.|[CORE] tool UX: hotbar dig/place/gun/explode, crosshair, hit feedback|T5,T13|
+T29|.|[R] PBR texture pipeline: CC0 sets (ambientcg/freepbr) per I.mat entry, triplanar TSL mapping (albedo/normal/rough/ao), texture array|T8|I.mat,§C
+T30|.|[R] atmosphere polish: physical sky + sun disc, height/distance fog, exposure tuning, SSAO/GTAO, TAA or SMAA, post stack within 60fps budget|T8|§C
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 
