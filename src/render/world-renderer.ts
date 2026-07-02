@@ -15,14 +15,18 @@ import {
   RenderPipeline,
   Vector3,
   type DirectionalLightShadow,
+  type Node,
   type PerspectiveCamera,
   type Scene,
   type WebGPURenderer,
 } from 'three/webgpu'
-import { pass } from 'three/tsl'
+import { float, mix, mrt, normalView, output, pass, vec3, vec4 } from 'three/tsl'
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
+import { ao } from 'three/addons/tsl/display/GTAONode.js'
 import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js'
 import type { ChunkStore } from '../world/chunks'
+import { createAtmosphere } from './atmosphere'
+import { BlockyClouds } from './clouds'
 import { ChunkMeshManager } from './chunk-mesh-manager'
 import { createChunkMaterial } from './chunk-material'
 import { createChunkTextures, type ChunkTextures } from './texture-arrays'
@@ -43,6 +47,12 @@ export interface WorldRendererOptions {
   debris?: boolean
   /** T29 triplanar PBR texture arrays (default true; false = flat ramp look) */
   textures?: boolean
+  /** T30 analytic sky + aerial fog replacing the flat background (default true) */
+  sky?: boolean
+  /** T30 half-res GTAO in the post stack (default true) */
+  ao?: boolean
+  /** T30 blocky drifting clouds (default true) */
+  clouds?: boolean
   /** dirty-chunk feed override — see ChunkMeshManagerOptions.dirtySource */
   dirtySource?: () => number[]
 }
@@ -65,6 +75,9 @@ export class WorldRenderer {
   readonly particles: DebrisParticles
   private readonly csm: CSMShadowNode
   private readonly pipeline: RenderPipeline | null
+  private readonly atmosphere: ReturnType<typeof createAtmosphere> | null
+  private readonly clouds: BlockyClouds | null
+  private aoPass: ReturnType<typeof ao> | null = null
   private readonly renderer: WebGPURenderer
   private readonly scene: Scene
   private readonly camera: PerspectiveCamera
@@ -81,8 +94,10 @@ export class WorldRenderer {
     this.camera = opts.camera
 
     // sun + CSM-style cascaded shadows (T8). Direction: position → origin.
-    this.sun = new DirectionalLight(0xfff2dc, 3)
-    this.sun.position.set(60, 100, 40)
+    // T30: late-afternoon elevation (~35°) + warm color for the golden mood;
+    // the analytic sky's sun disc shares this exact direction.
+    this.sun = new DirectionalLight(0xffe2ba, 3.1)
+    this.sun.position.set(85, 62, 38)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
     // B4: chunk material renders front faces into the shadow map (see
@@ -98,7 +113,9 @@ export class WorldRenderer {
       this.csm
     opts.scene.add(this.sun)
     opts.scene.add(this.sun.target)
-    opts.scene.add(new HemisphereLight(0xbcd8f5, 0x8a7f6a, 0.55))
+    // sky/ground bounce — slightly warm ground for the afternoon mood (T30).
+    // Intensity keeps ACES from crushing shaded grass/walls to black.
+    opts.scene.add(new HemisphereLight(0xa9c6ea, 0x8f7d62, 0.95))
 
     // T29: PBR texture arrays load async; material starts on placeholder
     // content (ramp midpoints) and re-uploads once. A failed set rejects
@@ -128,13 +145,56 @@ export class WorldRenderer {
     this.particles = new DebrisParticles()
     opts.scene.add(this.particles.object)
 
-    // bloom post via three/tsl (T8)
-    if (opts.bloom !== false) {
+    // T30: analytic sky (sun disc aligned with the CSM light) + aerial fog.
+    // backgroundNode takes priority over the Scene.background color.
+    if (opts.sky !== false) {
+      const atmosphere = createAtmosphere(this.sun.position.clone().normalize())
+      opts.scene.backgroundNode = atmosphere.backgroundNode
+      opts.scene.fogNode = atmosphere.fogNode
+      this.atmosphere = atmosphere
+    } else {
+      this.atmosphere = null
+    }
+
+    // T30: blocky drifting clouds (render-only, no shadows)
+    if (opts.clouds !== false) {
+      this.clouds = new BlockyClouds()
+      opts.scene.add(this.clouds.group)
+    } else {
+      this.clouds = null
+    }
+
+    // post stack (T8 bloom, T30 GTAO): scene → AO → bloom → tonemap.
+    // RenderPipeline applies renderer.toneMapping (ACES) + output color
+    // space once on the final node — HDR is preserved through AO and bloom.
+    const wantAo = opts.ao !== false
+    if (opts.bloom !== false || wantAo) {
       const scenePass = pass(opts.scene, opts.camera)
-      const scenePassColor = scenePass.getTextureNode('output')
-      const bloomPass = bloom(scenePassColor, 0.25, 0.4, 0.85)
+      const sceneColor = scenePass.getTextureNode('output')
+      let lit: Node<'vec4'> = sceneColor
+      if (wantAo) {
+        // half-res GTAO from depth + MRT view normals (see SSAO skill notes:
+        // radius in meters and well above one voxel per B8, blend kept
+        // partial so direct sun is never crushed to grey)
+        scenePass.setMRT(mrt({ output, normal: normalView }))
+        const aoPass = ao(
+          scenePass.getTextureNode('depth'),
+          scenePass.getTextureNode('normal'),
+          opts.camera,
+        )
+        aoPass.resolutionScale = 0.5
+        aoPass.radius.value = 0.55
+        aoPass.thickness.value = 0.5
+        aoPass.scale.value = 1.1
+        this.aoPass = aoPass
+        const visibility = mix(float(1), aoPass.getTextureNode().r, float(0.85))
+        lit = vec4(sceneColor.rgb.mul(vec3(visibility)), sceneColor.a)
+      }
       this.pipeline = new RenderPipeline(opts.renderer)
-      this.pipeline.outputNode = scenePassColor.add(bloomPass)
+      // threshold 1.0: only true HDR sources bloom (sun disc, lamps,
+      // specular hits) — keeps white plaster from glowing
+      this.pipeline.outputNode =
+        opts.bloom !== false ? lit.add(bloom(lit, 0.35, 0.35, 1.0)) : lit
     } else {
       this.pipeline = null
     }
@@ -168,6 +228,7 @@ export class WorldRenderer {
       }
     }
     this.particles.update(dt)
+    this.clouds?.update(dt)
   }
 
   /** renders the scene (through the bloom pipeline when enabled) */
@@ -195,5 +256,7 @@ export class WorldRenderer {
   dispose(): void {
     this.chunks.dispose()
     this.csm.dispose()
+    this.clouds?.dispose()
+    this.aoPass?.dispose()
   }
 }
