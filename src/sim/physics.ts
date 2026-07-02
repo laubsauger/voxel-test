@@ -29,6 +29,7 @@ import {
 } from './connectivity'
 import { material, VOXEL_VOLUME } from './materials'
 import { registerDestructionOps } from './destruction'
+import { registerPlayerOps, updatePlayers, type PlayerEntity } from './player'
 
 type JoltApi = typeof Jolt
 
@@ -123,8 +124,19 @@ export class PhysicsWorld {
   /** chunk indices needing a connectivity check next structural pass (island-removal cascades, T12) */
   private pendingConnectivity: number[] = []
 
+  /** player entities keyed by playerId (T21) — see player.ts */
+  readonly players = new Map<number, PlayerEntity>()
+
   private readonly settings: Jolt.JoltSettings
-  private readonly gravity: Jolt.Vec3
+  /** shared gravity vector for character updates (matches physics system gravity) */
+  readonly gravity: Jolt.Vec3
+  // CharacterVirtual update plumbing (T21) — built once, reused every tick
+  readonly updateSettings: Jolt.ExtendedUpdateSettings
+  readonly movingBPFilter: Jolt.BroadPhaseLayerFilter
+  readonly movingLayerFilter: Jolt.ObjectLayerFilter
+  readonly bodyFilter: Jolt.BodyFilter
+  readonly shapeFilter: Jolt.ShapeFilter
+  readonly tempAllocator: Jolt.TempAllocator
 
   constructor(api: JoltApi) {
     this.api = api
@@ -152,6 +164,16 @@ export class PhysicsWorld {
     this.physicsSystem = this.joltInterface.GetPhysicsSystem()
     this.bodyInterface = this.physicsSystem.GetBodyInterface()
     this.gravity = new api.Vec3(0, GRAVITY_Y, 0)
+    this.updateSettings = new api.ExtendedUpdateSettings()
+    // d.ts mistypes DefaultBroadPhaseLayerFilter as ObjectLayerFilter; runtime is correct
+    this.movingBPFilter = new api.DefaultBroadPhaseLayerFilter(
+      this.joltInterface.GetObjectVsBroadPhaseLayerFilter(),
+      LAYER_MOVING,
+    ) as unknown as Jolt.BroadPhaseLayerFilter
+    this.movingLayerFilter = new api.DefaultObjectLayerFilter(this.joltInterface.GetObjectLayerPairFilter(), LAYER_MOVING)
+    this.bodyFilter = new api.BodyFilter()
+    this.shapeFilter = new api.ShapeFilter()
+    this.tempAllocator = this.joltInterface.GetTempAllocator()
 
     // Jolt defaults to deterministic simulation; assert loudly rather than assume (V10).
     const phys = this.physicsSystem.GetPhysicsSettings()
@@ -181,6 +203,7 @@ export class PhysicsWorld {
   tick(sim: Sim): void {
     this.structuralPass(sim)
     this.joltInterface.Step(DT, 1)
+    updatePlayers(this) // character controllers, fixed order (T21)
     this.readbackBodies()
   }
 
@@ -431,6 +454,16 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.u32(b.sx).u32(b.sy).u32(b.sz)
     h.bytes(b.grid)
   }
+  h.u32(phys.players.size)
+  const pids = [...phys.players.keys()].sort((a, b) => a - b)
+  for (const pid of pids) {
+    const p = phys.players.get(pid)!
+    h.u32(pid).u32(p.id)
+    h.f64(p.px).f64(p.py).f64(p.pz)
+    h.f64(p.vx).f64(p.vy).f64(p.vz)
+    h.f64(p.yaw).f64(p.pitch)
+    h.u32(p.input)
+  }
   return h.value
 }
 
@@ -443,6 +476,7 @@ export async function createPhysics(sim: Sim): Promise<PhysicsWorld> {
   const api = await loadJolt()
   const phys = new PhysicsWorld(api)
   registerDestructionOps(sim, phys)
+  registerPlayerOps(sim, phys)
   phys.initStatic(sim.world)
   sim.addSystem(() => phys.tick(sim))
   return phys
