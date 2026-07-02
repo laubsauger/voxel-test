@@ -24,8 +24,12 @@ registerEditOps(sim)                    // dig/place (T5)
 //    next tick like any edit — floating authored props would fall.
 
 // 2. async physics init — MUST complete before the loop starts (WASM load).
-//    Registers: 'explode' (T13), 'spawn'/'move' (T21) op handlers, and the
-//    physics step as a Sim system.
+//    Registers: 'explode' (T13), 'spawn'/'move' (T21), 'noclip' (T47) op
+//    handlers, and the physics step as a Sim system.
+//    Move-op input bitfield (T44): 1 fwd, 2 back, 4 left, 8 right, 16 jump,
+//    32 crouch (capsule 1.2m, 0.5× speed, auto-blocked un-crouch), 64 sprint
+//    (1.6×, ground only). 'noclip' toggles collision-free fly per player
+//    (jump=up, crouch=down, sprint faster) — dev tool, hashed sim state.
 const phys = await createPhysics(sim)
 
 // 3. any OTHER sim systems (water T15, etc.): register order = execution
