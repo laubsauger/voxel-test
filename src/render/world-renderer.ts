@@ -24,6 +24,7 @@ import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js'
 import type { ChunkStore } from '../world/chunks'
 import { ChunkMeshManager } from './chunk-mesh-manager'
 import { createChunkMaterial } from './chunk-material'
+import { DebrisParticles } from './particles'
 
 export interface WorldRendererOptions {
   renderer: WebGPURenderer
@@ -35,16 +36,25 @@ export interface WorldRendererOptions {
   maxApplyPerFrame?: number
   /** bloom post-processing (default true) */
   bloom?: boolean
+  /** debris/dust bursts on edits (default true) */
+  debris?: boolean
 }
+
+/** max debris bursts per frame — a huge explosion dirties many chunks */
+const MAX_BURSTS_PER_FRAME = 8
 
 export class WorldRenderer {
   readonly chunks: ChunkMeshManager
   readonly sun: DirectionalLight
+  /** T14: debris/dust bursts, render-only (V6) */
+  readonly particles: DebrisParticles
   private readonly csm: CSMShadowNode
   private readonly pipeline: RenderPipeline | null
   private readonly renderer: WebGPURenderer
   private readonly scene: Scene
   private readonly camera: PerspectiveCamera
+  private firstUpdate = true
+  private readonly debrisEnabled: boolean
 
   constructor(opts: WorldRendererOptions) {
     this.renderer = opts.renderer
@@ -80,6 +90,12 @@ export class WorldRenderer {
     // per-frame drainDirty catch everything after
     this.chunks.enqueueAll()
 
+    // debris/dust on destroy (T14) — hooked up after the first update()
+    // so the initial world-gen dirty flood doesn't fire a particle storm
+    this.debrisEnabled = opts.debris !== false
+    this.particles = new DebrisParticles()
+    opts.scene.add(this.particles.object)
+
     // bloom post via three/tsl (T8)
     if (opts.bloom !== false) {
       const scenePass = pass(opts.scene, opts.camera)
@@ -96,8 +112,19 @@ export class WorldRenderer {
    * Per-frame, from the rAF loop, before render(). `dt` = render delta
    * seconds (render-side clock only — never fed back into the sim, V6).
    */
-  update(_dt: number): void {
+  update(dt: number): void {
     this.chunks.update(this.camera.position)
+    if (this.firstUpdate) {
+      this.firstUpdate = false
+      if (this.debrisEnabled) {
+        this.chunks.onEdit = (edits) => {
+          for (const e of edits.slice(0, MAX_BURSTS_PER_FRAME)) {
+            this.particles.burst(e.center, 28)
+          }
+        }
+      }
+    }
+    this.particles.update(dt)
   }
 
   /** renders the scene (through the bloom pipeline when enabled) */
