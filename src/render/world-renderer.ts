@@ -25,6 +25,7 @@ import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js'
 import type { ChunkStore } from '../world/chunks'
 import { ChunkMeshManager } from './chunk-mesh-manager'
 import { createChunkMaterial } from './chunk-material'
+import { createChunkTextures, type ChunkTextures } from './texture-arrays'
 import { DebrisParticles } from './particles'
 
 export interface WorldRendererOptions {
@@ -40,6 +41,8 @@ export interface WorldRendererOptions {
   bloom?: boolean
   /** debris/dust bursts on edits (default true) */
   debris?: boolean
+  /** T29 triplanar PBR texture arrays (default true; false = flat ramp look) */
+  textures?: boolean
   /** dirty-chunk feed override — see ChunkMeshManagerOptions.dirtySource */
   dirtySource?: () => number[]
 }
@@ -97,11 +100,18 @@ export class WorldRenderer {
     opts.scene.add(this.sun.target)
     opts.scene.add(new HemisphereLight(0xbcd8f5, 0x8a7f6a, 0.55))
 
+    // T29: PBR texture arrays load async; material starts on placeholder
+    // content (ramp midpoints) and re-uploads once. A failed set rejects
+    // loudly (unhandled → pageerror → smoke fails) instead of a silent
+    // flat look.
+    const textures: ChunkTextures | undefined =
+      opts.textures !== false ? createChunkTextures() : undefined
+
     // chunk meshing pipeline (T6/T7/T9)
     this.chunks = new ChunkMeshManager({
       parent: opts.scene,
       world: opts.world,
-      material: createChunkMaterial(),
+      material: createChunkMaterial(textures),
       workerCount: opts.workerCount,
       maxDispatchPerFrame: opts.maxDispatchPerFrame,
       maxApplyPerFrame: opts.maxApplyPerFrame,
