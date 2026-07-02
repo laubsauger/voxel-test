@@ -79,6 +79,14 @@ export interface ChunkMeshManagerOptions {
   maxApplyPerFrame?: number
   /** max region geometry rebuilds per update() call (V7, T35) */
   maxRegionBuildsPerFrame?: number
+  /**
+   * Where to pull dirty chunk indices from each frame. Defaults to
+   * world.drainDirty(). When a sim system (physics) drains the store's dirty
+   * set inside the tick, pass its re-exposed channel instead (e.g.
+   * () => phys.drainRemesh()) — both sides draining the store would starve
+   * one of them.
+   */
+  dirtySource?: () => number[]
 }
 
 export class ChunkMeshManager {
@@ -107,12 +115,14 @@ export class ChunkMeshManager {
   private readonly maxRegionBuildsPerFrame: number
   private readonly parent: Object3D
   private readonly world: ChunkStore
-  private readonly material: Material
+  readonly material: Material
+  private readonly dirtySource: () => number[]
 
   constructor(opts: ChunkMeshManagerOptions) {
     this.parent = opts.parent
     this.world = opts.world
     this.material = opts.material
+    this.dirtySource = opts.dirtySource ?? (() => this.world.drainDirty())
     this.maxDispatchPerFrame = opts.maxDispatchPerFrame ?? 12
     this.maxApplyPerFrame = opts.maxApplyPerFrame ?? 12
     this.maxRegionBuildsPerFrame = opts.maxRegionBuildsPerFrame ?? 8
@@ -161,7 +171,7 @@ export class ChunkMeshManager {
    * `camPos` in world meters.
    */
   update(camPos: Vec3Like): void {
-    const dirty = this.world.drainDirty() // sole handoff from sim state (V6)
+    const dirty = this.dirtySource() // sole handoff from sim state (V6)
     if (dirty.length > 0) {
       if (this.onEdit) {
         this.onEdit(dirty.map((ci) => ({ ci, center: chunkCenter(ci) })))

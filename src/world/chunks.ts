@@ -47,6 +47,13 @@ export class ChunkStore {
   private readonly chunks: Chunk[] = new Array(CHUNK_COUNT)
   /** chunk indices touched since last drain — consumed by mesher/mirror */
   readonly dirty = new Set<number>()
+  /**
+   * Per-voxel mutation hook (set in main.ts wiring): water CA subscribes so
+   * settled pools wake when a wall is breached. Runs in-tick — must stay
+   * deterministic (V2). Not called by fillBox's uniform-chunk path (scene
+   * gen runs before subscribers attach).
+   */
+  onVoxelChanged: ((x: number, y: number, z: number) => void) | null = null
 
   constructor() {
     for (let i = 0; i < CHUNK_COUNT; i++) {
@@ -86,6 +93,7 @@ export class ChunkStore {
       c.data![vi] = mat
     }
     this.dirty.add(ci)
+    if (this.onVoxelChanged) this.onVoxelChanged(x, y, z)
   }
 
   /** uniform/empty → dense, preserving contents */
