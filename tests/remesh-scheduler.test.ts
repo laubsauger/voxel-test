@@ -15,7 +15,10 @@ describe('chunk coordinate helpers', () => {
 
   it('chunkCenter is the chunk middle in world meters (32 vox × 0.1 m)', () => {
     expect(chunkCenter(chunkIndex(0, 0, 0))).toEqual({ x: 1.6, y: 1.6, z: 1.6 })
-    expect(chunkCenter(chunkIndex(2, 1, 3))).toEqual({ x: 8, y: 4.8, z: 11.2 })
+    const c = chunkCenter(chunkIndex(2, 1, 3))
+    expect(c.x).toBeCloseTo(8, 10)
+    expect(c.y).toBeCloseTo(4.8, 10)
+    expect(c.z).toBeCloseTo(11.2, 10)
   })
 })
 
