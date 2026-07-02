@@ -148,8 +148,16 @@ export function findUnsupportedIslands(world: ChunkStore, region: Region): Islan
   const vol = nx * ny * nz
   const grid = snapshotRegion(world, x0, y0, z0, nx, ny, nz)
   const visited = new Uint8Array(vol)
+  // queue entries pack local coords lx | lz<<8 | ly<<16 (extent ≤ 128 per
+  // axis fits 8 bits) — no div/mod per dequeue, and interior cells skip
+  // bounds checks entirely. Enqueue order is unchanged (same seed scan,
+  // same -x,+x,-y,+y,-z,+z neighbor order, FIFO), so results and island
+  // voxel order are bit-identical to the reference version (V2/V3).
   const queue = new Int32Array(vol)
   const nxnz = nx * nz
+  const nxm1 = nx - 1
+  const nym1 = ny - 1
+  const nzm1 = nz - 1
 
   const islands: Island[] = []
 
@@ -162,32 +170,78 @@ export function findUnsupportedIslands(world: ChunkStore, region: Region): Islan
         // BFS one component; queue[0..tail) doubles as the component list
         let head = 0
         let tail = 0
-        queue[tail++] = si
+        queue[tail++] = sx | (sz << 8) | (sy << 16)
         visited[si] = 1
         let supported = false
 
         while (head < tail) {
-          const li = queue[head++]
-          const lx = li % nx
-          const lz = ((li / nx) | 0) % nz
-          const ly = (li / nxnz) | 0
+          const p = queue[head++]
+          const lx = p & 0xff
+          const lz = (p >> 8) & 0xff
+          const ly = p >> 16
+          const li = lx + lz * nx + ly * nxnz
           if (y0 + ly === 0) supported = true // resting on the world ground layer
 
-          // neighbor order -x,+x,-y,+y,-z,+z (deterministic, unchanged)
-          for (let n = 0; n < 6; n++) {
-            const nlx = n === 0 ? lx - 1 : n === 1 ? lx + 1 : lx
-            const nly = n === 2 ? ly - 1 : n === 3 ? ly + 1 : ly
-            const nlz = n === 4 ? lz - 1 : n === 5 ? lz + 1 : lz
-            if (nlx < 0 || nly < 0 || nlz < 0 || nlx >= nx || nly >= ny || nlz >= nz) {
-              // neighbor is outside the region: solid there ⇒ the structure
-              // continues past the search bounds ⇒ treat as connected
-              if (world.getVoxel(x0 + nlx, y0 + nly, z0 + nlz) !== 0) supported = true
-              continue
-            }
-            const nli = nlx + nlz * nx + nly * nxnz
-            if (visited[nli] !== 0 || grid[nli] === 0) continue
-            visited[nli] = 1
-            queue[tail++] = nli
+          if (lx > 0 && lx < nxm1 && ly > 0 && ly < nym1 && lz > 0 && lz < nzm1) {
+            // interior fast path — all 6 neighbors are inside the region
+            let nli = li - 1 // -x
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p - 1 }
+            nli = li + 1 // +x
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p + 1 }
+            nli = li - nxnz // -y
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p - 0x10000 }
+            nli = li + nxnz // +y
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p + 0x10000 }
+            nli = li - nx // -z
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p - 0x100 }
+            nli = li + nx // +z
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p + 0x100 }
+            continue
+          }
+
+          // border cell: bounds-checked neighbors + region-boundary escape
+          // hatch (solid outside the region ⇒ treat as connected)
+          // -x
+          if (lx === 0) {
+            if (world.getVoxel(x0 - 1, y0 + ly, z0 + lz) !== 0) supported = true
+          } else {
+            const nli = li - 1
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p - 1 }
+          }
+          // +x
+          if (lx === nxm1) {
+            if (world.getVoxel(x0 + nx, y0 + ly, z0 + lz) !== 0) supported = true
+          } else {
+            const nli = li + 1
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p + 1 }
+          }
+          // -y
+          if (ly === 0) {
+            if (world.getVoxel(x0 + lx, y0 - 1, z0 + lz) !== 0) supported = true
+          } else {
+            const nli = li - nxnz
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p - 0x10000 }
+          }
+          // +y
+          if (ly === nym1) {
+            if (world.getVoxel(x0 + lx, y0 + ny, z0 + lz) !== 0) supported = true
+          } else {
+            const nli = li + nxnz
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p + 0x10000 }
+          }
+          // -z
+          if (lz === 0) {
+            if (world.getVoxel(x0 + lx, y0 + ly, z0 - 1) !== 0) supported = true
+          } else {
+            const nli = li - nx
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p - 0x100 }
+          }
+          // +z
+          if (lz === nzm1) {
+            if (world.getVoxel(x0 + lx, y0 + ly, z0 + nz) !== 0) supported = true
+          } else {
+            const nli = li + nx
+            if (visited[nli] === 0 && grid[nli] !== 0) { visited[nli] = 1; queue[tail++] = p + 0x100 }
           }
         }
 
@@ -195,11 +249,11 @@ export function findUnsupportedIslands(world: ChunkStore, region: Region): Islan
           // materialize in BFS order — identical to the old per-visit pushes
           const voxels: IslandVoxel[] = new Array(tail)
           for (let i = 0; i < tail; i++) {
-            const li = queue[i]
-            const lx = li % nx
-            const lz = ((li / nx) | 0) % nz
-            const ly = (li / nxnz) | 0
-            voxels[i] = { x: x0 + lx, y: y0 + ly, z: z0 + lz, mat: grid[li] }
+            const p = queue[i]
+            const lx = p & 0xff
+            const lz = (p >> 8) & 0xff
+            const ly = p >> 16
+            voxels[i] = { x: x0 + lx, y: y0 + ly, z: z0 + lz, mat: grid[lx + lz * nx + ly * nxnz] }
           }
           islands.push({ voxels })
         }
