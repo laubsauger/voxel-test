@@ -1,4 +1,4 @@
-# INTEGRATION-ui — UI track (T28, T31, T32, T33, T34 + T44/T45 input & camera UX)
+# INTEGRATION-ui — UI track (T28, T31, T32, T33, T34, T52 + T44/T45 input & camera UX)
 
 ## main.ts restructure (T31)
 
@@ -70,20 +70,59 @@ or fly). Transitions:
 
 - `settings.audio.master` / `settings.audio.music` / `settings.audio.sfx`
   — integers 0–100 (raw values like `"80"`). Written by the Audio settings
-  tab; live-updated on slider input. Audio engine: read at boot + listen
-  via its own `SettingsStore` instance or `storage` events.
+  tab; live-updated on slider input.
+- `settings.audio.muted` (bool, T52) — gates the master bus only; the
+  master value keeps its number while muted so unmute restores it exactly.
+  Flipped by the quick-access speaker buttons AND the Audio tab toggle.
+- **T52 resolution of the storage-format conflict:** the engine's own
+  localStorage reader expects linear 0..1 decimals under the same keys
+  (see INTEGRATION-audio.md), the store persists 0–100 ints. The store is
+  now the SINGLE persistence authority — `main.ts` constructs `AudioEngine`
+  with a null storage and `src/ui/audio-wiring.ts` (`wireAudioSettings`)
+  converts 0–100→0..1 (+ mute gate) and pushes `engine.setVolume` live on
+  every store change. The engine never reads or writes localStorage.
 - Other keys: `settings.graphics.quality` (`"low"|"medium"|"high"`),
   `settings.graphics.fov`, `settings.controls.sensitivity`,
   `settings.controls.invertY`, `settings.gameplay.camera` (`"fp"|"tp"`),
   `settings.dev.profiling`.
 - Unknown keys are ignored; malformed/mistyped values fall back to
   defaults (migration-safe).
+- Fullscreen is deliberately NOT in the store: it is transient browser
+  state (`src/ui/fullscreen.ts` tracks `fullscreenchange`; the Graphics-tab
+  toggle and the quick-access buttons bind to the live document state).
 
 Live apply: quality preset → pixelRatio cap + shadow map size (live), fov →
 camera (live), sensitivity/invertY → PlayerInput (live). **Bloom on/off is
 baked into the WorldRenderer pipeline at construction** — quality changes
 affecting bloom apply on next boot (render pipeline is owned by the perf
 track; noted in the Graphics tab).
+
+## audio wiring (T52, B9)
+
+`main.ts` owns the whole integration per `src/audio/INTEGRATION-audio.md`:
+
+- Engine constructed at boot (null storage — see above); manifest fetch runs
+  in parallel with world gen. `unlock()` on the first `pointerdown`/`keydown`
+  (menu PLAY is the natural gesture), then the ambience loop
+  (`ambience-suburb-day`, sfx bus) + the state-appropriate music bed start.
+- Music: `music-menu` ↔ `music-game-ambient` crossfade (1.5 s) on PLAY /
+  quit-to-menu. Beds are placeholders (T38 descope — user replaces mp3s).
+- Per-frame (`Game.addFrameHook`): WebAudio listener follows the active
+  camera; `GameAudio.update` gets the local player's position/velocity +
+  `char.GetGroundState()` grounded flag → footsteps/jump/land.
+- Events: `ToolController`'s `onFire` callback (dig/place/shoot/explode with
+  world-meter positions + hit material) → `onImpact`/`onShoot`/`onExplosion`;
+  `Game.onPlayerDamaged` → `onHurt`; `Hud.onSelect` → hotbar switch sound;
+  delegated hover/click/back sounds on all `.bb-*` controls
+  (`attachUiSounds`). All plays go through a guard that no-ops before
+  unlock/manifest and console.errors real failures.
+- `window.__bbAudio` debug handle (ctx state, the three bus gain node values,
+  scheduled-sound counter) exists for CDP verification.
+
+Pause/resume UX (B10): Esc exits pointer lock → pause menu (unchanged);
+Esc **while the pause menu is visible** resumes and re-locks. Chrome rejects
+lock requests during its ~1.5 s post-Esc cooldown — `lock()` catches and
+shows the "click to take control" hint (canvas click re-locks).
 
 ## profiling (T32)
 
