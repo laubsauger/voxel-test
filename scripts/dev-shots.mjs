@@ -21,7 +21,8 @@ const ARTIFACTS = 'smoke-artifacts'
 const SHOTS = [
   { name: 'shot-sky-up', look: [0, -700], walk: null },
   { name: 'shot-sun', look: [-785, 420], walk: null }, // 90° left, ~30° above horizon
-  { name: 'shot-wall-close', look: [1130, 380], walk: ['KeyW', 5200] }, // ~45° off street, walk into a wall
+  { name: 'shot-moon', look: [1570, -80], walk: null }, // 180° from the sun view
+  { name: 'shot-wall-close', look: [-440, 460], walk: ['KeyW', 5200] }, // ~45° off street, walk into a wall
 ]
 
 const vite = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], {
