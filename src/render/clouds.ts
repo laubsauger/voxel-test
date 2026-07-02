@@ -18,7 +18,12 @@
 import { BoxGeometry, Color, Group, Mesh, MeshBasicNodeMaterial } from 'three/webgpu'
 import { mix, positionLocal, smoothstep, uniform } from 'three/tsl'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { VOXEL_SIZE, WORLD_VX, WORLD_VZ } from '../world/chunks'
 import type { CycleState } from './atmosphere'
+
+/** arena center (m) — cloud field centers over the world, whatever its size */
+const CENTER_X = (WORLD_VX / 2) * VOXEL_SIZE
+const CENTER_Z = (WORLD_VZ / 2) * VOXEL_SIZE
 
 /** cloud cell size (m) — the blocky voxel scale of the sky layer */
 const CELL = 4
@@ -41,7 +46,7 @@ export class BlockyClouds {
   private readonly litColor = uniform(new Color(0xffffff))
   private readonly shadeColor = uniform(new Color(0xc4d2e4))
 
-  constructor(seed = 7, arenaCenterX = 51.2, arenaCenterZ = 51.2) {
+  constructor(seed = 7, arenaCenterX = CENTER_X, arenaCenterZ = CENTER_Z) {
     const rand = mulberry(seed)
     const material = new MeshBasicNodeMaterial()
     // bottom shading: lit tint on top, shade tint underneath — both cycle
@@ -81,7 +86,7 @@ export class BlockyClouds {
   }
 
   /** drift + wrap; dt in seconds (render clock) */
-  update(dt: number, centerX = 51.2): void {
+  update(dt: number, centerX = CENTER_X): void {
     for (let i = 0; i < this.meshes.length; i++) {
       const m = this.meshes[i]
       m.position.x += this.speeds[i] * dt

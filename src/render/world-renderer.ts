@@ -116,6 +116,10 @@ export class WorldRenderer {
    */
   readonly cycle = new DayCycle()
   private readonly cycleState: CycleState = createCycleState()
+  /** displayed time follows the target exponentially (T65: a slider jump or
+   * override toggle glides over ~0.3 s instead of popping CSM/exposure) */
+  private smoothedHours: number
+  private lastSimTick = 0
   private readonly hemi: HemisphereLight
   /** committed (texel-stable) shadow-light direction — see LIGHT_DIR_EPSILON */
   private readonly committedLightDir = new Vector3()
@@ -151,7 +155,9 @@ export class WorldRenderer {
 
     // T58: initial cycle state at tick 0 (default 15:00 golden afternoon —
     // ~the old static (85,62,38) sun) — lights and sky boot coherent.
-    computeCycleState(this.cycle.hoursAt(0), this.cycleState)
+    this.smoothedHours = this.cycle.hoursAt(0)
+    computeCycleState(this.smoothedHours, this.cycleState)
+    emissiveNightBoost.value = this.cycleState.lampBoost // B25: lamps off by day
 
     // sun/moon + CSM-style cascaded shadows (T8/T58). One DirectionalLight
     // plays both bodies: sun by day, moon by night (dim, blue-ish); the
@@ -255,6 +261,7 @@ export class WorldRenderer {
       setOverride: (h: number | null) => {
         this.cycle.overrideHours = h
       },
+      setSpeed: (m: number) => this.setCycleSpeed(m),
       demo: (hoursPerSec = 0.4) => {
         if (this.cycle.overrideHours === null) this.cycle.overrideHours = this.cycleState.hours
         this.demoSpeed = hoursPerSec
@@ -318,11 +325,20 @@ export class WorldRenderer {
    * (15:00), which is what the smoke gate screenshots.
    */
   update(dt: number, simTick?: number): void {
-    // --- T58 day/night cycle -------------------------------------------------
+    // --- T58/T65 day/night cycle ---------------------------------------------
+    if (simTick !== undefined) this.lastSimTick = simTick
     if (this.demoSpeed > 0 && this.cycle.overrideHours !== null) {
       this.cycle.overrideHours = (this.cycle.overrideHours + dt * this.demoSpeed) % 24
     }
-    this.applyCycle(this.cycle.hoursAt(simTick ?? 0))
+    // fast exponential glide toward the target hour (shortest wrap direction):
+    // continuous cycle deltas pass through ~unchanged, a 12 h slider jump
+    // settles in well under a second without CSM/exposure pops
+    const target = this.cycle.hoursAt(this.lastSimTick)
+    const wrapDelta = ((target - this.smoothedHours + 36) % 24) - 12
+    this.smoothedHours =
+      (((this.smoothedHours + wrapDelta * Math.min(1, dt * 6)) % 24) + 24) % 24
+    if (Math.abs(wrapDelta) < 1e-4) this.smoothedHours = target
+    this.applyCycle(this.smoothedHours)
 
     // B3: remesh focus = camera position led along its velocity
     const camPos = this.camera.position
@@ -349,6 +365,14 @@ export class WorldRenderer {
     this.particles.update(dt)
     this.clouds?.update(dt)
     this.updateLampLights(dt)
+  }
+
+  /**
+   * T65 — change the cycle speed live without jumping the clock (rebases the
+   * DayCycle offset at the current sim tick). Settings slider entry point.
+   */
+  setCycleSpeed(multiplier: number): void {
+    this.cycle.setSpeed(multiplier, this.lastSimTick)
   }
 
   /** T58 — apply one frame of the day cycle to lights, sky, clouds, exposure */
@@ -389,7 +413,7 @@ export class WorldRenderer {
     if (this.lampLights.length === 0) return
     this.scanLampChunks()
 
-    const darkness = (this.cycleState.lampBoost - 1) / 2.2 // 0 day → 1 night
+    const darkness = this.cycleState.lampFactor // 0 day → 1 night
     if (darkness < 0.02 || this.lampPositions.length === 0) {
       for (const l of this.lampLights) {
         l.intensity = 0
@@ -430,10 +454,15 @@ export class WorldRenderer {
   private scanLampChunks(): void {
     if (this.lampScanCursor >= CHUNK_COUNT) return
     const lampId = MATERIALS.findIndex((m) => m.name === 'lamp')
-    const end = Math.min(this.lampScanCursor + LAMP_SCAN_CHUNKS_PER_FRAME, CHUNK_COUNT)
-    for (let ci = this.lampScanCursor; ci < end; ci++) {
+    // budget counts DENSE chunks (the 32k-voxel scans); empty/uniform chunks
+    // are a single field read and skip freely — the expanded world is ~85%
+    // empty chunks and would otherwise take ~30 s to index
+    let denseScanned = 0
+    let ci = this.lampScanCursor
+    for (; ci < CHUNK_COUNT && denseScanned < LAMP_SCAN_CHUNKS_PER_FRAME; ci++) {
       const c = this.world.chunkAt(ci)
       if (c.kind !== ChunkKind.Dense) continue // uniform-lamp chunks don't exist
+      denseScanned++
       const data = c.data!
       const cx = ci % WORLD_CX
       const cz = ((ci / WORLD_CX) | 0) % WORLD_CZ
@@ -456,7 +485,7 @@ export class WorldRenderer {
         }
       }
     }
-    this.lampScanCursor = end
+    this.lampScanCursor = ci
     if (this.lampScanCursor >= CHUNK_COUNT) {
       // scan complete → freeze cluster centers as world-space points; merge
       // heads that straddle a grid boundary (< 1.2 m apart = one lamp)

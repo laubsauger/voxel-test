@@ -35,6 +35,18 @@ describe('DayCycle time source', () => {
     expect(c.hoursAt(0)).toBe(23.5)
     expect(c.hoursAt(1e6)).toBe(23.5)
   })
+
+  it('T65: setSpeed changes rate without jumping the current time', () => {
+    const c = new DayCycle()
+    const tick = 45678
+    const before = c.hoursAt(tick)
+    c.setSpeed(4, tick)
+    // continuous at the change point…
+    expect(c.hoursAt(tick)).toBeCloseTo(before, 10)
+    // …and 4× faster afterwards (60 sim-seconds at 4× = 4×(24/1200)×60 h)
+    const later = tick + 60 * 60
+    expect(((c.hoursAt(later) - before + 24) % 24)).toBeCloseTo((24 / 1200) * 60 * 4, 10)
+  })
 })
 
 describe('computeCycleState', () => {
@@ -66,17 +78,24 @@ describe('computeCycleState', () => {
     }
   })
 
-  it('night dims ambient, boosts lamps + exposure; day restores baseline', () => {
+  it('night dims ambient, lights lamps, lifts exposure; day restores baseline', () => {
     computeCycleState(1, state) // deep night
     expect(state.hemiIntensity).toBeLessThan(0.2)
+    expect(state.lampFactor).toBe(1)
     expect(state.lampBoost).toBeGreaterThan(2.5)
     expect(state.exposure).toBeGreaterThan(1.2)
     expect(state.starVis).toBe(1)
     computeCycleState(12, state) // noon
     expect(state.hemiIntensity).toBeGreaterThan(0.9)
-    expect(state.lampBoost).toBe(1)
+    // B25: street lamps must NOT glow in daylight — emissive fully off
+    expect(state.lampFactor).toBe(0)
+    expect(state.lampBoost).toBe(0)
     expect(state.exposure).toBe(1)
     expect(state.starVis).toBe(0)
+    // …and the ramp through dusk is smooth, not binary (B25)
+    computeCycleState(18.2, state)
+    expect(state.lampFactor).toBeGreaterThan(0.05)
+    expect(state.lampFactor).toBeLessThan(1)
   })
 
   it('palette and light evolve continuously (no pops across the whole day)', () => {

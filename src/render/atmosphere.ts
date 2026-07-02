@@ -56,15 +56,36 @@ export class DayCycle {
   cycleLengthSec = 1200
   /** time of day at tick 0, hours (default 15:00 — golden afternoon) */
   timeOfDayOffsetHours = 15
-  /** dev/settings: freeze the clock at a fixed hour (null = tick-driven) */
+  /** T65 settings: freeze the clock at a fixed hour (null = tick-driven) */
   overrideHours: number | null = null
+  /** T65 settings: cycle speed multiplier (1 = cycleLengthSec per day) */
+  speedMultiplier = 1
 
   /** time of day (hours 0..24) for a sim tick — deterministic (V2 via tick) */
   hoursAt(tick: number): number {
     const h =
       this.overrideHours ??
-      this.timeOfDayOffsetHours + (tick / TICK_HZ) * (24 / this.cycleLengthSec)
+      this.timeOfDayOffsetHours +
+        (tick / TICK_HZ) * (24 / this.cycleLengthSec) * this.speedMultiplier
     return ((h % 24) + 24) % 24
+  }
+
+  /**
+   * T65 — change the cycle speed live WITHOUT jumping the clock: hoursAt is a
+   * pure function of tick (deterministic), so a raw multiplier write would
+   * teleport the time; this rebases the offset so hoursAt(atTick) is
+   * continuous across the change. (WorldRenderer.setCycleSpeed passes the
+   * current tick for you.)
+   */
+  setSpeed(multiplier: number, atTick: number): void {
+    if (this.overrideHours === null) {
+      const now = this.hoursAt(atTick)
+      this.speedMultiplier = multiplier
+      const drift = (atTick / TICK_HZ) * (24 / this.cycleLengthSec) * multiplier
+      this.timeOfDayOffsetHours = (((now - drift) % 24) + 24) % 24
+    } else {
+      this.speedMultiplier = multiplier
+    }
   }
 }
 
@@ -87,7 +108,9 @@ export interface CycleState {
   hemiIntensity: number
   /** renderer.toneMappingExposure — mild lift so night reads, never black */
   exposure: number
-  /** multiplier on emissive materials (lamp 13) — streets glow at night */
+  /** 0 day → 1 night: how "on" the street lamps are (B25: OFF in daylight) */
+  lampFactor: number
+  /** multiplier on emissive materials (lamp 13) — 0 by day, ~3.2 at night */
   lampBoost: number
   cloudLit: Color
   cloudShade: Color
@@ -122,7 +145,8 @@ export function createCycleState(): CycleState {
     hemiGround: new Color(),
     hemiIntensity: 0,
     exposure: 1,
-    lampBoost: 1,
+    lampFactor: 0,
+    lampBoost: 0,
     cloudLit: new Color(),
     cloudShade: new Color(),
     zenith: new Color(),
@@ -259,8 +283,10 @@ export function computeCycleState(hours: number, out: CycleState): CycleState {
 
   // mild exposure lift so night is readable-dark, not black
   out.exposure = 1 + 0.32 * out.nightF
-  // lamp emissive boost (chunk material uniform): streets glow after dark
-  out.lampBoost = 1 + 2.2 * (1 - smooth01(-0.08, 0.1, s))
+  // lamp on-ness (B25): emissive OFF in daylight, smooth ramp through dusk,
+  // full after dark — drives the material boost AND the point-light pool
+  out.lampFactor = 1 - smooth01(-0.1, 0.06, s)
+  out.lampBoost = 3.2 * out.lampFactor
 
   // sky extras
   out.sunVis = smooth01(-0.09, 0.0, s)
