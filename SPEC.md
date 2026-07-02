@@ -78,7 +78,7 @@ T26|x|[N] join snapshot: serialize sim state, RLE chunks, fast-forward|T25|V3
 T27|x|[N] desync detector: periodic hash exchange, loud fail|T25|V10
 T28|.|[CORE] tool UX: hotbar dig/place/gun/explode, crosshair, hit feedback — AAA HUD styling per §C UI bar, shared design system with T33 menu|T5,T13|§C
 T29|.|[R] PBR texture pipeline: CC0 sets (ambientcg/freepbr) per I.mat entry, triplanar TSL mapping (albedo/normal/rough/ao), texture array|T8|I.mat,§C
-T30|.|[R] atmosphere polish: physical sky + sun disc, height/distance fog, exposure tuning, SSAO/GTAO, TAA or SMAA, post stack within 60fps budget|T8|§C
+T30|.|[R] atmosphere polish: physical sky + sun disc + moon, voxel/block clouds (cute, drifting, seed-varied), height/distance fog, exposure tuning, SSAO/GTAO, TAA or SMAA, post stack within 60fps budget|T8|§C
 T31|.|[UI] boot pipeline: preloader gate (WASM+assets+scene stamp+water fill done → then UI), I.boot URL params, dev bypass straight into scene||I.boot
 T32|.|[UI] profiling from get-go: three r185 Inspector addon (three/addons/inspector/Inspector.js — NOT stats-gl) + renderer.info line, toggle via I.boot dev flag + I.settings dev section|T31|I.boot,I.settings
 T33|.|[UI] main menu AAA: slick styled, live in-game scene as background (slow orbit cam over suburb), play/join/settings entries|T31,T20|§C,I.boot
