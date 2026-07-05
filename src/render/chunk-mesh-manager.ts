@@ -79,6 +79,20 @@ export const REGION = 4
 const REGION_CX = Math.ceil(WORLD_CX / REGION)
 const REGION_CZ = Math.ceil(WORLD_CZ / REGION)
 
+/**
+ * B33 — shadow-caster vision range (m, horizontal). The 3-cascade CSM
+ * (maxFar 150 m) re-renders EVERY castShadow region mesh within its frustum,
+ * which on the 4× world was ~7 M of the 8.9 M tris/frame — the settled-fps
+ * regression (~29 fps). Region meshes farther than this from the camera stop
+ * casting shadows; the near field still does. Recovers ~29→41 fps at settle
+ * (measured). Distant shadows fall in the low-res far cascade and read as mush
+ * anyway, so the pop is subtle. Render-only (V6) — never touches sim state, and
+ * scales with world size (bounded by radius, not total mesh count). */
+const SHADOW_CAST_RADIUS = 100
+const SHADOW_CAST_RADIUS_SQ = SHADOW_CAST_RADIUS * SHADOW_CAST_RADIUS
+/** region center offset from its corner-anchored mesh.position (world m) */
+const REGION_HALF_M = (REGION * CHUNK * VOXEL_SIZE) / 2
+
 /** region index for a chunk index */
 export function regionIndex(ci: number): number {
   const [cx, cy, cz] = chunkCoords(ci)
@@ -374,6 +388,15 @@ export class ChunkMeshManager {
       this.completed.length === 0
     ) {
       this.initialBuild = false
+    }
+
+    // B33 — shadow-caster distance cull (render-only, V6). Cheap arithmetic
+    // over the opaque region meshes (transparent glass never casts); toggling
+    // castShadow only changes shadow-pass traversal, not the material pipeline.
+    for (const mesh of this.regionMeshes.values()) {
+      const dx = mesh.position.x + REGION_HALF_M - camPos.x
+      const dz = mesh.position.z + REGION_HALF_M - camPos.z
+      mesh.castShadow = dx * dx + dz * dz <= SHADOW_CAST_RADIUS_SQ
     }
   }
 

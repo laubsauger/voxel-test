@@ -33,7 +33,12 @@ export class TracerPool {
       material.depthWrite = false
       const line = new Line(geometry, material)
       line.frustumCulled = false
-      line.visible = false
+      // B33 — stay permanently visible (fade drives color to 0 + the geometry
+      // starts zero-length, so it renders nothing). A .visible flip on the
+      // first shot would defer this LineBasicNodeMaterial's pipeline compile to
+      // that frame — part of the residual shoot hitch. Visible from the start
+      // warms the pipeline during the loading render instead.
+      line.visible = true
       this.slots.push({ line, fade, ttl: 0 })
       this.group.add(line)
     }
@@ -48,19 +53,13 @@ export class TracerPool {
     pos.needsUpdate = true
     s.ttl = TRACER_LIFE
     s.fade.value = 1
-    s.line.visible = true
   }
 
   update(dt: number): void {
     for (const s of this.slots) {
-      if (!s.line.visible) continue
+      if (s.ttl <= 0) continue // already faded to 0 (stays visible, renders nothing)
       s.ttl -= dt
-      if (s.ttl <= 0) {
-        s.line.visible = false
-        s.fade.value = 0
-      } else {
-        s.fade.value = s.ttl / TRACER_LIFE
-      }
+      s.fade.value = s.ttl > 0 ? s.ttl / TRACER_LIFE : 0
     }
   }
 }

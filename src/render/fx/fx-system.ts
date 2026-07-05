@@ -99,7 +99,12 @@ export class FxSystem {
     mMat.blending = AdditiveBlending
     this.muzzle = new Sprite(mMat)
     this.muzzle.scale.setScalar(0.16)
-    this.muzzle.visible = false
+    // B33 — stay permanently visible (muzzleGain drives opacity/color to 0 when
+    // idle, so it renders nothing). A .visible=false→true flip on the first
+    // shot defers this SpriteNodeMaterial's pipeline compile to that frame — a
+    // one-time render-thread stall (the residual shoot hitch after B31). Being
+    // visible from construction warms it during the loading render instead.
+    this.muzzle.visible = true
     this.muzzle.frustumCulled = false
     // B31 — muzzle light stays permanently visible (intensity 0 when idle):
     // toggling .visible per shot recompiled every lit material (see flashlight).
@@ -131,7 +136,9 @@ export class FxSystem {
       this.muzzleGain.value = k
       this.muzzleLight.intensity = 60 * k
       if (this.muzzleTtl <= 0) {
-        this.muzzle.visible = false // sprite toggle is free (not a light)
+        // B33 — muzzleGain is already 0 here (k clamps to 0), so the sprite is
+        // invisible without a .visible flip; keep it visible to hold the warm
+        // pipeline (see constructor).
         this.muzzleLight.intensity = 0 // stays visible/counted; just goes dark
       }
     }
@@ -275,7 +282,7 @@ export class FxSystem {
       if (ddx * ddx + ddy * ddy + ddz * ddz < 0.35) {
         this.muzzle.position.set(ev.ox + ev.dx * 0.7, ev.oy + ev.dy * 0.7 - 0.09, ev.oz + ev.dz * 0.7)
         this.muzzleLight.position.copy(this.muzzle.position)
-        this.muzzle.visible = true
+        // muzzle stays permanently visible (B33); muzzleTtl ramps muzzleGain up
         this.muzzleTtl = 0.055
       }
     }
