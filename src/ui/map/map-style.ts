@@ -56,6 +56,20 @@ export const DISTRICT_STYLES: Record<string, DistrictStyle> = {
     buildingShade: '#a4854e',
     label: 'BEACH',
   },
+  desert: {
+    ground: '#e8d4a0',
+    lot: '#e0c88c',
+    building: '#c9b075',
+    buildingShade: '#a68a52',
+    label: 'TRAILER PARK',
+  },
+  airport: {
+    ground: '#d8d8d2',
+    lot: '#cecec8',
+    building: '#b4b4ae',
+    buildingShade: '#8a8a84',
+    label: 'AIRFIELD',
+  },
 }
 
 const DEFAULT_STYLE: DistrictStyle = DISTRICT_STYLES.suburban
