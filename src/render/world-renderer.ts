@@ -76,11 +76,13 @@ const MAX_BURSTS_PER_FRAME = 8
  * T58 — CSM stabilization for the moving sun (shadow-systems skill): commit
  * the shadow light direction only when it drifts past this angle (radians).
  * Between commits the light-space texel grid is frozen, so shadows are
- * rock-stable; each ~0.09° step shifts shadow edges well under one voxel at
- * scene distances. At the default 20-min cycle the sun moves 0.0052 rad/s →
- * a coherent refresh roughly every 0.3 s.
+ * rock-stable, but each commit re-snaps the grid and the whole shadow VISIBLY
+ * JUMPS to the next step. B34 — dropped 0.0015→0.0003 (5× smaller): the step is
+ * now ~0.017°, so the sun's shadow creeps smoothly instead of snapping ~once a
+ * second. The map re-renders every frame regardless, so more-frequent commits
+ * cost nothing here; only the perceived jump changes.
  */
-const LIGHT_DIR_EPSILON = 0.0015
+const LIGHT_DIR_EPSILON = 0.0003
 /** distance (m) the directional light sits from its origin target */
 const LIGHT_DIST = 120
 
@@ -180,11 +182,11 @@ export class WorldRenderer {
     // scale per cascade after the CSM node initializes (see render()).
     this.sun.shadow.bias = -0.00005
     this.sun.shadow.normalBias = 0.03
-    // B34 — maxFar 150→110: tighter far cascade packs the 2048² map onto less
-    // area (slightly sharper near shadows) and drops the 110–150 m shadow fringe
-    // that fog mostly hides anyway. ~15% fewer shadow draws (matched to the
-    // SHADOW_CAST_RADIUS caster cull). 3 cascades kept — 2 halves near density.
-    this.csm = new CSMShadowNode(this.sun, { cascades: 3, maxFar: 110, mode: 'practical' })
+    // B34 — maxFar 150→80: pull the shadow range in (fog hides the fringe). The
+    // 3 CSM cascades re-draw every caster within maxFar each frame — the biggest
+    // fixed cost — so a shorter range = fewer shadow draws AND a sharper 2048²
+    // map packed onto less area. 3 cascades kept (2 halves near density).
+    this.csm = new CSMShadowNode(this.sun, { cascades: 3, maxFar: 80, mode: 'practical' })
     this.csm.fade = true
     // custom shadow node hook (not yet in @types/three)
     ;(this.sun.shadow as DirectionalLightShadow & { shadowNode?: CSMShadowNode }).shadowNode =
@@ -308,7 +310,9 @@ export class WorldRenderer {
           scenePass.getTextureNode('normal'),
           opts.camera,
         )
-        aoPass.resolutionScale = 0.5
+        aoPass.resolutionScale = 0.25 // B34 — quarter-res GTAO (was half): 1/4 the
+        // AO fragments, a real retina win; AO is a soft occlusion term so the
+        // lower-res blur is barely perceptible after the bilateral upsample.
         aoPass.radius.value = 0.55
         aoPass.thickness.value = 0.5
         aoPass.scale.value = 1.1
