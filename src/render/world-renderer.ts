@@ -180,7 +180,11 @@ export class WorldRenderer {
     // scale per cascade after the CSM node initializes (see render()).
     this.sun.shadow.bias = -0.00005
     this.sun.shadow.normalBias = 0.03
-    this.csm = new CSMShadowNode(this.sun, { cascades: 3, maxFar: 150, mode: 'practical' })
+    // B34 — maxFar 150→110: tighter far cascade packs the 2048² map onto less
+    // area (slightly sharper near shadows) and drops the 110–150 m shadow fringe
+    // that fog mostly hides anyway. ~15% fewer shadow draws (matched to the
+    // SHADOW_CAST_RADIUS caster cull). 3 cascades kept — 2 halves near density.
+    this.csm = new CSMShadowNode(this.sun, { cascades: 3, maxFar: 110, mode: 'practical' })
     this.csm.fade = true
     // custom shadow node hook (not yet in @types/three)
     ;(this.sun.shadow as DirectionalLightShadow & { shadowNode?: CSMShadowNode }).shadowNode =

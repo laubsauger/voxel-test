@@ -79,7 +79,11 @@ const ORBIT_RATE = 0.05 // rad/s
 const QUALITY = {
   low: { pixelRatio: 1, shadow: 1024, bloom: false, ao: false, clouds: false, textures: false },
   medium: { pixelRatio: 1.5, shadow: 2048, bloom: false, ao: true, clouds: true, textures: true },
-  high: { pixelRatio: 2, shadow: 2048, bloom: true, ao: true, clouds: true, textures: true },
+  // B34 — 'high' pixelRatio 2.0→1.6: applied as min(devicePixelRatio, cap), so
+  // it only bites on hi-DPI. On a retina Mac (dpr 2) the scene + the whole post
+  // stack (GTAO, bloom, tonemap) ran at 4× the fragments; 1.6 cuts that ~36% for
+  // a barely-perceptible softening (still supersampled). 'ultra' can restore 2.
+  high: { pixelRatio: 1.6, shadow: 2048, bloom: true, ao: true, clouds: true, textures: true },
 } as const
 
 /** let the browser paint (preloader stage updates) between heavy sync phases */

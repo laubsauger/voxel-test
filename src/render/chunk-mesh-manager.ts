@@ -88,7 +88,7 @@ const REGION_CZ = Math.ceil(WORLD_CZ / REGION)
  * (measured). Distant shadows fall in the low-res far cascade and read as mush
  * anyway, so the pop is subtle. Render-only (V6) — never touches sim state, and
  * scales with world size (bounded by radius, not total mesh count). */
-const SHADOW_CAST_RADIUS = 100
+const SHADOW_CAST_RADIUS = 110 // B34 — matched to CSM maxFar (was 100)
 const SHADOW_CAST_RADIUS_SQ = SHADOW_CAST_RADIUS * SHADOW_CAST_RADIUS
 /** region center offset from its corner-anchored mesh.position (world m) */
 const REGION_HALF_M = (REGION * CHUNK * VOXEL_SIZE) / 2
