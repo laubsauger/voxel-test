@@ -5,6 +5,12 @@ import { Flashlight } from '../src/render/flashlight'
 // T75 — flashlight is render-only; these tests pin the TOGGLE/STATE contract
 // (off by default, KeyL handler flips it, beam follows the camera with lag)
 // so a refactor can't silently ship a light that boots ON or never fades out.
+//
+// B31 — the light is now PERMANENTLY .visible (added to the scene's light set
+// once, never toggled): in WebGPU the visible-light COUNT is part of every lit
+// material's pipeline key, so flicking .visible recompiled every terrain/water
+// material on toggle (hard hitch). "Off" therefore means intensity 0, NOT
+// visible=false — the contract these tests pin is the intensity, not .visible.
 
 function makeCam(): PerspectiveCamera {
   const cam = new PerspectiveCamera(75, 16 / 9, 0.1, 500)
@@ -14,11 +20,11 @@ function makeCam(): PerspectiveCamera {
 }
 
 describe('T75 flashlight toggle state', () => {
-  it('boots OFF and invisible (night scenes must not glow by default)', () => {
+  it('boots OFF = zero intensity (night scenes must not glow by default)', () => {
     const fl = new Flashlight(makeCam())
     expect(fl.isOn).toBe(false)
-    expect(fl.light.visible).toBe(false)
-    expect(fl.light.intensity).toBe(0)
+    expect(fl.light.intensity).toBe(0) // dark via intensity, not .visible (B31)
+    expect(fl.light.visible).toBe(true) // permanently counted — no recompile
   })
 
   it('toggle() flips state and returns the new state', () => {
@@ -39,14 +45,14 @@ describe('T75 flashlight toggle state', () => {
     expect(fl.light.intensity).toBeGreaterThan(50) // reads as a real beam
   })
 
-  it('fades out and hides after toggle off (no zero-intensity light left in the pass)', () => {
+  it('fades to zero intensity after toggle off (light stays counted, B31)', () => {
     const fl = new Flashlight(makeCam())
     fl.toggle()
     for (let i = 0; i < 60; i++) fl.update(1 / 60)
     fl.toggle()
     for (let i = 0; i < 120; i++) fl.update(1 / 60)
-    expect(fl.light.intensity).toBe(0)
-    expect(fl.light.visible).toBe(false)
+    expect(fl.light.intensity).toBe(0) // fully dark
+    expect(fl.light.visible).toBe(true) // but never removed from the light set
   })
 })
 

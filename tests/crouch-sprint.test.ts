@@ -76,7 +76,7 @@ function buildTunnel(sim: Sim): void {
 describe('functional crouch (T44)', () => {
   it('crouched (1.2m) walks under a 1.4m gap; standing is blocked by it', async () => {
     expect(CROUCH_HEIGHT).toBeCloseTo(1.2, 6)
-    expect(PLAYER_HEIGHT).toBeCloseTo(1.8, 6)
+    expect(PLAYER_HEIGHT).toBeCloseTo(1.65, 6) // B31 — dropped from 1.8m
 
     const through = async (input: number) => {
       const { sim, phys } = await makeSim()

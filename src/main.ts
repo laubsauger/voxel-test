@@ -247,12 +247,12 @@ const vehicleAudioHook = (): void => {
   }
 }
 
-// T64 — 'Enter to drive' prompt: nearest free vehicle within reach, on foot only
+// T64 — contextual `Enter` prompt: nearest free vehicle within reach, on foot only
 const promptHook = (): void => {
   if (game.state !== 'play') return hud.setPrompt(null)
   const p = game.phys.players.get(game.localPlayerId)
   if (!p) return hud.setPrompt(null)
-  if (p.seatedVehicle !== 0) return hud.setPrompt('⏎  EXIT VEHICLE')
+  if (p.seatedVehicle !== 0) return hud.setPrompt({ hotkey: 'Enter', action: 'Exit vehicle' })
   let near = false
   let arch = ''
   for (const v of game.phys.vehicles.values()) {
@@ -265,7 +265,11 @@ const promptHook = (): void => {
       break
     }
   }
-  hud.setPrompt(near ? `⏎  ${arch === 'bicycle' ? 'RIDE BIKE' : arch === 'scooter' ? 'RIDE SCOOTER' : 'DRIVE'}` : null)
+  hud.setPrompt(
+    near
+      ? { hotkey: 'Enter', action: arch === 'bicycle' ? 'Ride bike' : arch === 'scooter' ? 'Ride scooter' : 'Drive' }
+      : null,
+  )
 }
 
 const mapHook = (): void => {

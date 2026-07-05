@@ -101,8 +101,10 @@ export class FxSystem {
     this.muzzle.scale.setScalar(0.16)
     this.muzzle.visible = false
     this.muzzle.frustumCulled = false
+    // B31 — muzzle light stays permanently visible (intensity 0 when idle):
+    // toggling .visible per shot recompiled every lit material (see flashlight).
     this.muzzleLight = new PointLight(0xffc37a, 0, 7, 1.8)
-    this.muzzleLight.visible = false
+    this.muzzleLight.visible = true
     this.group.add(this.muzzle, this.muzzleLight)
   }
 
@@ -129,8 +131,8 @@ export class FxSystem {
       this.muzzleGain.value = k
       this.muzzleLight.intensity = 60 * k
       if (this.muzzleTtl <= 0) {
-        this.muzzle.visible = false
-        this.muzzleLight.visible = false
+        this.muzzle.visible = false // sprite toggle is free (not a light)
+        this.muzzleLight.intensity = 0 // stays visible/counted; just goes dark
       }
     }
   }
@@ -274,7 +276,6 @@ export class FxSystem {
         this.muzzle.position.set(ev.ox + ev.dx * 0.7, ev.oy + ev.dy * 0.7 - 0.09, ev.oz + ev.dz * 0.7)
         this.muzzleLight.position.copy(this.muzzle.position)
         this.muzzle.visible = true
-        this.muzzleLight.visible = true
         this.muzzleTtl = 0.055
       }
     }

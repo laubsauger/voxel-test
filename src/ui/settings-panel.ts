@@ -207,7 +207,7 @@ export class SettingsPanel {
     }
     const note = document.createElement('div')
     note.className = 'bb-set-section-title'
-    note.textContent = 'Preset maps resolution + shadows live · bloom applies on next boot'
+    note.textContent = 'Preset maps resolution + shadows live · post/texture/cloud changes apply on next boot'
     this.body.appendChild(note)
   }
 

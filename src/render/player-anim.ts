@@ -169,6 +169,30 @@ export interface AnimInputs {
   /** body is rendered under the FP camera: suppress aim-driven torso pitch
    * so the chest never sweeps into the near plane */
   fpBody?: boolean
+  /** B31 — driver/passenger seated in a vehicle: a fixed sitting pose (thighs
+   * forward, hands to the wheel), locked to the seat, no walk cycle */
+  seated?: boolean
+}
+
+/** B31 — static seated pose: hips dropped, thighs folded forward, torso upright
+ * with a slight lean, arms reaching to the wheel. Head/arms tuned via CDP. */
+const SEATED_POSE: Pose = {
+  rootYaw: 0, // PlayerMesh overrides body yaw to the vehicle heading
+  pelvisY: -0.12,
+  torsoPitch: 0.14,
+  torsoYaw: 0,
+  torsoRoll: 0,
+  headPitch: 0.08,
+  headYaw: 0,
+  armLPitch: -1.15,
+  armRPitch: -1.15,
+  armLRoll: 0.32,
+  armRRoll: -0.32,
+  legLPitch: -1.4,
+  legRPitch: -1.4,
+  phase: 0,
+  moveW: 0,
+  landK: 0,
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +229,12 @@ export interface Pose {
 export function stepAnim(s: AnimState, inp: AnimInputs, dtIn: number): Pose {
   const dt = clamp(dtIn, 0, 0.1)
   s.time += dt
+
+  // seated: fixed pose, no cycle. Keep bodyYaw tracking so exit is seamless.
+  if (inp.seated) {
+    s.bodyYaw = inp.yaw
+    return { ...SEATED_POSE, phase: 0, moveW: 0, landK: 0 }
+  }
 
   const speed = Math.hypot(inp.vx, inp.vz)
   s.speedSm = expSmooth(s.speedSm, speed, LAMBDA_SPEED, dt)

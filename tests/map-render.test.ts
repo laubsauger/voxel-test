@@ -63,6 +63,9 @@ describe('buildMapCommands — completeness', () => {
 
   it('every pool appears as water, every tree as a canopy dot', () => {
     expect(fills(MAP_INK.waterFill).length).toBe(layout.pools!.length + (layout.ponds?.length ?? 0))
+    expect(fills(MAP_INK.oceanFill).length).toBe(layout.beaches?.length ?? 0)
+    expect(fills(MAP_INK.sandFill).length).toBe(layout.beaches?.length ?? 0)
+    expect(fills(MAP_INK.boardwalk).length).toBe(layout.beaches?.length ?? 0)
     expect(list.cmds.filter((c) => c.op === 'circle').length).toBe(layout.trees!.length)
   })
 

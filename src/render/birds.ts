@@ -2,18 +2,15 @@
  * T74 — bird flocks (render-only cosmetic, V6: the sim never sees these;
  * local PRNG is render salt only).
  *
- * A few small flocks of dark voxel-ish birds circle lazily over the town at
- * 40–70 m. Each bird is 3 boxes (body + two wings) merged into ONE shared
- * geometry drawn as ONE InstancedMesh (1 draw call for every bird in the
- * sky). Wing flap runs entirely in the vertex shader (TSL: per-instance
- * phase/speed hashed off instanceIndex), so the CPU only refreshes instance
- * matrices — no per-frame allocation.
+ * A couple of small dark birds circle lazily over the town at 40–70 m. Bodies
+ * and wings are compact instanced boxes; wings flap by matrix rotation, not
+ * shader stretching, so distant birds keep a readable silhouette instead of
+ * turning into noisy sky streaks.
  *
  * Paths: each flock orbits a center near the town at its own angular speed,
- * and the orbit RADIUS itself drifts slowly in and out (a wide breathing
- * orbit) so flocks wander overhead for a while, then recede into the distance
- * — occasional, not constant. Per-bird offsets add gentle boid-ish wander
- * (three incommensurate sines) around the flock slot.
+ * and the orbit RADIUS itself drifts slowly in and out. Per-bird offsets form
+ * a compact shallow V in flock-local space, with tiny boid-ish wander around
+ * each slot.
  *
  * Day-only: update() takes the cycle day factor (CycleState.dayF from
  * WorldRenderer's cycle — see src/render/INTEGRATION-polish.md); birds fade
@@ -34,20 +31,21 @@ import {
   Quaternion,
   Vector3,
 } from 'three/webgpu'
-import { abs, float, hash, instanceIndex, positionLocal, sin, time, uniform, vec3 } from 'three/tsl'
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { uniform, vec3 } from 'three/tsl'
 import { VOXEL_SIZE, WORLD_VX, WORLD_VZ } from '../world/chunks'
 
 /** town center (m) — flock orbits are centered near here */
 const CENTER_X = (WORLD_VX / 2) * VOXEL_SIZE
 const CENTER_Z = (WORLD_VZ / 2) * VOXEL_SIZE
 
-const FLOCK_COUNT = 3
+const FLOCK_COUNT = 2
+const WING_X = 0.2
+const WING_Y = 0.015
+const WING_Z = -0.04
+const WING_SWEEP = 0.36
 /** altitude band (m) the whole system must stay inside (T74: 40–70 m) */
 export const ALT_MIN = 40
 export const ALT_MAX = 70
-/** wing geometry: flap bends everything outboard of this |x| (m) */
-const WING_ROOT_X = 0.1
 /** day factor below which the mesh is hidden (draw skipped entirely) */
 const HIDE_BELOW = 0.02
 
@@ -90,6 +88,9 @@ export interface BirdDef {
   px: number
   py: number
   pz: number
+  /** wing animation phase/speed (rad, rad/s) */
+  flapPhase?: number
+  flapSpeed?: number
   /** per-bird visual scale */
   scale: number
 }
@@ -133,37 +134,41 @@ export function createFlocks(seed: number): { flocks: FlockDef[]; birds: BirdDef
     // always inside the 40..70 band (asserted by tests)
     const altBase = 48 + rand() * 14
     flocks.push({
-      centerX: CENTER_X + (rand() * 2 - 1) * 30,
-      centerZ: CENTER_Z + (rand() * 2 - 1) * 30,
-      baseRadius: 55 + rand() * 30,
-      radiusSwing: 30 + rand() * 15,
-      driftSpeed: 0.045 + rand() * 0.025, // full in/out breath ~2–3 min
+      centerX: CENTER_X + (rand() * 2 - 1) * 18,
+      centerZ: CENTER_Z + (rand() * 2 - 1) * 18,
+      baseRadius: 46 + rand() * 18,
+      radiusSwing: 12 + rand() * 8,
+      driftSpeed: 0.035 + rand() * 0.02,
       driftPhase: rand() * Math.PI * 2,
-      angSpeed: (0.06 + rand() * 0.06) * (rand() < 0.5 ? -1 : 1),
+      angSpeed: (0.045 + rand() * 0.035) * (rand() < 0.5 ? -1 : 1),
       angPhase: rand() * Math.PI * 2,
       altBase,
       altSwing: 2 + rand() * 2,
       altSpeed: 0.05 + rand() * 0.08,
       altPhase: rand() * Math.PI * 2,
     })
-    const n = 5 + Math.floor(rand() * 5) // 5..9
+    const n = 5 + Math.floor(rand() * 3) // 5..7
     const flock: BirdDef[] = []
     for (let j = 0; j < n; j++) {
+      const row = Math.ceil(j / 2)
+      const side = j === 0 ? 0 : j % 2 === 0 ? 1 : -1
       flock.push({
-        // loose V-ish scatter: birds trail behind/beside the flock center
-        ox: (rand() * 2 - 1) * 7,
-        oy: (rand() * 2 - 1) * 2,
-        oz: (rand() * 2 - 1) * 7,
-        wx: 1 + rand() * 2,
-        wy: 0.4 + rand() * 0.6,
-        wz: 1 + rand() * 2,
-        sx: 0.25 + rand() * 0.35,
-        sy: 0.35 + rand() * 0.45,
-        sz: 0.25 + rand() * 0.35,
+        // compact shallow V, in flock-local space: x = wing, z = trail.
+        ox: side * (1.3 + row * 1.25) + (rand() * 2 - 1) * 0.35,
+        oy: (rand() * 2 - 1) * 0.7,
+        oz: -row * (2.2 + rand() * 0.55) + (rand() * 2 - 1) * 0.35,
+        wx: 0.35 + rand() * 0.55,
+        wy: 0.2 + rand() * 0.3,
+        wz: 0.35 + rand() * 0.55,
+        sx: 0.18 + rand() * 0.22,
+        sy: 0.25 + rand() * 0.28,
+        sz: 0.18 + rand() * 0.22,
         px: rand() * Math.PI * 2,
         py: rand() * Math.PI * 2,
         pz: rand() * Math.PI * 2,
-        scale: 0.85 + rand() * 0.5,
+        flapPhase: rand() * Math.PI * 2,
+        flapSpeed: 5.2 + rand() * 1.8,
+        scale: 0.55 + rand() * 0.25,
       })
     }
     birds.push(flock)
@@ -177,7 +182,9 @@ export function createFlocks(seed: number): { flocks: FlockDef[]; birds: BirdDef
 
 export class Birds {
   readonly group = new Group()
-  private readonly mesh: InstancedMesh
+  private readonly bodyMesh: InstancedMesh
+  private readonly leftWingMesh: InstancedMesh
+  private readonly rightWingMesh: InstancedMesh
   private readonly flocks: FlockDef[]
   private readonly birds: BirdDef[][]
   /** fades the whole layer with the cycle day factor (0 night → 1 day) */
@@ -187,10 +194,16 @@ export class Birds {
   private readonly _center = new Vector3()
   private readonly _off = new Vector3()
   private readonly _pos = new Vector3()
+  private readonly _wingPos = new Vector3()
+  private readonly _wingLocal = new Vector3()
   private readonly _quat = new Quaternion()
+  private readonly _partQuat = new Quaternion()
+  private readonly _sweepQuat = new Quaternion()
+  private readonly _flapQuat = new Quaternion()
   private readonly _scale = new Vector3()
   private readonly _mat = new Matrix4()
   private static readonly UP = new Vector3(0, 1, 0)
+  private static readonly FORWARD = new Vector3(0, 0, 1)
 
   constructor(seed = 74) {
     const layout = createFlocks(seed)
@@ -203,34 +216,26 @@ export class Birds {
 
     const count = this.birds.reduce((n, f) => n + f.length, 0)
 
-    // one merged bird: body + two wing slabs; nose points +z
-    const parts = [
-      new BoxGeometry(0.16, 0.12, 0.52),
-      new BoxGeometry(0.72, 0.03, 0.26).translate(-0.44, 0.03, -0.04),
-      new BoxGeometry(0.72, 0.03, 0.26).translate(0.44, 0.03, -0.04),
-    ]
-    const geometry = mergeGeometries(parts)
-    for (const p of parts) p.dispose()
-
-    // dark silhouette material; wing flap in the vertex stage — hashed
-    // per-instance phase + speed so the flock never flaps in lockstep
+    const bodyGeometry = new BoxGeometry(0.1, 0.08, 0.34)
+    const wingGeometry = new BoxGeometry(0.32, 0.025, 0.16)
     const material = new MeshBasicNodeMaterial()
     material.colorNode = vec3(0.055, 0.06, 0.07)
     material.transparent = true
     material.opacityNode = this.fade
-    const idx = instanceIndex.toFloat()
-    const phase = hash(idx).mul(Math.PI * 2)
-    const omega = hash(idx.add(17.7)).mul(8).add(18) // flap 18..26 rad/s
-    const flap = sin(time.mul(omega).add(phase))
-    const wingLift = abs(positionLocal.x).sub(WING_ROOT_X).max(0)
-    material.positionNode = positionLocal.add(vec3(0, flap.mul(wingLift).mul(float(0.85)), 0))
 
-    this.mesh = new InstancedMesh(geometry, material, count)
-    this.mesh.castShadow = false
-    this.mesh.receiveShadow = false
-    this.mesh.frustumCulled = false // instances spread wide; skip stale-bounds pops
-    this.group.add(this.mesh)
+    this.bodyMesh = this.makeMesh(bodyGeometry, material, count)
+    this.leftWingMesh = this.makeMesh(wingGeometry, material, count)
+    this.rightWingMesh = this.makeMesh(wingGeometry, material, count)
+    this.group.add(this.bodyMesh, this.leftWingMesh, this.rightWingMesh)
     this.writeMatrices()
+  }
+
+  private makeMesh(geometry: BoxGeometry, material: MeshBasicNodeMaterial, count: number): InstancedMesh {
+    const mesh = new InstancedMesh(geometry, material, count)
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    mesh.frustumCulled = false // instances spread wide; skip stale-bounds pops
+    return mesh
   }
 
   /**
@@ -242,7 +247,9 @@ export class Birds {
     const f = Math.min(1, Math.max(0, dayFactor))
     this.fade.value = f
     const visible = f > HIDE_BELOW
-    this.mesh.visible = visible
+    this.bodyMesh.visible = visible
+    this.leftWingMesh.visible = visible
+    this.rightWingMesh.visible = visible
     if (!visible) return
     this.t += dt
     this.writeMatrices()
@@ -257,19 +264,38 @@ export class Birds {
       this._quat.setFromAxisAngle(Birds.UP, flockYaw(t, flock))
       for (const bird of this.birds[fi]) {
         birdOffset(t, bird, this._off)
-        this._pos.copy(this._center).add(this._off)
+        this._pos.copy(this._off).applyQuaternion(this._quat).add(this._center)
         this._scale.setScalar(bird.scale)
         this._mat.compose(this._pos, this._quat, this._scale)
-        this.mesh.setMatrixAt(i++, this._mat)
+        this.bodyMesh.setMatrixAt(i, this._mat)
+        this.writeWingMatrix(this.leftWingMesh, i, bird, -1, t)
+        this.writeWingMatrix(this.rightWingMesh, i, bird, 1, t)
+        i++
       }
     }
-    this.mesh.instanceMatrix.needsUpdate = true
+    this.bodyMesh.instanceMatrix.needsUpdate = true
+    this.leftWingMesh.instanceMatrix.needsUpdate = true
+    this.rightWingMesh.instanceMatrix.needsUpdate = true
+  }
+
+  private writeWingMatrix(mesh: InstancedMesh, index: number, bird: BirdDef, side: -1 | 1, t: number): void {
+    const flap = Math.sin((bird.flapPhase ?? bird.px) + t * (bird.flapSpeed ?? 5.8)) * 0.24
+    this._wingLocal.set(side * WING_X * bird.scale, WING_Y * bird.scale, WING_Z * bird.scale)
+    this._wingPos.copy(this._wingLocal).applyQuaternion(this._quat).add(this._pos)
+    this._sweepQuat.setFromAxisAngle(Birds.UP, -side * WING_SWEEP)
+    this._flapQuat.setFromAxisAngle(Birds.FORWARD, -side * flap)
+    this._partQuat.copy(this._quat).multiply(this._sweepQuat).multiply(this._flapQuat)
+    this._mat.compose(this._wingPos, this._partQuat, this._scale)
+    mesh.setMatrixAt(index, this._mat)
   }
 
   dispose(): void {
-    this.mesh.geometry.dispose()
-    ;(this.mesh.material as MeshBasicNodeMaterial).dispose()
-    this.mesh.dispose()
+    this.bodyMesh.geometry.dispose()
+    this.leftWingMesh.geometry.dispose()
+    ;(this.bodyMesh.material as MeshBasicNodeMaterial).dispose()
+    this.bodyMesh.dispose()
+    this.leftWingMesh.dispose()
+    this.rightWingMesh.dispose()
     this.group.clear()
   }
 }

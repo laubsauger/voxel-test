@@ -45,13 +45,15 @@ export const VEHICLE_MAX_SPEED = 21
 export const VEHICLE_MAX_ANGULAR = 12
 /** target curb masses per archetype base (kg) — voxel-density mass would make
  *  metal cars 15 t tanks; cars are hollow sheet metal, so mass is authored */
-const VEHICLE_MASS: Record<string, number> = { sedan: 1400, pickup: 1800, van: 2200 }
-const DEFAULT_VEHICLE_MASS = 1600
+// B31 — masses trimmed ~20% so the chassis actually rotates into a corner
+// (was understeering against the heavier authored curb weights).
+const VEHICLE_MASS: Record<string, number> = { sedan: 1150, pickup: 1450, van: 1800 }
+const DEFAULT_VEHICLE_MASS = 1300
 const ENGINE_TORQUE = 600
 const ENGINE_MAX_RPM = 7000
 /** quick arcade steering */
-const MAX_STEER_ANGLE = 0.61 // 35°
-const BRAKE_TORQUE = 4000
+const MAX_STEER_ANGLE = 0.66 // ~38°, tighter turn-in
+const BRAKE_TORQUE = 7000 // B31 — firm foot brake (was 4000, wouldn't stop)
 const HANDBRAKE_TORQUE = 10000
 /** wheel geometry from the archetype wheel blocks (5 voxels tall, 3 wide) */
 const WHEEL_RADIUS = 0.25
@@ -635,7 +637,7 @@ export function spawnVehicle(
       const bar = new api.VehicleAntiRollBar()
       bar.mLeftWheel = l
       bar.mRightWheel = r
-      bar.mStiffness = 1000
+      bar.mStiffness = 600 // B31 — softer: let the car lean/rotate into corners
       settings.mAntiRollBars.push_back(bar) // copied by value
       api.destroy(bar)
     }
@@ -1021,13 +1023,15 @@ export function tickVehiclesPreStep(phys: PhysicsWorld): void {
       // (deterministic sim state).
       const [fx, fy, fz] = quatRotate(v.qx, v.qy, v.qz, v.qw, 0, 0, -1)
       const fwdSpeed = v.vx * fx + v.vy * fy + v.vz * fz
-      if (forward < 0 && fwdSpeed > 1.5) {
+      // B31 — brake to a near-stop before reverse engages (was cutting out at
+      // 1.5 m/s, so S never fully stopped the car); threshold now 0.4 m/s.
+      if (forward < 0 && fwdSpeed > 0.4) {
         forward = 0
         brake = 1
       }
       if (forward === 0 && brake === 0) {
         // no throttle: handbrake reads as a hard stop, plain coasting drags
-        brake = handBrake ? 0.6 : 0.25
+        brake = handBrake ? 0.6 : 0.2
       }
       phys.bodyInterface.ActivateBody(v.body.GetID())
     } else {

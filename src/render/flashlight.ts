@@ -54,7 +54,11 @@ export class Flashlight {
     this.camera = camera
     this.light = new SpotLight(COLOR, 0, RANGE, ANGLE, PENUMBRA, DECAY)
     this.light.castShadow = false // v1 budget: no extra shadow pass
-    this.light.visible = false
+    // B31 — NEVER toggle .visible at runtime: in WebGPU the visible-light
+    // COUNT is part of every lit material's pipeline key, so flicking it forces
+    // a full shader recompile (hard hitch). Stay permanently counted; the
+    // toggle drives intensity to 0 instead. Same rule for muzzle + lamp lights.
+    this.light.visible = true
     this.group.add(this.light)
     this.group.add(this.light.target)
     this.pose(1) // start converged on the camera, not at the origin
@@ -73,20 +77,17 @@ export class Flashlight {
 
   setOn(on: boolean): void {
     this.on = on
-    if (on) this.light.visible = true // fade-out hides it in update()
   }
 
   /** per render frame; dt = render delta seconds */
   update(dt: number): void {
-    // intensity ease toward the toggle state (soft click), hide when dark
+    // intensity ease toward the toggle state (soft click). Light stays visible
+    // (counted) always — see constructor; we clamp intensity to 0 when off.
     const target = this.on ? INTENSITY : 0
     this.intensity += (target - this.intensity) * Math.min(1, dt * FADE_RATE)
-    if (!this.on && this.intensity < 0.5) {
-      this.intensity = 0
-      this.light.visible = false
-    }
+    if (!this.on && this.intensity < 0.5) this.intensity = 0
     this.light.intensity = this.intensity
-    if (!this.light.visible) return
+    if (this.intensity <= 0) return // skip the per-frame pose while fully dark
     this.pose(1 - Math.exp(-AIM_LAG * dt))
   }
 

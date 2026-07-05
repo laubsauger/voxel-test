@@ -35,6 +35,11 @@ export const TOOLS: ToolDef[] = [
   },
 ]
 
+export interface HudPrompt {
+  hotkey: string
+  action: string
+}
+
 export class Hud {
   private readonly el: HTMLElement
   private readonly slots: HTMLElement[] = []
@@ -128,12 +133,18 @@ export class Hud {
   private promptChip!: HTMLElement
   private promptText = ''
 
-  /** T64 — contextual action prompt ('⏎ Enter — drive'); null hides */
-  setPrompt(text: string | null): void {
-    const t = text ?? ''
+  /** contextual action prompt (`Enter` + action); null hides */
+  setPrompt(prompt: HudPrompt | string | null): void {
+    const t = typeof prompt === 'string' ? prompt : prompt ? `${prompt.hotkey}|${prompt.action}` : ''
     if (t === this.promptText) return
     this.promptText = t
-    this.promptChip.textContent = t
+    if (typeof prompt === 'object' && prompt !== null) {
+      this.promptChip.innerHTML = `<span class="bb-prompt-key"></span><span class="bb-prompt-action"></span>`
+      ;(this.promptChip.querySelector('.bb-prompt-key') as HTMLElement).textContent = prompt.hotkey
+      ;(this.promptChip.querySelector('.bb-prompt-action') as HTMLElement).textContent = prompt.action
+    } else {
+      this.promptChip.textContent = prompt ?? ''
+    }
     this.promptChip.classList.toggle('bb-on', t !== '')
   }
 

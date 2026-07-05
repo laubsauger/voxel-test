@@ -50,17 +50,18 @@ describe('town layout generator (T19/T50, V2)', () => {
     expect(GROUND_Y).toBeLessThanOrEqual(64)
   })
 
-  it('districts: fixed 4×4 plan with all four kinds, disjoint, in bounds (T50)', () => {
+  it('districts: fixed 4×4 plan plus beach edge, disjoint, in bounds (T50/T69)', () => {
     // WHY: districts are the world's macro structure — overlapping or
     // missing districts would stamp buildings into each other.
     const l = generateLayout(7)
-    expect(l.districts.length).toBe(16)
+    expect(l.districts.length).toBe(17)
     const byKind = new Map<string, number>()
     for (const d of l.districts) byKind.set(d.kind, (byKind.get(d.kind) ?? 0) + 1)
     expect(byKind.get('suburb')).toBe(5)
     expect(byKind.get('rowhouse')).toBe(4)
     expect(byKind.get('commercial')).toBe(4)
     expect(byKind.get('park')).toBe(3)
+    expect(byKind.get('beach')).toBe(1)
     for (let i = 0; i < l.districts.length; i++) {
       const a = l.districts[i]
       expect(a.rect.x0).toBeGreaterThanOrEqual(0)

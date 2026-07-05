@@ -58,7 +58,7 @@ export interface Road {
   sidewalks: [Rect, Rect]
 }
 
-export type DistrictKind = 'suburb' | 'rowhouse' | 'commercial' | 'park'
+export type DistrictKind = 'suburb' | 'rowhouse' | 'commercial' | 'park' | 'beach'
 
 export interface District {
   bi: number
@@ -245,6 +245,15 @@ export interface Pond {
   box: Box
 }
 
+/** T69 — south-edge beach/ocean strip. Sand/boardwalk are stamped into world;
+ * ocean is returned as a water fill so it uses the same CA/render path. */
+export interface Beach {
+  rect: Rect
+  sand: Rect
+  boardwalk: Rect
+  ocean: Box
+}
+
 /**
  * T42 — vegetation. Trunk base at (x,z) (2×2 voxels), blobby leaf canopy on
  * top; per-tree seed drives canopy blob variation in the stamper. Trees are
@@ -324,6 +333,7 @@ export interface Layout {
   parking: ParkingLot[]
   plazas: Rect[]
   ponds: Pond[]
+  beaches: Beach[]
   parkPaths: Rect[]
   props: Prop[]
   trees: Tree[]
@@ -488,6 +498,17 @@ function makeDistricts(): District[] {
       out.push({ bi, bj, kind: DISTRICT_MAP[bj][bi], rect: blockRect(bi, bj) })
     }
   }
+  out.push({
+    bi: -1,
+    bj: 4,
+    kind: 'beach',
+    rect: {
+      x0: 0,
+      z0: ROAD_CENTERS[4] + roadExtentAt(4) + 1,
+      x1: WORLD_VX - 1,
+      z1: WORLD_VZ - 1,
+    },
+  })
   return out
 }
 
@@ -865,6 +886,20 @@ interface ParkOut {
   props: Prop[]
   trees: Tree[]
   lamps: Lamp[]
+}
+
+function makeBeaches(): Beach[] {
+  const d = makeDistricts().find((d) => d.kind === 'beach')
+  if (!d) return []
+  const boardwalkZ0 = d.rect.z0 + 16
+  const boardwalkZ1 = boardwalkZ0 + 15
+  const waterZ0 = d.rect.z0 + 76
+  return [{
+    rect: d.rect,
+    sand: d.rect,
+    boardwalk: { x0: d.rect.x0, z0: boardwalkZ0, x1: d.rect.x1, z1: boardwalkZ1 },
+    ocean: { x0: d.rect.x0, y0: GROUND_Y - 7, z0: waterZ0, x1: d.rect.x1, y1: GROUND_Y - 2, z1: d.rect.z1 },
+  }]
 }
 
 /** T50 — park blocks: path cross + plaza, ponds, tree clusters, benches */
@@ -1411,6 +1446,7 @@ export function generateLayout(seed: number): Layout {
   const rowBlocks = makeRowBlocks(seed, districts, fences, trees)
   const com = makeCommercial(seed, districts)
   const park = makeParks(seed, districts)
+  const beaches = makeBeaches()
   props.push(...com.props)
   lamps.push(...com.lamps)
   trees.push(...park.trees)
@@ -1498,7 +1534,7 @@ export function generateLayout(seed: number): Layout {
   return {
     seed, groundY: GROUND_Y, roads, districts, lots, houses, pools, villa,
     rowBlocks, towers: com.towers, parking: com.parking, plazas: com.plazas,
-    ponds: park.ponds, parkPaths: park.parkPaths,
+    ponds: park.ponds, beaches, parkPaths: park.parkPaths,
     props, trees, shrubs, fences, lamps, mailboxes, bins,
   }
 }

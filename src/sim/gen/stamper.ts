@@ -12,13 +12,13 @@
  * Stamp order (fixed): terrain → roads/sidewalks → road markings → houses
  * (driveway, path, walls, garage, stairs, partitions, porch, balcony,
  * shutters, roof, chimney, patio, gardens) → rowhouse blocks → plazas →
- * towers → parking lots → pools → ponds → park paths → fences → lamps →
- * mailboxes → bins → props (cars, furniture, sheds, benches) → vegetation
+ * towers → parking lots → pools → ponds → beaches/ocean → park paths →
+ * fences → lamps → mailboxes → bins → props (cars, furniture, sheds, benches) → vegetation
  * (leaf blobs fill air only). Pool/pond water fills are returned as DATA for
  * the integrator to feed the water sim — never written here.
  */
 
-import { ChunkStore, CHUNK, WORLD_VX, WORLD_VZ } from '../../world/chunks'
+import { ChunkStore, CHUNK, VOXEL_SIZE, WORLD_VX, WORLD_VZ } from '../../world/chunks'
 import { Prng } from '../prng'
 import {
   MAT_AIR,
@@ -43,12 +43,14 @@ import {
   STAIR_STEPS,
   STAIR_TREAD,
   STAIR_W,
+  isCarKind,
   STALL_D,
   STALL_W,
   TOWER_STAIR_RUN,
   TOWER_STAIR_STEPS,
   WALL_T,
   type Bin,
+  type Beach,
   type Box,
   type FenceLine,
   type House,
@@ -75,14 +77,27 @@ export interface WaterFillRequest {
   box: Box
 }
 
+/** T64 — parked car props become real drivable vehicles: returned as DATA for
+ * the integrator to spawnVehicle() with, never stamped as voxels. */
+export interface VehicleSpawnRequest {
+  archetype: string
+  /** footprint center, world meters; cy = ground surface under the wheels */
+  cx: number
+  cy: number
+  cz: number
+  yaw: number
+}
+
 export interface StampResult {
   waterFills: WaterFillRequest[]
+  vehicleSpawns: VehicleSpawnRequest[]
 }
 
 const GRASS_DEPTH = 3
 const ROAD_DEPTH = 3
 const WALK_DEPTH = 2
 const POOL_SHELL = 2
+const BEACH_SAND_MAT = MAT_PLASTER
 
 function rectsOverlap(a: Rect, b: Rect): boolean {
   return a.x0 <= b.x1 && a.x1 >= b.x0 && a.z0 <= b.z1 && a.z1 >= b.z0
@@ -716,6 +731,22 @@ function stampPond(store: ChunkStore, pond: Pond, g: number): void {
   }
 }
 
+function stampBeach(store: ChunkStore, beach: Beach, g: number): void {
+  const s = beach.sand
+  store.fillBox(s.x0, g - WALK_DEPTH, s.z0, s.x1, g - 1, s.z1, BEACH_SAND_MAT)
+  store.fillBox(s.x0, g, s.z0, s.x1, g + 2, s.z1, MAT_AIR)
+
+  const w = beach.boardwalk
+  store.fillBox(w.x0, g - WALK_DEPTH, w.z0, w.x1, g - 1, w.z1, MAT_WOOD)
+  store.fillBox(w.x0, g, w.z0, w.x1, g + 2, w.z1, MAT_AIR)
+  for (let x = w.x0; x <= w.x1; x += 6) {
+    store.fillBox(x, g - 1, w.z0, x, g - 1, w.z1, MAT_ROOFTILE)
+  }
+
+  const o = beach.ocean
+  store.fillBox(o.x0, o.y0, o.z0, o.x1, g + 2, o.z1, MAT_AIR)
+}
+
 /** slightly-oblate leaf blob; fills AIR only so it never eats structures */
 function fillLeafBlob(store: ChunkStore, cx: number, cy: number, cz: number, r: number, seed: number): void {
   const r2 = r * r
@@ -871,6 +902,7 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   }
 
   stampTerrain(store, layout)
+  for (const beach of layout.beaches) stampBeach(store, beach, layout.groundY)
   stampRoads(store, layout)
   stampMarkings(store, layout)
   for (const h of layout.houses) stampHouse(store, layout, h)
@@ -889,6 +921,7 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
     stampPond(store, pond, layout.groundY)
     waterFills.push({ box: { ...pond.box } })
   }
+  for (const beach of layout.beaches) waterFills.push({ box: { ...beach.ocean } })
   for (const p of layout.parkPaths) stampParkPath(store, p, layout.groundY)
 
   for (const f of layout.fences) stampFence(store, f, layout.groundY)
@@ -896,12 +929,30 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   for (const m of layout.mailboxes) stampMailbox(store, m, layout.groundY)
   for (const b of layout.bins) stampBin(store, b, layout.groundY)
 
-  for (const p of layout.props) stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot)
+  // car props → vehicle spawn requests (real physics vehicles); rest stamped
+  const vehicleSpawns: VehicleSpawnRequest[] = []
+  for (const p of layout.props) {
+    if (isCarKind(p.kind)) {
+      const { sx, sz } = propGrids[p.kind]
+      const [w, d] = p.rot % 2 === 0 ? [sx, sz] : [sz, sx]
+      vehicleSpawns.push({
+        archetype: p.kind,
+        cx: (p.x + w / 2) * VOXEL_SIZE,
+        cy: p.y * VOXEL_SIZE,
+        cz: (p.z + d / 2) * VOXEL_SIZE,
+        // stampGrid rot 1 turns local -z (grille) toward +x; spawnVehicle's
+        // yaw rotation maps forward to (-sin, -cos) — so yaw = -rot·π/2
+        yaw: -p.rot * (Math.PI / 2),
+      })
+      continue
+    }
+    stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot)
+  }
 
   // vegetation last: leaf blobs fill AIR only, so canopies drape around
   // everything already stamped instead of overwriting it
   for (const t of layout.trees) stampTree(store, t, layout.groundY)
   for (const s of layout.shrubs) stampShrub(store, s, layout.groundY)
 
-  return { waterFills }
+  return { waterFills, vehicleSpawns }
 }

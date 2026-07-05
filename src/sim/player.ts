@@ -25,10 +25,12 @@ export const INPUT_CROUCH = 32
 export const INPUT_SPRINT = 64
 
 export const PLAYER_RADIUS = 0.3
-/** capsule cylinder half-height; total height = 2*(HALF_CYL + RADIUS) = 1.8m */
-export const PLAYER_HALF_CYL = 0.6
+/** capsule cylinder half-height; total height = 2*(HALF_CYL + RADIUS) = 1.65m
+ * (B31 — dropped from 1.8m: reads better against 2.1m doors and fits the car
+ * cabin with headroom to spare). Visual body scales to match, see player-mesh. */
+export const PLAYER_HALF_CYL = 0.525
 export const PLAYER_HEIGHT = 2 * (PLAYER_HALF_CYL + PLAYER_RADIUS)
-export const EYE_HEIGHT = 1.6
+export const EYE_HEIGHT = 1.47
 /** T44 — crouched capsule: total height 1.2m (< 1.4m gaps passable) */
 export const CROUCH_HALF_CYL = 0.3
 export const CROUCH_HEIGHT = 2 * (CROUCH_HALF_CYL + PLAYER_RADIUS)

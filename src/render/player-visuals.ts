@@ -58,7 +58,13 @@ export class PlayerVisuals {
    * @param camMode current camera mode (fp/tp/fly/orbit)
    * @param equippedTool hotbar tool id (ToolController.equipped)
    */
-  update(dt: number, player: PlayerEntity | undefined, camMode: VisualCamMode, equippedTool = 'dig'): void {
+  update(
+    dt: number,
+    player: PlayerEntity | undefined,
+    camMode: VisualCamMode,
+    equippedTool = 'dig',
+    seatYaw?: number | null,
+  ): void {
     if (!player) {
       if (this.body) this.body.group.visible = false
       this.viewmodel.group.visible = false
@@ -68,13 +74,17 @@ export class PlayerVisuals {
       this.body = new PlayerMesh(player)
       this.scene.add(this.body.group)
     }
+    // B31 — seated: chase cam shows the full body sitting in the seat, so we
+    // render the whole body (never the FP-hidden variant) and suppress the
+    // first-person viewmodel (its floating arms would hover over the wheel).
+    const seated = seatYaw !== null && seatYaw !== undefined
     const fp = camMode === 'fp'
     this.body.group.visible = true
-    this.body.setFirstPerson(fp)
-    this.body.update(player, dt)
+    this.body.setFirstPerson(fp && !seated)
+    this.body.update(player, dt, seatYaw)
 
-    this.viewmodel.group.visible = fp
-    if (fp) {
+    this.viewmodel.group.visible = fp && !seated
+    if (fp && !seated) {
       this.viewmodel.update(dt, this.body.anim.phase, this.body.anim.moveW, equippedTool)
     }
   }

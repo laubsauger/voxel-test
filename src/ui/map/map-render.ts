@@ -33,6 +33,7 @@ export interface MapLayout {
   /** T50 forward-compat — all optional, table-driven styling by kind string */
   districts?: { kind: string; rect: MapRect; name?: string }[]
   ponds?: { rect: MapRect }[]
+  beaches?: { sand: MapRect; boardwalk: MapRect; ocean: MapRect }[]
   parking?: { rect: MapRect }[]
   parkPaths?: { rect: MapRect }[]
   buildings?: { rect: MapRect; kind?: string }[]
@@ -112,6 +113,11 @@ export function buildMapCommands(layout: MapLayout, dims: WorldDims): MapCommand
   // 3 — park paths (under roads, over parcels)
   for (const p of layout.parkPaths ?? []) {
     cmds.push({ op: 'rrect', ...px(proj, p.rect), r: 1.5 * s, fill: MAP_INK.path })
+  }
+  for (const b of layout.beaches ?? []) {
+    cmds.push({ op: 'rect', ...px(proj, b.sand), fill: MAP_INK.sandFill })
+    cmds.push({ op: 'rect', ...px(proj, b.ocean), fill: MAP_INK.oceanFill })
+    cmds.push({ op: 'rect', ...px(proj, b.boardwalk), fill: MAP_INK.boardwalk })
   }
 
   // 4 — sidewalks, then ALL road casings, then ALL road fills (casing-under-

@@ -1214,7 +1214,7 @@
   left: 50%;
   bottom: 130px;
   transform: translateX(-50%) translateY(6px);
-  padding: 7px 14px;
+  padding: 6px 12px;
   border-radius: 8px;
   background: rgba(10, 12, 18, 0.72);
   border: 1px solid rgba(255, 176, 60, 0.45);
@@ -1223,6 +1223,23 @@
   letter-spacing: 0.08em;
   opacity: 0;
   pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 .bb-prompt-chip.bb-on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.bb-prompt-key {
+  min-width: 48px;
+  padding: 5px 9px;
+  border-radius: 5px;
+  background: rgba(255, 176, 60, 0.15);
+  border: 1px solid rgba(255, 176, 60, 0.5);
+  color: #fff2d6;
+  text-align: center;
+  text-transform: none;
+}
+.bb-prompt-action {
+  color: #dce8f2;
+  text-transform: uppercase;
+}

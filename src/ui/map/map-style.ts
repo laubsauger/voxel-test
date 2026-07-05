@@ -49,6 +49,13 @@ export const DISTRICT_STYLES: Record<string, DistrictStyle> = {
     buildingShade: '#779c62',
     label: 'THE PARK',
   },
+  beach: {
+    ground: '#eadcae',
+    lot: '#e7d59a',
+    building: '#c7a96c',
+    buildingShade: '#a4854e',
+    label: 'BEACH',
+  },
 }
 
 const DEFAULT_STYLE: DistrictStyle = DISTRICT_STYLES.suburban
@@ -88,6 +95,9 @@ export const MAP_INK = {
   parkingStroke: '#c2c1b4',
   waterFill: '#92c4e2',
   waterStroke: '#63a0c6',
+  oceanFill: '#78b5d8',
+  sandFill: '#efe0ad',
+  boardwalk: '#b98b5e',
   tree: '#9cc487',
   treeAlpha: 0.55,
   label: '#7e8371',

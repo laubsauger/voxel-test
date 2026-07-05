@@ -22,7 +22,7 @@ import {
   MeshStandardMaterial,
 } from 'three/webgpu'
 import { VOXEL_SIZE } from '../world/chunks'
-import type { PlayerEntity, PlayerSegment, SegmentDef } from '../sim/player'
+import { PLAYER_HEIGHT, type PlayerEntity, type PlayerSegment, type SegmentDef } from '../sim/player'
 import { createAnimState, stepAnim, type AnimState, type Pose } from './player-anim'
 
 const VOXEL_GEO = new BoxGeometry(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE)
@@ -118,6 +118,9 @@ export class PlayerMesh {
   constructor(player: PlayerEntity) {
     this.anim = createAnimState(player.yaw)
     this.group.name = 'player-body'
+    // B31 — voxel body was authored at 18 vox = 1.8m; scale it to the capsule
+    // height so the visible character matches the (now 1.65m) collider.
+    this.group.scale.setScalar(PLAYER_HEIGHT / 1.8)
 
     const vs = VOXEL_SIZE
     this.pelvis.add(this.torsoPivot, this.legLPivot, this.legRPivot)
@@ -172,13 +175,16 @@ export class PlayerMesh {
   /**
    * Call once per rendered frame with the sim player entity (read-only, V6).
    * `dt` optional — when omitted (legacy T22 wiring) an internal clock is used.
+   * `seatYaw` — when the player is seated in a vehicle, the vehicle heading
+   * (rad): body switches to a locked seated pose facing that way (B31).
    */
-  update(player: PlayerEntity, dt?: number): void {
+  update(player: PlayerEntity, dt?: number, seatYaw?: number | null): void {
     if (dt === undefined) {
       const now = performance.now()
       dt = this.lastNow < 0 ? 1 / 60 : (now - this.lastNow) / 1000
       this.lastNow = now
     }
+    const seated = seatYaw !== null && seatYaw !== undefined
     const pose = stepAnim(
       this.anim,
       {
@@ -190,6 +196,7 @@ export class PlayerMesh {
         crouching: player.crouching,
         noclip: player.noclip,
         fpBody: this.firstPerson,
+        seated,
       },
       dt,
     )
@@ -197,13 +204,15 @@ export class PlayerMesh {
     // in front of the camera instead of a chest-plane filling the frame.
     // Tuck grows with downward pitch (0.25 level → 0.45 looking straight down).
     const down = Math.max(0, -player.pitch) / 1.55
-    const back = this.firstPerson ? 0.25 + down * 0.2 : 0
+    const back = this.firstPerson && !seated ? 0.25 + down * 0.2 : 0
     this.group.position.set(
       player.px + Math.sin(this.anim.bodyYaw) * back,
       player.py,
       player.pz + Math.cos(this.anim.bodyYaw) * back,
     )
     this.applyPose(pose)
+    // seated: lock the body facing to the vehicle heading (not mouse look)
+    if (seated) this.group.rotation.set(0, seatYaw, 0)
     for (let i = 0; i < player.segments.length; i++) {
       const seg = player.segments[i]
       if (seg.version !== this.versions[i]) {

@@ -52,7 +52,7 @@ describe('T74 bird flocks — layout contract', () => {
     }
   })
 
-  it('orbit radius breathes in and out (occasional, not a constant overhead loop)', () => {
+  it('orbit radius breathes in and out without sweeping huge sky bands', () => {
     const { flocks } = createFlocks(74)
     for (const f of flocks) {
       let rMin = Infinity
@@ -63,8 +63,9 @@ describe('T74 bird flocks — layout contract', () => {
         rMin = Math.min(rMin, r)
         rMax = Math.max(rMax, r)
       }
-      // the wide-orbit drift must actually move the flock in AND out
-      expect(rMax - rMin).toBeGreaterThan(40)
+      // visible drift, but compact enough that birds don't smear across sky
+      expect(rMax - rMin).toBeGreaterThan(20)
+      expect(rMax - rMin).toBeLessThan(42)
       expect(rMin).toBeGreaterThan(5) // never spirals into the town center
     }
   })

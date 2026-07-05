@@ -16,6 +16,11 @@ export function adaptLayout(l: Layout): MapLayout & { seed?: number } {
     ponds: l.ponds.map((p) => ({
       rect: { x0: p.box.x0, z0: p.box.z0, x1: p.box.x1, z1: p.box.z1 },
     })),
+    beaches: l.beaches.map((b) => ({
+      sand: b.sand,
+      boardwalk: b.boardwalk,
+      ocean: { x0: b.ocean.x0, z0: b.ocean.z0, x1: b.ocean.x1, z1: b.ocean.z1 },
+    })),
     parkPaths: l.parkPaths.map((rect) => ({ rect })),
   }
 }

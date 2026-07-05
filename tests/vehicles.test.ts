@@ -211,8 +211,10 @@ describe('crash damage (T64.3)', () => {
     for (let i = 0; i < 30; i++) sim.step()
     const v = [...phys.vehicles.values()][0]
     const id = v.id
-    // bomb right at the cabin (voxel coords)
-    sim.queue.push(cmd(sim.tick, { kind: 'explode', x: 1024, y: 14, z: 1050, r: 14, power: 5 }))
+    // bomb right at the cabin (voxel coords). B31 — r 14→18: the sedan cabin
+    // was raised (taller car, ~20% more voxels), so one bomb needs a wider
+    // blast to still gut the soft plaster body past the wreck fraction.
+    sim.queue.push(cmd(sim.tick, { kind: 'explode', x: 1024, y: 14, z: 1050, r: 18, power: 5 }))
     sim.step()
     for (let i = 0; i < 20; i++) sim.step()
 

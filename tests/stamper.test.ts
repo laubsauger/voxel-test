@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ChunkStore, ChunkKind, CHUNK_COUNT, WORLD_VX, WORLD_VZ } from '../src/world/chunks'
+import { ChunkStore, ChunkKind, CHUNK_COUNT, VOXEL_SIZE, WORLD_VX, WORLD_VZ } from '../src/world/chunks'
 import { Fnv } from '../src/sim/hash'
 import { generateLayout, isCarKind, DOOR_W, STAIR_W, STAIR_TREAD, STAIR_STEPS, WALL_T, type House, type Layout, type Opening } from '../src/sim/gen/layout'
 import { stampScene } from '../src/sim/gen/stamper'
@@ -36,11 +36,11 @@ function hashStore(s: ChunkStore): number {
   return h.value
 }
 
-function stamped(seed: number): { store: ChunkStore; layout: Layout; waterFills: { box: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } }[] } {
+function stamped(seed: number): { store: ChunkStore; layout: Layout; waterFills: { box: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } }[]; vehicleSpawns: { archetype: string; cx: number; cy: number; cz: number; yaw: number }[] } {
   const store = new ChunkStore()
   const layout = generateLayout(seed)
-  const { waterFills } = stampScene(store, layout, placeholderProps())
-  return { store, layout, waterFills }
+  const { waterFills, vehicleSpawns } = stampScene(store, layout, placeholderProps())
+  return { store, layout, waterFills, vehicleSpawns }
 }
 
 /** first voxel of an opening in world coords (mirrors stamper side logic) */
@@ -56,7 +56,7 @@ function openingProbe(h: House, o: Opening, groundY: number): [number, number, n
 }
 
 describe('scene stamper (T20/T50/T51, V2, V5)', () => {
-  const { store, layout, waterFills } = stamped(42)
+  const { store, layout, waterFills, vehicleSpawns } = stamped(42)
   const g = layout.groundY
 
   it('terrain: grass surface over dirt, ground band respected', () => {
@@ -131,11 +131,28 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     expect(store.getVoxel(midX, (b.y0 + b.y1) >> 1, deepZ)).toBe(MAT_AIR) // dug empty
     expect(store.getVoxel(b.x0 - 1, (b.y0 + b.y1) >> 1, midZ)).toBe(MAT_CONCRETE) // side lining
     expect(store.getVoxel(midX, b.y0 - 1, deepZ)).toBe(MAT_CONCRETE) // floor lining
-    // fills: every pool basin AND every pond box, in stamp order
+    // fills: every pool basin, pond box, and beach ocean strip, in stamp order
     expect(waterFills.map((w) => w.box)).toEqual([
       ...layout.pools.map((p) => p.basin),
       ...layout.ponds.map((p) => p.box),
+      ...layout.beaches.map((b) => b.ocean),
     ])
+  })
+
+  it('T69 beach/ocean district: sand, boardwalk, and shallow ocean fill are stamped', () => {
+    expect(layout.districts.some((d) => d.kind === 'beach')).toBe(true)
+    expect(layout.beaches.length).toBe(1)
+    const beach = layout.beaches[0]
+    const sx = beach.sand.x0 + 80
+    const sz = beach.sand.z0 + 6
+    expect(store.getVoxel(sx, g - 1, sz), 'sand surface').toBe(MAT_PLASTER)
+    expect(store.getVoxel(sx, g, sz), 'walkable beach air').toBe(MAT_AIR)
+    const bx = beach.boardwalk.x0 + 80
+    const bz = (beach.boardwalk.z0 + beach.boardwalk.z1) >> 1
+    expect([MAT_WOOD, MAT_ROOFTILE]).toContain(store.getVoxel(bx, g - 1, bz))
+    const ox = beach.ocean.x0 + 80
+    const oz = (beach.ocean.z0 + beach.ocean.z1) >> 1
+    expect(store.getVoxel(ox, beach.ocean.y1, oz), 'ocean volume carved for water sim').toBe(MAT_AIR)
   })
 
   it('villa (B19): shallow + deep ends, paver deck, cabana with open front', () => {
@@ -160,12 +177,24 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     expect(store.getVoxel(frontX, g + 5, cMidZ), 'cabana open front').toBe(MAT_AIR)
   })
 
-  it('car props are stamped (metal body on the driveway/stall)', () => {
-    const car = layout.props.find((p) => isCarKind(p.kind))!
-    expect(car).toBeTruthy()
-    // body spans nearly the whole footprint at y+5 for rot 0 and 2 (T59:
-    // painted bodies come in metal / rooftile-red / plaster-white)
-    expect([MAT_METAL, MAT_ROOFTILE, MAT_PLASTER]).toContain(store.getVoxel(car.x + 5, car.y + 5, car.z + 5))
+  it('car props become vehicle spawns, not voxels (drivable parked cars)', () => {
+    // WHY: parked cars must be enterable/drivable — a stamped voxel car is
+    // dead scenery the sim can't see. Every car prop must come back as a
+    // spawn request and leave NO body voxels in the world.
+    const cars = layout.props.filter((p) => isCarKind(p.kind))
+    expect(cars.length).toBeGreaterThan(0)
+    expect(vehicleSpawns.length).toBe(cars.length)
+    for (const car of cars) {
+      expect(store.getVoxel(car.x + 5, car.y + 5, car.z + 5), `no stamped body at car (${car.x},${car.z})`).toBe(MAT_AIR)
+    }
+    // spawn centers sit inside the prop footprint (meters vs voxel coords)
+    const first = cars[0]
+    const spawn = vehicleSpawns.find(
+      (v) => v.archetype === first.kind
+        && v.cx / VOXEL_SIZE > first.x && v.cx / VOXEL_SIZE < first.x + 44
+        && v.cz / VOXEL_SIZE > first.z && v.cz / VOXEL_SIZE < first.z + 44,
+    )
+    expect(spawn, 'spawn request centered in the prop footprint').toBeTruthy()
   })
 
   it('stairs: solid treads with capsule headroom and a carved ceiling opening (T41)', () => {

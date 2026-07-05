@@ -132,6 +132,7 @@ export class WorldRenderer {
   private demoSpeed = 0
   // T58 lamp point-light pool + incremental lamp-head index
   private readonly lampLights: PointLight[] = []
+  private readonly lampTargets: number[] = [] // B31 — per-lamp intensity target
   private readonly lampPositions: Vector3[] = []
   private lampScanCursor = 0
   private readonly lampClusters = new Map<number, { x: number; y: number; z: number; n: number }>()
@@ -200,9 +201,10 @@ export class WorldRenderer {
     for (let i = 0; i < LAMP_LIGHT_COUNT; i++) {
       const l = new PointLight(0xffb46b, 0, 13, 2)
       l.castShadow = false
-      l.visible = false
+      l.visible = true // B31 — permanently counted; intensity 0 parks it dark
       opts.scene.add(l)
       this.lampLights.push(l)
+      this.lampTargets.push(0)
     }
 
     // T29: PBR texture arrays load async; material starts on placeholder
@@ -419,39 +421,41 @@ export class WorldRenderer {
     this.scanLampChunks()
 
     const darkness = this.cycleState.lampFactor // 0 day → 1 night
-    if (darkness < 0.02 || this.lampPositions.length === 0) {
-      for (const l of this.lampLights) {
-        l.intensity = 0
-        l.visible = false
-      }
-      return
-    }
+    const lit = darkness >= 0.02 && this.lampPositions.length > 0
 
     this.lampPickTimer -= dt
     if (this.lampPickTimer <= 0) {
       this.lampPickTimer = LAMP_PICK_INTERVAL
       // pick the N nearest lamp clusters to the camera (N tiny, list ~dozens)
       const cam = this.camera.position
-      const picked = [...this.lampPositions]
-        .sort((a, b) => a.distanceToSquared(cam) - b.distanceToSquared(cam))
-        .slice(0, this.lampLights.length)
+      const picked = lit
+        ? [...this.lampPositions]
+            .sort((a, b) => a.distanceToSquared(cam) - b.distanceToSquared(cam))
+            .slice(0, this.lampLights.length)
+        : []
       for (let i = 0; i < this.lampLights.length; i++) {
-        const l = this.lampLights[i]
         const p = picked[i]
         if (p) {
           // park just under the head so the pole/street catch the falloff
-          l.position.set(p.x, p.y - 0.3, p.z)
-          l.visible = true
+          this.lampLights[i].position.set(p.x, p.y - 0.3, p.z)
+          this.lampTargets[i] = 5.5 * darkness
         } else {
-          l.visible = false
+          this.lampTargets[i] = 0 // dark slot: fade to 0, but stay visible/counted
         }
       }
+    } else if (lit) {
+      // keep already-picked lamps tracking the deepening/lifting darkness
+      for (let i = 0; i < this.lampLights.length; i++) {
+        if (this.lampTargets[i] > 0) this.lampTargets[i] = 5.5 * darkness
+      }
+    } else {
+      for (let i = 0; i < this.lampTargets.length; i++) this.lampTargets[i] = 0
     }
-    const target = 5.5 * darkness
-    for (const l of this.lampLights) {
-      if (!l.visible) continue
-      // ease intensity so pool re-picks never pop
-      l.intensity += (target - l.intensity) * Math.min(1, dt * 5)
+    // ease intensity so pool re-picks / dawn never pop. B31: .visible is NEVER
+    // toggled here — a changed light count recompiles every lit material.
+    for (let i = 0; i < this.lampLights.length; i++) {
+      const l = this.lampLights[i]
+      l.intensity += (this.lampTargets[i] - l.intensity) * Math.min(1, dt * 5)
     }
   }
 

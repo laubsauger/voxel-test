@@ -31,6 +31,7 @@ import type { LockstepDriver, LockstepNode } from './net/lockstep'
 import { registerEditOps } from './sim/edit-ops'
 import { registerShootOp } from './sim/shoot-op'
 import { createPhysics, loadJolt, type PhysicsWorld } from './sim/physics'
+import { spawnVehicle, type VehicleEntity } from './sim/vehicle'
 import { attachBuoyancy } from './sim/buoyancy-coupling'
 import { attachWaterSim, type WaterSim } from './sim/water/water-sim'
 import { generateLayout } from './sim/gen/layout'
@@ -76,13 +77,20 @@ const ORBIT_BOB = 2.2
 const ORBIT_RATE = 0.05 // rad/s
 
 const QUALITY = {
-  low: { pixelRatio: 1, shadow: 1024, bloom: false },
-  medium: { pixelRatio: 1.5, shadow: 2048, bloom: true },
-  high: { pixelRatio: 2, shadow: 2048, bloom: true },
+  low: { pixelRatio: 1, shadow: 1024, bloom: false, ao: false, clouds: false, textures: false },
+  medium: { pixelRatio: 1.5, shadow: 2048, bloom: false, ao: true, clouds: true, textures: true },
+  high: { pixelRatio: 2, shadow: 2048, bloom: true, ao: true, clouds: true, textures: true },
 } as const
 
 /** let the browser paint (preloader stage updates) between heavy sync phases */
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
+
+/** B31 — heading (world yaw, rad) of a vehicle from its quaternion, using the
+ * same forward = -z convention as the player. Roll/pitch on hills are ignored;
+ * the seated body only needs to face the car's heading. */
+function vehicleYaw(v: VehicleEntity): number {
+  return Math.atan2(2 * (v.qx * v.qz + v.qw * v.qy), 1 - 2 * (v.qx * v.qx + v.qy * v.qy))
+}
 
 export class Game {
   readonly seed: number
@@ -133,6 +141,8 @@ export class Game {
   equippedTool: (() => string) | null = null
   private spawned = false
   private lastDamageSum = 0
+  private lastRenderCalls = 0
+  private lastRenderTriangles = 0
   private readonly frameHooks = new Set<(dt: number) => void>()
 
   private constructor(opts: {
@@ -423,11 +433,12 @@ export class Game {
       const player = this.phys.players.get(this.localPlayerId)
       if (!this.playerVisuals) this.playerVisuals = new PlayerVisuals(this.scene, this.cam.camera)
       const camMode = this.state !== 'play' ? 'orbit' : this.flying ? 'fly' : this.cam.mode
-      this.playerVisuals.update(dt, player, camMode, this.equippedTool?.() ?? 'dig')
+      // T64 — seated players get the chase cam; on-foot restores fp/tp
+      const seatedV =
+        player && player.seatedVehicle !== 0 ? this.phys.vehicles.get(player.seatedVehicle) : undefined
+      const seatYaw = seatedV ? vehicleYaw(seatedV) : null
+      this.playerVisuals.update(dt, player, camMode, this.equippedTool?.() ?? 'dig', seatYaw)
       if (player) {
-        // T64 — seated players get the chase cam; on-foot restores fp/tp
-        const seatedV =
-          player.seatedVehicle !== 0 ? this.phys.vehicles.get(player.seatedVehicle) : undefined
         if (this.state === 'play') {
           if (seatedV) this.cam.updateVehicle(seatedV, this.sim.world, dt)
           else this.cam.update(player, this.sim.world)
@@ -450,7 +461,9 @@ export class Game {
           this.remoteMeshes.set(pid, mesh)
           this.scene.add(mesh.group)
         }
-        mesh.update(p, dt)
+        // B31 — seated remotes sit in their vehicle too
+        const rv = p.seatedVehicle !== 0 ? this.phys.vehicles.get(p.seatedVehicle) : undefined
+        mesh.update(p, dt, rv ? vehicleYaw(rv) : null)
       }
 
       if (this.state === 'orbit') this.orbitUpdate(now, dt)
@@ -469,9 +482,17 @@ export class Game {
       frames++
       if (now - fpsAt > 500) {
         if (this.hudEl) {
+          const info = this.renderer.info.render
+          const callDelta = info.calls >= this.lastRenderCalls ? info.calls - this.lastRenderCalls : info.calls
+          const triDelta = info.triangles >= this.lastRenderTriangles ? info.triangles - this.lastRenderTriangles : info.triangles
+          const drawsPerFrame = Math.round(callDelta / Math.max(1, frames))
+          const trisPerFrame = Math.round(triDelta / Math.max(1, frames))
+          this.lastRenderCalls = info.calls
+          this.lastRenderTriangles = info.triangles
           this.hudEl.textContent =
             `${Math.round((frames * 1000) / (now - fpsAt))} fps  |  tick ${this.sim.tick}` +
             `  |  meshes ${this.world.chunks.chunkMeshCount} pending ${this.world.chunks.pendingCount}` +
+            `  |  draws/f ${drawsPerFrame} tris/f ${trisPerFrame}` +
             `  |  bodies ${this.phys.bodies.size}`
         }
         frames = 0
@@ -496,7 +517,7 @@ export class Game {
     const sim = new Sim(seed)
     registerEditOps(sim)
     const layout = generateLayout(seed)
-    const { waterFills } = stampScene(sim.world, layout, placeholderProps())
+    const { waterFills, vehicleSpawns } = stampScene(sim.world, layout, placeholderProps())
 
     const water = attachWaterSim(sim)
     // edits wake settled water (breached pool wall etc.)
@@ -513,6 +534,9 @@ export class Game {
     await loadJolt()
     const phys = await createPhysics(sim)
     registerShootOp(sim, phys) // T28 — hitscan op, same connectivity path as explode
+    // T64 — parked cars are real vehicles, spawned pre-tick-0 in layout order
+    // (deterministic ids via sim.allocEntityId — same on every lockstep peer)
+    for (const v of vehicleSpawns) spawnVehicle(sim, phys, v.archetype, v.cx, v.cy, v.cz, v.yaw)
     attachBuoyancy(sim, phys, water) // T40 — after BOTH physics + water (one-tick force latency, deterministic)
 
     // --- render ---------------------------------------------------------------
@@ -541,6 +565,9 @@ export class Game {
       world: sim.world,
       camera: cam.camera,
       bloom: q.bloom,
+      ao: q.ao,
+      clouds: q.clouds,
+      textures: q.textures,
       // physics drains ChunkStore.dirty in-tick; render consumes its re-feed
       dirtySource: () => phys.drainRemesh(),
     })
