@@ -182,11 +182,11 @@ export class WorldRenderer {
     // scale per cascade after the CSM node initializes (see render()).
     this.sun.shadow.bias = -0.00005
     this.sun.shadow.normalBias = 0.03
-    // B34 — maxFar 150→80: pull the shadow range in (fog hides the fringe). The
-    // 3 CSM cascades re-draw every caster within maxFar each frame — the biggest
-    // fixed cost — so a shorter range = fewer shadow draws AND a sharper 2048²
-    // map packed onto less area. 3 cascades kept (2 halves near density).
-    this.csm = new CSMShadowNode(this.sun, { cascades: 3, maxFar: 80, mode: 'practical' })
+    // B34 — maxFar 150→110: tighter far cascade packs the 2048² map onto less
+    // area (sharper shadows) and drops the fog-hidden fringe. (The real perf win
+    // was REGION 8, not shorter shadows — see chunk-mesh-manager; this is kept
+    // just for the crisper look.) 3 cascades.
+    this.csm = new CSMShadowNode(this.sun, { cascades: 3, maxFar: 110, mode: 'practical' })
     this.csm.fade = true
     // custom shadow node hook (not yet in @types/three)
     ;(this.sun.shadow as DirectionalLightShadow & { shadowNode?: CSMShadowNode }).shadowNode =
@@ -310,9 +310,8 @@ export class WorldRenderer {
           scenePass.getTextureNode('normal'),
           opts.camera,
         )
-        aoPass.resolutionScale = 0.25 // B34 — quarter-res GTAO (was half): 1/4 the
-        // AO fragments, a real retina win; AO is a soft occlusion term so the
-        // lower-res blur is barely perceptible after the bilateral upsample.
+        aoPass.resolutionScale = 0.5 // half-res GTAO (restored — REGION 8 gave
+        // the fps headroom back, no need to quarter it and soften the AO).
         aoPass.radius.value = 0.55
         aoPass.thickness.value = 0.5
         aoPass.scale.value = 1.1

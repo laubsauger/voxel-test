@@ -4,7 +4,7 @@
  * chunk+neighbor voxel data to mesh workers, and keeps CPU-side mesh data
  * per chunk.
  *
- * T35 — region batching: chunks are drawn as merged REGION³ (4×4×4) region
+ * T35 — region batching: chunks are drawn as merged REGION³ (8×8×8, B34) region
  * meshes, not one Mesh per chunk. The settled suburb is ~2437 non-empty
  * chunks = ~10k draws/frame across main + 3 CSM cascades (B2, 23fps);
  * merging into ~60 region meshes cuts that to a few hundred. Worker output
@@ -74,8 +74,15 @@ const MAX_REGION_DEFER = 8
  * actual rebuild time, not just the rebuild count */
 const REGION_BUILD_MS_BUDGET = 3
 
-/** chunks per region edge — REGION³ chunks merge into one draw call (T35) */
-export const REGION = 4
+/** chunks per region edge — REGION³ chunks merge into ONE draw call (T35).
+ * B34 — 4→8: the 4× world's frame was CPU DRAW-CALL bound (every region mesh is
+ * submitted once for the main pass + once per shadow cascade), not fragment- or
+ * geometry-bound. 8³ regions = ~8× fewer meshes = ~8× fewer draw calls across
+ * all passes → the single biggest win of the perf pass (retina ~29→63 fps at
+ * FULL quality, zero visual change — identical geometry, just fewer draws). The
+ * GPU had ample headroom, so the coarser frustum-cull granularity costs nothing
+ * here; edit rebuilds concat a bigger region but stay within the V7 ms budget. */
+export const REGION = 8
 const REGION_CX = Math.ceil(WORLD_CX / REGION)
 const REGION_CZ = Math.ceil(WORLD_CZ / REGION)
 
@@ -88,7 +95,7 @@ const REGION_CZ = Math.ceil(WORLD_CZ / REGION)
  * (measured). Distant shadows fall in the low-res far cascade and read as mush
  * anyway, so the pop is subtle. Render-only (V6) — never touches sim state, and
  * scales with world size (bounded by radius, not total mesh count). */
-const SHADOW_CAST_RADIUS = 80 // B34 — matched to CSM maxFar
+const SHADOW_CAST_RADIUS = 110 // B34 — matched to CSM maxFar
 const SHADOW_CAST_RADIUS_SQ = SHADOW_CAST_RADIUS * SHADOW_CAST_RADIUS
 /** region center offset from its corner-anchored mesh.position (world m) */
 const REGION_HALF_M = (REGION * CHUNK * VOXEL_SIZE) / 2
