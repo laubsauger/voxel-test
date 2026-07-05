@@ -233,9 +233,10 @@ export class WorldRenderer {
       maxRegionBuildsPerFrame: opts.maxRegionBuildsPerFrame,
       dirtySource: opts.dirtySource,
     })
-    // pick up chunks written before construction (world gen), then let the
-    // per-frame drainDirty catch everything after
-    this.chunks.enqueueAll()
+    // B35 — no enqueueAll: view-distance streaming (ChunkMeshManager.update)
+    // meshes only the regions near the camera each frame and evicts the rest,
+    // so the world is materialised on demand rather than all ~54k chunks up
+    // front. Load = mesh the spawn bubble; the rest streams in as you explore.
 
     // debris/dust on destroy (T14) — hooked up after the first update()
     // so the initial world-gen dirty flood doesn't fire a particle storm

@@ -85,6 +85,22 @@ const REGION_BUILD_MS_BUDGET = 3
 export const REGION = 8
 const REGION_CX = Math.ceil(WORLD_CX / REGION)
 const REGION_CZ = Math.ceil(WORLD_CZ / REGION)
+const REGION_CY = Math.ceil(WORLD_CY / REGION)
+
+/**
+ * B35 — view-distance mesh streaming. Mesh and keep resident only regions whose
+ * horizontal distance to the camera is within RENDER_DISTANCE; evict (dispose
+ * the merged mesh + drop the cached chunk data) beyond EVICT_DISTANCE. The
+ * hysteresis gap avoids load/evict thrash at the boundary. This bounds draw
+ * calls + GPU memory to the view instead of the whole world, and turns initial
+ * load into "mesh the spawn bubble" rather than the entire ~54k-chunk world —
+ * the foundation for a large curated world. The voxel data all lives in the
+ * ChunkStore regardless (physics colliders are unaffected, V6); only the render
+ * meshes stream. Distance is horizontal (cylindrical) like Minecraft render
+ * distance, so tall towers within reach load top-to-bottom. */
+const RENDER_DISTANCE = 300 // meters — full-detail mesh radius
+const EVICT_DISTANCE = 360 // meters — dispose meshes beyond this (> render)
+const REGION_M = REGION * CHUNK * VOXEL_SIZE // region edge in world meters
 
 /**
  * B33 — shadow-caster vision range (m, horizontal). The 3-cascade CSM
@@ -167,6 +183,12 @@ export class ChunkMeshManager {
   private readonly pendingJobs = new Map<number, number>()
   /** frames each dirty region has been deferred (T63, capped) */
   private readonly regionDefers = new Map<number, number>()
+  /** B35 — regions currently meshed/queued (within render distance) */
+  private readonly loadedRegions = new Set<number>()
+  /** last camera chunk the stream set was evaluated at (throttle) */
+  private streamCX = Infinity
+  private streamCZ = Infinity
+  private streamInit = true
   private readonly workers: Worker[] = []
   /** jobs currently queued per worker — dispatch fills to the depth limit */
   private readonly jobCount: number[] = []
@@ -225,6 +247,87 @@ export class ChunkMeshManager {
       if (this.world.chunkAt(ci).kind === ChunkKind.Empty) continue
       if (this.isBuried(ci)) continue
       this.scheduler.enqueue(ci)
+    }
+  }
+
+  /** horizontal² distance from a region's centre to the camera (world meters) */
+  private regionDist2(ri: number, cam: Vec3Like): number {
+    const [rx, , rz] = regionCoords(ri)
+    const dx = rx * REGION_M + REGION_M / 2 - cam.x
+    const dz = rz * REGION_M + REGION_M / 2 - cam.z
+    return dx * dx + dz * dz
+  }
+
+  /**
+   * B35 — per-frame view-distance streaming. Re-evaluated only when the camera
+   * crosses into a new chunk (cheap otherwise). Evicts loaded regions past
+   * EVICT_DISTANCE and loads (enqueues the chunks of) in-range regions that
+   * aren't loaded yet. Region-granularity so the scan is tiny (a few hundred
+   * regions even at large world sizes).
+   */
+  private streamRegions(cam: Vec3Like): void {
+    const chunkM = CHUNK * VOXEL_SIZE
+    const ccx = Math.floor(cam.x / chunkM)
+    const ccz = Math.floor(cam.z / chunkM)
+    if (!this.streamInit && ccx === this.streamCX && ccz === this.streamCZ) return
+    this.streamInit = false
+    this.streamCX = ccx
+    this.streamCZ = ccz
+
+    const evict2 = EVICT_DISTANCE * EVICT_DISTANCE
+    for (const ri of this.loadedRegions) {
+      if (this.regionDist2(ri, cam) > evict2) this.evictRegion(ri)
+    }
+
+    const render2 = RENDER_DISTANCE * RENDER_DISTANCE
+    const reach = Math.ceil(RENDER_DISTANCE / REGION_M) + 1
+    const crx = Math.floor(cam.x / REGION_M)
+    const crz = Math.floor(cam.z / REGION_M)
+    for (let ry = 0; ry < REGION_CY; ry++) {
+      for (let rz = Math.max(0, crz - reach); rz <= Math.min(REGION_CZ - 1, crz + reach); rz++) {
+        for (let rx = Math.max(0, crx - reach); rx <= Math.min(REGION_CX - 1, crx + reach); rx++) {
+          const ri = rx + rz * REGION_CX + ry * REGION_CX * REGION_CZ
+          if (this.loadedRegions.has(ri)) continue
+          if (this.regionDist2(ri, cam) > render2) continue
+          this.loadRegion(ri)
+        }
+      }
+    }
+  }
+
+  /** enqueue a region's non-empty, non-buried chunks and mark it loaded */
+  private loadRegion(ri: number): void {
+    this.loadedRegions.add(ri)
+    const [rx, ry, rz] = regionCoords(ri)
+    for (let cy = ry * REGION; cy < ry * REGION + REGION && cy < WORLD_CY; cy++) {
+      for (let cz = rz * REGION; cz < rz * REGION + REGION && cz < WORLD_CZ; cz++) {
+        for (let cx = rx * REGION; cx < rx * REGION + REGION && cx < WORLD_CX; cx++) {
+          const ci = chunkIndex(cx, cy, cz)
+          if (this.world.chunkAt(ci).kind === ChunkKind.Empty) continue
+          if (this.isBuried(ci)) continue
+          this.scheduler.enqueue(ci)
+        }
+      }
+    }
+  }
+
+  /** dispose a region's meshes + drop its cached chunk data (re-meshed on return) */
+  private evictRegion(ri: number): void {
+    this.loadedRegions.delete(ri)
+    removeRegionMesh(this.parent, this.regionMeshes, ri)
+    removeRegionMesh(this.parent, this.regionMeshesT, ri)
+    this.dirtyRegions.delete(ri)
+    this.regionDefers.delete(ri)
+    const [rx, ry, rz] = regionCoords(ri)
+    for (let cy = ry * REGION; cy < ry * REGION + REGION && cy < WORLD_CY; cy++) {
+      for (let cz = rz * REGION; cz < rz * REGION + REGION && cz < WORLD_CZ; cz++) {
+        for (let cx = rx * REGION; cx < rx * REGION + REGION && cx < WORLD_CX; cx++) {
+          const ci = chunkIndex(cx, cy, cz)
+          this.chunkData.delete(ci)
+          this.pendingJobs.delete(ci)
+          this.versions.set(ci, this.nextVersion++) // invalidate any in-flight job
+        }
+      }
     }
   }
 
@@ -296,20 +399,23 @@ export class ChunkMeshManager {
    * `camPos` in world meters.
    */
   update(camPos: Vec3Like): void {
+    // B35 — stream the meshed set to the camera's view distance (load/evict)
+    this.streamRegions(camPos)
+
     const dirty = this.dirtySource() // sole handoff from sim state (V6)
     if (dirty.length > 0) {
       if (this.onEdit) {
         this.onEdit(dirty.map((ci) => ({ ci, center: chunkCenter(ci) })))
       }
       for (const ci of dirty) {
-        // B32 — skip fully-buried solid chunks (mesh to nothing). The initial
-        // world build feeds every chunk through here (via phys.drainRemesh from
-        // initStatic), so this is where the ~17k sub-surface dirt chunks would
-        // otherwise be queued. Safe for edits: digging exposes a face, so the
-        // chunk is no longer buried and meshes normally.
-        if (!this.isBuried(ci)) this.scheduler.enqueue(ci)
+        // B35 — only mesh edits inside a loaded (in-view) region; edits to
+        // streamed-out regions live in the ChunkStore and mesh when re-loaded.
+        // B32 — skip fully-buried solid chunks (they mesh to zero faces).
+        if (this.loadedRegions.has(regionIndex(ci)) && !this.isBuried(ci)) this.scheduler.enqueue(ci)
         // boundary faces + AO of face neighbors depend on this chunk
-        for (const n of faceNeighbors(ci)) if (!this.isBuried(n)) this.scheduler.enqueue(n)
+        for (const n of faceNeighbors(ci)) {
+          if (this.loadedRegions.has(regionIndex(n)) && !this.isBuried(n)) this.scheduler.enqueue(n)
+        }
       }
     }
 
@@ -342,6 +448,12 @@ export class ChunkMeshManager {
     for (const c of this.jobCount) slots += Math.max(0, depth - c)
     const budget = Math.min(slots, maxDispatch)
     for (const ci of this.scheduler.take(budget, camPos)) {
+      // B35 — a lingering scheduler entry for a region evicted since it was
+      // queued: drop it so it can't resurrect a disposed region mesh
+      if (!this.loadedRegions.has(regionIndex(ci))) {
+        this.versions.set(ci, this.nextVersion++)
+        continue
+      }
       if (this.world.chunkAt(ci).kind === ChunkKind.Empty) {
         // no voxels ⇒ no faces; skip the worker round-trip and invalidate
         // any in-flight result so it can't resurrect a removed mesh
@@ -432,6 +544,8 @@ export class ChunkMeshManager {
   }
 
   private applyResult(r: MeshResponse): void {
+    // B35 — the region was evicted while this job was in flight; drop the result
+    if (!this.loadedRegions.has(regionIndex(r.ci))) return
     if (r.opaque.indices.length === 0 && r.transparent.indices.length === 0) {
       this.chunkData.delete(r.ci)
     } else {
