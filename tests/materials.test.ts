@@ -5,8 +5,8 @@ import { MAT_AIR, MATERIALS, getMaterial } from '../src/render/materials'
 // The table drives destruction feel (strength), physics (density, floats)
 // and rendering (colorRamp, PBR params) — entries must stay coherent.
 describe('material table (I.mat)', () => {
-  it('has 16 entries whose id matches their table index (voxel byte == index)', () => {
-    expect(MATERIALS).toHaveLength(16)
+  it('has 17 entries whose id matches their table index (voxel byte == index)', () => {
+    expect(MATERIALS).toHaveLength(17) // B32 — added sand (16)
     for (let i = 0; i < MATERIALS.length; i++) expect(MATERIALS[i].id).toBe(i)
   })
 
@@ -59,7 +59,7 @@ describe('material table (I.mat)', () => {
   })
 
   it('lookup fails loud for ids outside the table', () => {
-    expect(() => getMaterial(16)).toThrow(/unknown material/)
+    expect(() => getMaterial(17)).toThrow(/unknown material/) // 16 is now sand
     expect(() => getMaterial(255)).toThrow(/unknown material/)
   })
 })

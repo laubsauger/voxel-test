@@ -25,6 +25,7 @@ import {
   MAT_PAINT,
   MAT_PLASTER,
   MAT_ROOFTILE,
+  MAT_SAND,
   MAT_WATER_SOLID,
   MAT_WOOD,
 } from '../sim/materials'
@@ -50,7 +51,8 @@ export function footstepSurface(mat: number): FootstepSurface | null {
     case MAT_AIR:
       return null
     case MAT_DIRT:
-      return 'dirt'
+    case MAT_SAND:
+      return 'dirt' // sand shares the soft-ground footstep set
     case MAT_GRASS:
     case MAT_LEAVES:
       return 'grass'
@@ -83,6 +85,7 @@ export function impactGroup(mat: number): string | null {
       return null
     case MAT_DIRT:
     case MAT_FLESH:
+    case MAT_SAND:
       return 'impact-dirt'
     case MAT_GRASS:
     case MAT_LEAVES:

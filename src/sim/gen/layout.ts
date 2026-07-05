@@ -254,6 +254,32 @@ export interface Beach {
   ocean: Box
 }
 
+/** B32 — desert trailer-park district: sand terrain + dunes + scattered
+ * trailers. Placement is authored here; dunes are stamped procedurally. */
+export interface Trailer {
+  x: number
+  z: number
+  rot: 0 | 1 | 2 | 3
+  /** color/body variant 0..2 */
+  tint: number
+}
+export interface DesertPlot {
+  rect: Rect
+  trailers: Trailer[]
+  /** dune seed for the stamper's procedural sand mounds */
+  seed: number
+}
+
+/** B32 — airport district: flat apron, one runway, hangar + terminal box,
+ * and a parked plane or two. One Airport per contiguous airport zone. */
+export interface Airport {
+  apron: Rect
+  runway: Rect
+  hangar: Rect
+  terminal: Rect
+  planes: { x: number; z: number; rot: 0 | 1 | 2 | 3 }[]
+}
+
 /**
  * T42 — vegetation. Trunk base at (x,z) (2×2 voxels), blobby leaf canopy on
  * top; per-tree seed drives canopy blob variation in the stamper. Trees are
@@ -334,6 +360,8 @@ export interface Layout {
   plazas: Rect[]
   ponds: Pond[]
   beaches: Beach[]
+  deserts: DesertPlot[]
+  airports: Airport[]
   parkPaths: Rect[]
   props: Prop[]
   trees: Tree[]
@@ -938,6 +966,51 @@ function makeBeaches(): Beach[] {
   }]
 }
 
+/** B32 — desert trailer-park blocks: scattered trailers on a jittered grid,
+ * clear of the block edges. Sand terrain + dunes are stamped from the rect. */
+function makeDeserts(seed: number, districts: District[]): DesertPlot[] {
+  const out: DesertPlot[] = []
+  for (const d of districts) {
+    if (d.kind !== 'desert') continue
+    const rng = new Prng((seed ^ 0xde5e27 ^ Math.imul(d.bi * 31 + d.bj + 1, GOLD)) >>> 0)
+    const r = d.rect
+    const trailers: Trailer[] = []
+    const inset = 24
+    const cell = 108
+    for (let cz = r.z0 + inset; cz + 60 < r.z1 - inset; cz += cell) {
+      for (let cx = r.x0 + inset; cx + 60 < r.x1 - inset; cx += cell) {
+        if (rng.nextInt(100) < 22) continue // leave gaps between plots
+        const rot = (rng.nextInt(2) * 2) as 0 | 2
+        trailers.push({ x: cx + rng.nextInt(28), z: cz + rng.nextInt(28), rot, tint: rng.nextInt(3) })
+      }
+    }
+    out.push({ rect: r, trailers, seed: rng.nextU32() })
+  }
+  return out
+}
+
+/** B32 — airport: merge the contiguous airport blocks into one apron with a
+ * central runway and a hangar + terminal flanking it, plus parked planes. */
+function makeAirports(districts: District[]): Airport[] {
+  const blocks = districts.filter((d) => d.kind === 'airport')
+  if (blocks.length === 0) return []
+  const apron: Rect = {
+    x0: Math.min(...blocks.map((b) => b.rect.x0)),
+    z0: Math.min(...blocks.map((b) => b.rect.z0)),
+    x1: Math.max(...blocks.map((b) => b.rect.x1)),
+    z1: Math.max(...blocks.map((b) => b.rect.z1)),
+  }
+  const midX = (apron.x0 + apron.x1) >> 1
+  const runway: Rect = { x0: midX - 15, z0: apron.z0 + 30, x1: midX + 15, z1: apron.z1 - 30 }
+  const hangar: Rect = { x0: apron.x0 + 12, z0: apron.z0 + 44, x1: midX - 22, z1: apron.z0 + 168 }
+  const terminal: Rect = { x0: midX + 22, z0: apron.z1 - 168, x1: apron.x1 - 12, z1: apron.z1 - 44 }
+  const planes = [
+    { x: apron.x0 + 24, z: apron.z0 + 220, rot: 1 as const },
+    { x: apron.x1 - 60, z: apron.z1 - 240, rot: 3 as const },
+  ]
+  return [{ apron, runway, hangar, terminal, planes }]
+}
+
 /** T50 — park blocks: path cross + plaza, ponds, tree clusters, benches */
 function makeParks(seed: number, districts: District[]): ParkOut {
   const out: ParkOut = { ponds: [], parkPaths: [], props: [], trees: [], lamps: [] }
@@ -1483,6 +1556,8 @@ export function generateLayout(seed: number): Layout {
   const com = makeCommercial(seed, districts)
   const park = makeParks(seed, districts)
   const beaches = makeBeaches()
+  const deserts = makeDeserts(seed, districts)
+  const airports = makeAirports(districts)
   props.push(...com.props)
   lamps.push(...com.lamps)
   trees.push(...park.trees)
@@ -1570,7 +1645,7 @@ export function generateLayout(seed: number): Layout {
   return {
     seed, groundY: GROUND_Y, roads, districts, lots, houses, pools, villa,
     rowBlocks, towers: com.towers, parking: com.parking, plazas: com.plazas,
-    ponds: park.ponds, beaches, parkPaths: park.parkPaths,
+    ponds: park.ponds, beaches, deserts, airports, parkPaths: park.parkPaths,
     props, trees, shrubs, fences, lamps, mailboxes, bins,
   }
 }

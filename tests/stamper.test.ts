@@ -17,6 +17,7 @@ import {
   MAT_METAL,
   MAT_PAINT,
   MAT_PLASTER,
+  MAT_SAND,
   MAT_ROOFTILE,
   MAT_WOOD,
   MATERIALS,
@@ -145,7 +146,7 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     const beach = layout.beaches[0]
     const sx = beach.sand.x0 + 80
     const sz = beach.sand.z0 + 6
-    expect(store.getVoxel(sx, g - 1, sz), 'sand surface').toBe(MAT_PLASTER)
+    expect(store.getVoxel(sx, g - 1, sz), 'sand surface').toBe(MAT_SAND) // B32 — real sand
     expect(store.getVoxel(sx, g, sz), 'walkable beach air').toBe(MAT_AIR)
     const bx = beach.boardwalk.x0 + 80
     const bz = (beach.boardwalk.z0 + beach.boardwalk.z1) >> 1
@@ -388,6 +389,7 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     const paintable = [
       ...layout.roads.map((r) => r.asphalt),
       ...layout.parking.map((p) => p.rect),
+      ...layout.airports.map((a) => a.runway), // B32 — runway centre/threshold paint
     ]
     let paint = 0
     for (let z = 0; z < WORLD_VZ; z += 1) {

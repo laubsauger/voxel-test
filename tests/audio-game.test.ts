@@ -34,6 +34,7 @@ describe('material id → footstep surface', () => {
     lamp: 'concrete',
     flesh: 'dirt',
     paint: 'asphalt',
+    sand: 'dirt',
   }
 
   it('maps every material in the sim table (exhaustive, keyed by name not index)', () => {
@@ -69,6 +70,7 @@ describe('material id → impact group', () => {
     lamp: 'impact-metal',
     flesh: 'impact-dirt',
     paint: 'impact-concrete',
+    sand: 'impact-dirt',
   }
 
   it('maps every material in the sim table (exhaustive)', () => {

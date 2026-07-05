@@ -34,6 +34,7 @@ import {
   MAT_PAINT,
   MAT_PLASTER,
   MAT_ROOFTILE,
+  MAT_SAND,
   MAT_WOOD,
 } from '../materials'
 import {
@@ -44,6 +45,9 @@ import {
   STAIR_TREAD,
   STAIR_W,
   isCarKind,
+  type Airport,
+  type DesertPlot,
+  type Trailer,
   STALL_D,
   STALL_W,
   TOWER_STAIR_RUN,
@@ -97,7 +101,7 @@ const GRASS_DEPTH = 3
 const ROAD_DEPTH = 3
 const WALK_DEPTH = 2
 const POOL_SHELL = 2
-const BEACH_SAND_MAT = MAT_PLASTER
+const BEACH_SAND_MAT = MAT_SAND // B32 — real sand, was plaster
 
 function rectsOverlap(a: Rect, b: Rect): boolean {
   return a.x0 <= b.x1 && a.x1 >= b.x0 && a.z0 <= b.z1 && a.z1 >= b.z0
@@ -747,6 +751,145 @@ function stampBeach(store: ChunkStore, beach: Beach, g: number): void {
   store.fillBox(o.x0, o.y0, o.z0, o.x1, g + 2, o.z1, MAT_AIR)
 }
 
+// ---------------------------------------------------------------------------
+// B32 — desert trailer park + airport districts
+// ---------------------------------------------------------------------------
+
+/** deterministic value noise in [0,1] on a coarse lattice (bilinear), for
+ * smooth dune/terrain height. Pure integer hashing — deterministic (V2). */
+function valueNoise(x: number, z: number, cell: number, seed: number): number {
+  const gx = Math.floor(x / cell)
+  const gz = Math.floor(z / cell)
+  const fx = x / cell - gx
+  const fz = z / cell - gz
+  const h = (ix: number, iz: number): number => {
+    let n = (Math.imul(ix, 374761393) ^ Math.imul(iz, 668265263) ^ Math.imul(seed, 2246822519)) >>> 0
+    n = Math.imul(n ^ (n >>> 13), 1274126177) >>> 0
+    return ((n ^ (n >>> 16)) >>> 0) / 0xffffffff
+  }
+  const sx = fx * fx * (3 - 2 * fx)
+  const sz = fz * fz * (3 - 2 * fz)
+  const a = h(gx, gz) + sx * (h(gx + 1, gz) - h(gx, gz))
+  const b = h(gx, gz + 1) + sx * (h(gx + 1, gz + 1) - h(gx, gz + 1))
+  return a + sz * (b - a)
+}
+
+/** stamp a single trailer: metal/plaster body on a low chassis, window band,
+ * a door, a flat roof and two axle wheels. ~5.6 m × 2.8 m footprint. */
+function stampTrailer(store: ChunkStore, t: Trailer, g: number): void {
+  const bodyMat = [MAT_METAL, MAT_PLASTER, MAT_ROOFTILE][t.tint % 3]
+  // footprint 56 (long) × 28 (wide); rot 0/2 → long along z, 1/3 → along x
+  const long = 56
+  const wide = 28
+  const [w, d] = t.rot % 2 === 0 ? [wide, long] : [long, wide]
+  const x0 = t.x
+  const z0 = t.z
+  const x1 = x0 + w - 1
+  const z1 = z0 + d - 1
+  // chassis skirt + hull (raised 2 vox off the sand on blocks)
+  store.fillBox(x0 + 1, g, z0 + 1, x1 - 1, g + 1, z1 - 1, MAT_METAL) // skirt
+  store.fillBox(x0, g + 2, z0, x1, g + 16, z1, bodyMat) // hull
+  // hollow interior + window band
+  store.fillBox(x0 + 1, g + 3, z0 + 1, x1 - 1, g + 15, z1 - 1, MAT_AIR)
+  // window band around the sides at eye height
+  store.fillBox(x0, g + 9, z0 + 3, x0, g + 12, z1 - 3, MAT_GLASS)
+  store.fillBox(x1, g + 9, z0 + 3, x1, g + 12, z1 - 3, MAT_GLASS)
+  // flat roof cap
+  store.fillBox(x0, g + 16, z0, x1, g + 17, z1, bodyMat)
+  // door on the +x long face (short side for rot%2)
+  const dcx = ((x0 + x1) >> 1)
+  store.fillBox(dcx - 3, g + 2, z1, dcx + 3, g + 13, z1, MAT_AIR)
+  // two axle wheels tucked under the long sides
+  for (const wz of [z0 + Math.floor(d * 0.25), z0 + Math.floor(d * 0.7)]) {
+    store.fillBox(x0 - 1, g, wz, x0, g + 3, wz + 5, MAT_ASPHALT)
+    store.fillBox(x1, g, wz, x1 + 1, g + 3, wz + 5, MAT_ASPHALT)
+  }
+}
+
+/** desert district: swap the surface to sand, roll a few dunes, drop trailers */
+function stampDesert(store: ChunkStore, plot: DesertPlot, g: number): void {
+  const r = plot.rect
+  // sand surface across the block (over the grass the terrain pass laid down)
+  store.fillBox(r.x0, g - WALK_DEPTH, r.z0, r.x1, g - 1, r.z1, MAT_SAND)
+  store.fillBox(r.x0, g, r.z0, r.x1, g + 40, r.z1, MAT_AIR) // clear any bumps
+  // dunes: additive smooth sand height from value noise, up to ~2.4 m, only
+  // in the block interior so trailers keep a flat pad-ish base near them
+  for (let z = r.z0; z <= r.z1; z += 2) {
+    for (let x = r.x0; x <= r.x1; x += 2) {
+      const n = valueNoise(x, z, 90, plot.seed)
+      const hgt = Math.floor(Math.max(0, (n - 0.45)) * 44) // 0..~24 vox
+      if (hgt <= 0) continue
+      store.fillBox(x, g, z, x + 1, g + hgt - 1, z + 1, MAT_SAND)
+    }
+  }
+  // trailers sit on flattened sand pads (clear the dune under each first)
+  for (const t of plot.trailers) {
+    const [w, d] = t.rot % 2 === 0 ? [28, 56] : [56, 28]
+    store.fillBox(t.x - 2, g, t.z - 2, t.x + w + 1, g + 40, t.z + d + 1, MAT_AIR)
+    store.fillBox(t.x - 2, g - 1, t.z - 2, t.x + w + 1, g - 1, t.z + d + 1, MAT_SAND)
+    stampTrailer(store, t, g)
+  }
+}
+
+/** a parked airliner: tube fuselage, swept wings, tail fin. ~24 m long. */
+function stampPlane(store: ChunkStore, px: number, pz: number, rot: number, g: number): void {
+  // local frame: fuselage runs along +z (rot 0). We stamp along the axis and
+  // let rot 1/3 swap axes. Keep it blocky but readable from the air.
+  const b = g + 6 // fuselage floats on gear
+  const along = (i: number, w: number, y0: number, y1: number, mat: number): void => {
+    // i = distance along fuselage axis; w = half-width; centered at (px,pz)
+    if (rot % 2 === 0) store.fillBox(px - w, y0, pz + i, px + w, y1, pz + i, mat)
+    else store.fillBox(px + i, y0, pz - w, px + i, y1, pz + w, mat)
+  }
+  // fuselage tube (240 vox = 24 m)
+  for (let i = 0; i < 240; i++) {
+    const taper = i < 20 ? 2 + Math.floor(i / 5) : i > 220 ? 2 + Math.floor((240 - i) / 6) : 6
+    along(i, taper, b, b + taper * 2, MAT_PLASTER)
+  }
+  // wing box across the middle
+  const midpt = 110
+  for (let i = midpt - 6; i <= midpt + 6; i++) along(i, 70, b + 3, b + 5, MAT_METAL)
+  // tail fin (vertical) at the back
+  for (let i = 214; i <= 226; i++) along(i, 1, b + 8, b + 24, MAT_METAL)
+  // tailplanes
+  for (let i = 216; i <= 224; i++) along(i, 26, b + 6, b + 7, MAT_METAL)
+  // cockpit windows near the nose
+  along(14, 3, b + 6, b + 8, MAT_GLASS)
+}
+
+/** airport: concrete apron, a marked runway, a hangar + terminal, parked planes */
+function stampAirport(store: ChunkStore, a: Airport, g: number): void {
+  const ap = a.apron
+  // apron: concrete slab surface across the whole zone (clear grass bumps)
+  store.fillBox(ap.x0, g, ap.z0, ap.x1, g + 60, ap.z1, MAT_AIR)
+  store.fillBox(ap.x0, g - WALK_DEPTH, ap.z0, ap.x1, g - 1, ap.z1, MAT_CONCRETE)
+  // runway: darker asphalt strip with a dashed centre line + threshold bars
+  const rw = a.runway
+  store.fillBox(rw.x0, g - 1, rw.z0, rw.x1, g - 1, rw.z1, MAT_ASPHALT)
+  const cx = (rw.x0 + rw.x1) >> 1
+  for (let z = rw.z0 + 8; z < rw.z1 - 8; z += 24) {
+    store.fillBox(cx - 1, g - 1, z, cx, g - 1, z + 11, MAT_PAINT) // centre dashes
+  }
+  for (const tz of [rw.z0 + 4, rw.z1 - 10]) {
+    for (let k = -12; k <= 12; k += 4) store.fillBox(cx + k, g - 1, tz, cx + k + 1, g - 1, tz + 6, MAT_PAINT)
+  }
+  // hangar: tall open metal box with a big door on the runway side (+x)
+  const h = a.hangar
+  store.fillBox(h.x0, g, h.z0, h.x1, g + 90, h.z1, MAT_METAL)
+  store.fillBox(h.x0 + 3, g, h.z0 + 3, h.x1 - 3, g + 84, h.z1 - 3, MAT_AIR) // hollow
+  store.fillBox(h.x1 - 2, g, h.z0 + 8, h.x1, g + 70, h.z1 - 8, MAT_AIR) // door opening
+  store.fillBox(h.x0, g + 90, h.z0, h.x1, g + 92, h.z1, MAT_METAL) // roof
+  // terminal: glass-fronted concrete block
+  const tm = a.terminal
+  store.fillBox(tm.x0, g, tm.z0, tm.x1, g + 70, tm.z1, MAT_CONCRETE)
+  store.fillBox(tm.x0 + 3, g, tm.z0 + 3, tm.x1 - 3, g + 66, tm.z1 - 3, MAT_AIR)
+  store.fillBox(tm.x0, g + 8, tm.z0 + 4, tm.x0, g + 40, tm.z1 - 4, MAT_GLASS) // window wall (runway side)
+  store.fillBox(tm.x0, g + 70, tm.z0, tm.x1, g + 72, tm.z1, MAT_CONCRETE) // roof
+  // parked planes
+  for (const p of a.planes) stampPlane(store, p.x, p.z, p.rot, g)
+  // apron edge lamps
+}
+
 /** slightly-oblate leaf blob; fills AIR only so it never eats structures */
 function fillLeafBlob(store: ChunkStore, cx: number, cy: number, cz: number, r: number, seed: number): void {
   const r2 = r * r
@@ -903,6 +1046,8 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
 
   stampTerrain(store, layout)
   for (const beach of layout.beaches) stampBeach(store, beach, layout.groundY)
+  for (const d of layout.deserts) stampDesert(store, d, layout.groundY)
+  for (const a of layout.airports) stampAirport(store, a, layout.groundY)
   stampRoads(store, layout)
   stampMarkings(store, layout)
   for (const h of layout.houses) stampHouse(store, layout, h)

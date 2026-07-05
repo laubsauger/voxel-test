@@ -54,6 +54,7 @@ const RENDER_PARAMS: Record<
   12: { roughness: 0.6, variation: 0.7 }, // rooftile
   13: { roughness: 0.5, emissive: 4, variation: 0.25 }, // lamp
   14: { roughness: 0.8, variation: 0.5 }, // flesh
+  16: { roughness: 0.92, variation: 0.7 }, // sand — matte, grainy variation
 }
 
 export const MATERIALS: readonly MaterialDef[] = SIM_MATERIALS.map((m, i) => {

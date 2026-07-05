@@ -59,6 +59,7 @@ export const MAT_ROOFTILE = 12
 export const MAT_LAMP = 13
 export const MAT_FLESH = 14
 export const MAT_PAINT = 15
+export const MAT_SAND = 16 // B32 — desert dunes + beach
 
 /** table indexed by material id; null = reserved slot */
 export const MATERIALS: (Material | null)[] = [
@@ -78,6 +79,7 @@ export const MATERIALS: (Material | null)[] = [
   { id: 13, name: 'lamp', colorRamp: [0xffedb8, 0xfff9e0], strength: 1, density: 400, flags: MatFlags.None },
   { id: 14, name: 'flesh', colorRamp: [0xc08a7a, 0xd8a090], strength: 1, density: 1000, flags: MatFlags.None },
   { id: 15, name: 'paint', colorRamp: [0xf0f0ea, 0xffffff], strength: 1, density: 2400, flags: MatFlags.None },
+  { id: 16, name: 'sand', colorRamp: [0xc2a868, 0xd8c48a], strength: 1, density: 1500, flags: MatFlags.None },
 ]
 
 export function getMaterial(id: number): Material | null {
