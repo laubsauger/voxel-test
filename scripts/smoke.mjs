@@ -97,13 +97,18 @@ try {
   else note(`hud: ${await page.evaluate(() => document.getElementById('hud').textContent)}`)
 
   // Wait for the initial remesh storm to drain (HUD reports pending count).
+  // B32 — the world is 4× the area (~37k surface chunks after the buried-chunk
+  // cull), so full meshing legitimately takes longer than the old 2× world.
+  // The gate still requires a FULLY meshed, non-blank world at ≥30 fps; it just
+  // allows the bigger world the wall-clock to stream every chunk in.
+  const MESH_TIMEOUT_MS = 150000
   const settled = await page
     .waitForFunction(() => /pending 0(\D|$)/.test(document.getElementById('hud')?.textContent ?? ''), {
-      timeout: 60000,
+      timeout: MESH_TIMEOUT_MS,
     })
     .then(() => true)
     .catch(() => false)
-  if (!settled) fail('world never finished meshing (pending > 0 after 60s)')
+  if (!settled) fail('world never finished meshing (pending > 0 after 150s)')
   else {
     await new Promise((r) => setTimeout(r, 1500)) // let fps counter settle
     const hudText = await page.evaluate(() => document.getElementById('hud').textContent)

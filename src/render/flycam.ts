@@ -12,7 +12,7 @@ export class FlyCam {
   private readonly dir = new Vector3()
 
   constructor(private readonly dom: HTMLElement, aspect: number) {
-    this.camera = new PerspectiveCamera(70, aspect, 0.05, 500)
+    this.camera = new PerspectiveCamera(70, aspect, 0.05, 1200) // B32 — 4× world
     this.camera.position.set(20, 15, 20)
     this.yaw = Math.PI * 0.75
     this.pitch = -0.4

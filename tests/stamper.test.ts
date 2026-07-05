@@ -177,24 +177,36 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     expect(store.getVoxel(frontX, g + 5, cMidZ), 'cabana open front').toBe(MAT_AIR)
   })
 
-  it('car props become vehicle spawns, not voxels (drivable parked cars)', () => {
-    // WHY: parked cars must be enterable/drivable — a stamped voxel car is
-    // dead scenery the sim can't see. Every car prop must come back as a
-    // spawn request and leave NO body voxels in the world.
+  it('nearest car props become drivable vehicles, the rest static voxel cars (B32)', () => {
+    // WHY: parked cars must be enterable/drivable, but each live one is a Jolt
+    // vehicle stepped every tick — at the 4× world we cap the live set to a
+    // perf budget (48, nearest the centre) and stamp the remainder as static
+    // voxel scenery. So we expect min(cars, 48) spawns, the near ones leaving
+    // NO body voxels and the far ones DOING leave a stamped body.
     const cars = layout.props.filter((p) => isCarKind(p.kind))
     expect(cars.length).toBeGreaterThan(0)
-    expect(vehicleSpawns.length).toBe(cars.length)
-    for (const car of cars) {
-      expect(store.getVoxel(car.x + 5, car.y + 5, car.z + 5), `no stamped body at car (${car.x},${car.z})`).toBe(MAT_AIR)
-    }
-    // spawn centers sit inside the prop footprint (meters vs voxel coords)
-    const first = cars[0]
-    const spawn = vehicleSpawns.find(
-      (v) => v.archetype === first.kind
-        && v.cx / VOXEL_SIZE > first.x && v.cx / VOXEL_SIZE < first.x + 44
-        && v.cz / VOXEL_SIZE > first.z && v.cz / VOXEL_SIZE < first.z + 44,
+    const REAL = 48
+    expect(vehicleSpawns.length).toBe(Math.min(cars.length, REAL))
+    // rank cars the same way the stamper does (distance to world centre)
+    const cx0 = WORLD_VX / 2
+    const cz0 = WORLD_VZ / 2
+    const ranked = [...cars].sort(
+      (a, b) => (a.x - cx0) ** 2 + (a.z - cz0) ** 2 - ((b.x - cx0) ** 2 + (b.z - cz0) ** 2) || a.x - b.x || a.z - b.z,
     )
-    expect(spawn, 'spawn request centered in the prop footprint').toBeTruthy()
+    // the nearest car is a real vehicle (no stamped body)
+    const near = ranked[0]
+    expect(store.getVoxel(near.x + 5, near.y + 5, near.z + 5), 'nearest car is not stamped').toBe(MAT_AIR)
+    const spawn = vehicleSpawns.find(
+      (v) => v.archetype === near.kind
+        && v.cx / VOXEL_SIZE > near.x && v.cx / VOXEL_SIZE < near.x + 44
+        && v.cz / VOXEL_SIZE > near.z && v.cz / VOXEL_SIZE < near.z + 44,
+    )
+    expect(spawn, 'nearest car has a spawn request in its footprint').toBeTruthy()
+    // if the world has more cars than the budget, the farthest is stamped solid
+    if (cars.length > REAL) {
+      const far = ranked[ranked.length - 1]
+      expect([MAT_METAL, MAT_ROOFTILE, MAT_PLASTER]).toContain(store.getVoxel(far.x + 5, far.y + 5, far.z + 5))
+    }
   })
 
   it('stairs: solid treads with capsule headroom and a carved ceiling opening (T41)', () => {
@@ -398,16 +410,18 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     const art = layout.roads.find((r) => r.axis === 'x' && r.kind === 'arterial')!
     let solidA = 0
     let solidB = 0
-    for (let x = 300; x < 500; x++) {
+    // B32 — scan a 200-voxel span clear of any cross-road (z-roads at 800/1216;
+    // 900..1100 is open asphalt) so the double line reads as continuously solid
+    for (let x = 900; x < 1100; x++) {
       if (store.getVoxel(x, g - 1, art.center - 2) === MAT_PAINT) solidA++
       if (store.getVoxel(x, g - 1, art.center + 1) === MAT_PAINT) solidB++
     }
     expect(solidA).toBe(200) // solid, not dashed
     expect(solidB).toBe(200)
-    // crosswalk band on the east approach of the central crossing
-    const ex = 1024 + 52 // arterial extent
+    // crosswalk band on the east approach of the central crossing (B32: SPAWN)
+    const ex = 2048 + 52 // arterial extent at the central crossing
     let zebra = 0
-    for (let z = 1024 - 38; z <= 1024 + 38; z++) {
+    for (let z = 2048 - 38; z <= 2048 + 38; z++) {
       for (let x = ex + 2; x <= ex + 9; x++) {
         if (store.getVoxel(x, g - 1, z) === MAT_PAINT) zebra++
       }

@@ -15,6 +15,7 @@ import { adaptLayout } from '../src/ui/map/layout-adapter'
 import { WORLD_VX, WORLD_VZ } from '../src/world/chunks'
 import { buildMapCommands, type DrawCmd, type MapLayout } from '../src/ui/map/map-render'
 import { MAP_INK, DISTRICT_STYLES, districtStyle, roadStyle } from '../src/ui/map/map-style'
+import { MapProjection } from '../src/ui/map/map-math'
 
 const DIMS = { vx: WORLD_VX, vz: WORLD_VZ }
 const layout = adaptLayout(generateLayout(1337))
@@ -39,8 +40,11 @@ describe('buildMapCommands — completeness', () => {
     list.cmds.filter((c) => (c.op === 'rect' || c.op === 'rrect' || c.op === 'circle') && 'fill' in c && c.fill === color)
 
   it('canvas covers the full world at the projection scale', () => {
-    expect(list.width).toBe(WORLD_VX * 2)
-    expect(list.height).toBe(WORLD_VZ * 2)
+    // B32 — the projection clamps scale down for the 4× world (a 2× canvas
+    // would be 8192² px), so assert against the projection's own base size.
+    const proj = new MapProjection(DIMS)
+    expect(list.width).toBe(proj.baseW)
+    expect(list.height).toBe(proj.baseH)
     const bg = list.cmds[0]
     expect(bg.op).toBe('rect')
     if (bg.op === 'rect') expect([bg.w, bg.h]).toEqual([list.width, list.height])

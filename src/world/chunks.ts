@@ -3,16 +3,18 @@
  * Voxel = 1 byte material id, 0 = air (V5). Chunk 32³.
  * Chunk states: empty | uniform(mat) | dense(Uint8Array 32768).
  *
- * Voxel coords: integer, x∈[0,2048) y∈[0,768) z∈[0,2048). World meters = voxel * 0.1.
- * (T50/B11: expanded from 1024×512×1024 — ~205×77×205 m arena.)
+ * Voxel coords: integer, x∈[0,4096) y∈[0,768) z∈[0,4096). World meters = voxel * 0.1.
+ * (B32: expanded to 4096² = ~410×410 m — 4× the T50 area. Memory scales with
+ *  surface footprint, not volume: solid/air fills collapse to uniform chunks,
+ *  so the cost is the ground band + structures, ~4× the old world.)
  */
 
 export const VOXEL_SIZE = 0.1
 export const CHUNK = 32
 export const CHUNK_VOL = CHUNK * CHUNK * CHUNK
-export const WORLD_CX = 64
+export const WORLD_CX = 128
 export const WORLD_CY = 24
-export const WORLD_CZ = 64
+export const WORLD_CZ = 128
 export const WORLD_VX = WORLD_CX * CHUNK
 export const WORLD_VY = WORLD_CY * CHUNK
 export const WORLD_VZ = WORLD_CZ * CHUNK

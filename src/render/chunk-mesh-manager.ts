@@ -192,11 +192,61 @@ export class ChunkMeshManager {
     }
   }
 
-  /** queue every non-empty chunk — call once after initial world gen */
+  /** queue every non-empty chunk — call once after initial world gen.
+   * B32 — skip fully-buried solid chunks (every face internal): they mesh to
+   * ZERO faces, so queuing them is pure wasted worker/scheduler time. At the 4×
+   * world the sub-surface dirt slab alone is ~17k such chunks (~30% of the
+   * initial queue). Skipping is behaviourally identical to today — a buried
+   * chunk that a later edit exposes is re-dirtied through the normal edit path
+   * (its own setVoxel), exactly as an already-empty-meshed one would be. */
   enqueueAll(): void {
     for (let ci = 0; ci < CHUNK_COUNT; ci++) {
-      if (this.world.chunkAt(ci).kind !== ChunkKind.Empty) this.scheduler.enqueue(ci)
+      if (this.world.chunkAt(ci).kind === ChunkKind.Empty) continue
+      if (this.isBuried(ci)) continue
+      this.scheduler.enqueue(ci)
     }
+  }
+
+  /** true iff a Uniform-solid chunk has all 6 faces against solid voxels, so
+   * the greedy mesher would emit nothing for it (V6: pure ChunkStore reads). */
+  private isBuried(ci: number): boolean {
+    const c = this.world.chunkAt(ci)
+    if (c.kind !== ChunkKind.Uniform || c.mat === 0) return false
+    const [cx, cy, cz] = chunkCoords(ci)
+    return (
+      this.faceSolid(cx - 1, cy, cz, 0, CHUNK - 1) && // neighbor -x, its x=31 layer
+      this.faceSolid(cx + 1, cy, cz, 0, 0) && //           +x, x=0
+      this.faceSolid(cx, cy - 1, cz, 1, CHUNK - 1) && //   -y, y=31
+      this.faceSolid(cx, cy + 1, cz, 1, 0) && //           +y, y=0
+      this.faceSolid(cx, cy, cz - 1, 2, CHUNK - 1) && //   -z, z=31
+      this.faceSolid(cx, cy, cz + 1, 2, 0) //              +z, z=0
+    )
+  }
+
+  /** is the boundary layer (axis 0=x/1=y/2=z at local `coord`) of the neighbor
+   * chunk (ncx,ncy,ncz) fully solid? OOB below/side = solid (buried), OOB above
+   * = open sky (not solid). Empty = air; Uniform = its mat; Dense = scan layer. */
+  private faceSolid(ncx: number, ncy: number, ncz: number, axis: number, coord: number): boolean {
+    if (ncy < 0) return true
+    if (ncy >= WORLD_CY) return false
+    if (ncx < 0 || ncz < 0 || ncx >= WORLD_CX || ncz >= WORLD_CZ) return true
+    const c = this.world.chunkAt(chunkIndex(ncx, ncy, ncz))
+    if (c.kind === ChunkKind.Empty) return false
+    if (c.kind === ChunkKind.Uniform) return c.mat !== 0
+    const d = c.data!
+    // scan the 32×32 boundary plane; any air voxel means the face is exposed
+    for (let a = 0; a < CHUNK; a++) {
+      for (let b = 0; b < CHUNK; b++) {
+        const vi =
+          axis === 0
+            ? coord + b * CHUNK + a * CHUNK * CHUNK // x fixed
+            : axis === 1
+              ? b + a * CHUNK + coord * CHUNK * CHUNK // y fixed
+              : b + coord * CHUNK + a * CHUNK * CHUNK // z fixed
+        if (d[vi] === 0) return false
+      }
+    }
+    return true
   }
 
   /** chunks queued but not yet dispatched (HUD / debugging) */
@@ -231,9 +281,14 @@ export class ChunkMeshManager {
         this.onEdit(dirty.map((ci) => ({ ci, center: chunkCenter(ci) })))
       }
       for (const ci of dirty) {
-        this.scheduler.enqueue(ci)
+        // B32 — skip fully-buried solid chunks (mesh to nothing). The initial
+        // world build feeds every chunk through here (via phys.drainRemesh from
+        // initStatic), so this is where the ~17k sub-surface dirt chunks would
+        // otherwise be queued. Safe for edits: digging exposes a face, so the
+        // chunk is no longer buried and meshes normally.
+        if (!this.isBuried(ci)) this.scheduler.enqueue(ci)
         // boundary faces + AO of face neighbors depend on this chunk
-        for (const n of faceNeighbors(ci)) this.scheduler.enqueue(n)
+        for (const n of faceNeighbors(ci)) if (!this.isBuried(n)) this.scheduler.enqueue(n)
       }
     }
 

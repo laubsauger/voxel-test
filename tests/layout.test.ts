@@ -50,17 +50,24 @@ describe('town layout generator (T19/T50, V2)', () => {
     expect(GROUND_Y).toBeLessThanOrEqual(64)
   })
 
-  it('districts: fixed 4×4 plan plus beach edge, disjoint, in bounds (T50/T69)', () => {
+  it('districts: 4×4 downtown core + nature ring + coast, disjoint, in bounds (T50/B32)', () => {
     // WHY: districts are the world's macro structure — overlapping or
-    // missing districts would stamp buildings into each other.
+    // missing districts would stamp buildings into each other. B32 — the grid
+    // generalized to an 8×8 block field (4× world): the T50 4×4 plan stays as
+    // the centered downtown core, the ring is nature/park + desert + airport,
+    // plus the south-edge coast strip.
     const l = generateLayout(7)
-    expect(l.districts.length).toBe(17)
+    expect(l.districts.length).toBe(65) // 8×8 blocks + 1 beach strip
     const byKind = new Map<string, number>()
     for (const d of l.districts) byKind.set(d.kind, (byKind.get(d.kind) ?? 0) + 1)
+    // downtown core (unchanged from the T50 4×4 plan)
     expect(byKind.get('suburb')).toBe(5)
     expect(byKind.get('rowhouse')).toBe(4)
     expect(byKind.get('commercial')).toBe(4)
-    expect(byKind.get('park')).toBe(3)
+    // ring: 3 core parks + 41 nature-ring parks
+    expect(byKind.get('park')).toBe(44)
+    expect(byKind.get('desert')).toBe(4)
+    expect(byKind.get('airport')).toBe(3)
     expect(byKind.get('beach')).toBe(1)
     for (let i = 0; i < l.districts.length; i++) {
       const a = l.districts[i]

@@ -13,11 +13,13 @@ beforeAll(async () => {
   await loadJolt()
 }, 30000)
 
+// B32 — spawn is the world center (WORLD_VX>>1 voxel = 204.8 m at the 4× size),
+// so the test ground/geometry is built around that column, not the old 102.4 m.
+const CVX = 2048 // WORLD_VX>>1
 async function makeSim() {
   const sim = new Sim(9)
   registerEditOps(sim)
-  // ground around the spawn column (spawn is at 102.4m + playerId → voxel ~1024, T50)
-  sim.world.fillBox(912, 0, 912, 1152, 7, 1152, 3)
+  sim.world.fillBox(CVX - 112, 0, CVX - 112, CVX + 128, 7, CVX + 128, 3)
   const phys = await createPhysics(sim)
   return { sim, phys }
 }
@@ -58,8 +60,8 @@ describe('player character controller (T21, I.jolt, V1, V2)', () => {
     for (const c of moveCmds(60, INPUT_FWD, 0)) sim.queue.push(c)
     for (let t = 0; t <= 60; t++) sim.step()
     const p = phys.players.get(1)!
-    expect(p.pz).toBeLessThan(102.4 - 1) // walked at least 1m in -z
-    expect(Math.abs(p.px - 103.4)).toBeLessThan(0.01) // playerId 1 spawns at x=103.4, no drift
+    expect(p.pz).toBeLessThan(204.8 - 1) // walked at least 1m in -z from spawn z
+    expect(Math.abs(p.px - 205.8)).toBeLessThan(0.01) // playerId 1 spawns at x=204.8+1, no drift
     expect(p.py).toBeCloseTo(0.8, 1) // standing on ground (slab top at y=0.8m)
     phys.dispose()
   }, 30000)

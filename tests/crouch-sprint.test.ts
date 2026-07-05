@@ -23,7 +23,7 @@ beforeAll(async () => {
 async function makeSim(): Promise<{ sim: Sim; phys: PhysicsWorld }> {
   const sim = new Sim(9)
   registerEditOps(sim)
-  sim.world.fillBox(912, 0, 912, 1152, 7, 1152, 3) // ground, top at y=0.8m
+  sim.world.fillBox(1936, 0, 1936, 2176, 7, 2176, 3) // ground, top at y=0.8m (B32: world center)
   const phys = await createPhysics(sim)
   return { sim, phys }
 }
@@ -43,7 +43,7 @@ async function walkDistance(input: number, ticks: number): Promise<number> {
   sim.queue.push(SPAWN)
   pushMoves(sim, 1, ticks, input)
   for (let t = 0; t <= ticks; t++) sim.step()
-  const d = 102.4 - phys.players.get(1)!.pz
+  const d = 204.8 - phys.players.get(1)!.pz // B32 — spawn z = world center
   phys.dispose()
   return d
 }
@@ -68,9 +68,10 @@ describe('sprint + crouch speeds (T44)', () => {
  * island). The player (x=103.4m, voxel 1034) walks between the walls.
  */
 function buildTunnel(sim: Sim): void {
-  sim.world.fillBox(1017, 8, 1007, 1019, 21, 1017, 4) // west wall
-  sim.world.fillBox(1045, 8, 1007, 1047, 21, 1017, 4) // east wall
-  sim.world.fillBox(1017, 22, 1007, 1047, 24, 1017, 4) // ceiling
+  // B32 — shifted +1024 vox to the new world-center spawn column (player x=2058)
+  sim.world.fillBox(2041, 8, 2031, 2043, 21, 2041, 4) // west wall
+  sim.world.fillBox(2069, 8, 2031, 2071, 21, 2041, 4) // east wall
+  sim.world.fillBox(2041, 22, 2031, 2071, 24, 2041, 4) // ceiling
 }
 
 describe('functional crouch (T44)', () => {
@@ -91,11 +92,11 @@ describe('functional crouch (T44)', () => {
     }
 
     const standing = await through(INPUT_FWD)
-    expect(standing.pz).toBeGreaterThan(101.4) // stopped at the tunnel mouth
+    expect(standing.pz).toBeGreaterThan(203.8) // stopped at the tunnel mouth (B32 +102.4m)
     expect(standing.crouching).toBe(false)
 
     const crouched = await through(INPUT_FWD | INPUT_CROUCH)
-    expect(crouched.pz).toBeLessThan(100.2) // came out the far side
+    expect(crouched.pz).toBeLessThan(202.6) // came out the far side
     expect(crouched.crouching).toBe(true)
   }, 30000)
 
@@ -109,14 +110,14 @@ describe('functional crouch (T44)', () => {
     t = pushMoves(sim, t, 30, 0)
     while (sim.tick < t) sim.step()
     const p = phys.players.get(1)!
-    expect(p.pz).toBeGreaterThan(100.8)
-    expect(p.pz).toBeLessThan(101.6) // we ARE under the slab
+    expect(p.pz).toBeGreaterThan(203.2) // B32 +102.4m
+    expect(p.pz).toBeLessThan(204.0) // we ARE under the slab
     expect(p.crouching).toBe(true) // no headroom → still crouched
     // crouch-walk out the far side, then release
     t = pushMoves(sim, sim.tick, 60, INPUT_FWD | INPUT_CROUCH)
     t = pushMoves(sim, t, 10, 0)
     while (sim.tick < t) sim.step()
-    expect(p.pz).toBeLessThan(100.6)
+    expect(p.pz).toBeLessThan(203.0)
     expect(p.crouching).toBe(false) // open sky → stood back up
     phys.dispose()
   }, 30000)

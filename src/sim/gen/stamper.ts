@@ -929,10 +929,30 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   for (const m of layout.mailboxes) stampMailbox(store, m, layout.groundY)
   for (const b of layout.bins) stampBin(store, b, layout.groundY)
 
-  // car props → vehicle spawn requests (real physics vehicles); rest stamped
-  const vehicleSpawns: VehicleSpawnRequest[] = []
+  // car props → real drivable vehicles, but only the nearest MAX_REAL_VEHICLES
+  // to the world centre (spawn). B32 — each parked car is a LIVE Jolt vehicle
+  // (per-tick wheel raycasts + step listener); at the 4× world there are ~113
+  // of them, enough to halve the frame rate. We cap the live set to a perf
+  // budget (~the old 2× world's count) and stamp the rest as static voxel cars.
+  // Deterministic: cars ranked by squared distance to centre, ties by x then z.
+  const MAX_REAL_VEHICLES = 48
+  const cx0 = WORLD_VX / 2
+  const cz0 = WORLD_VZ / 2
+  const cars: { p: (typeof layout.props)[number]; d2: number }[] = []
   for (const p of layout.props) {
     if (isCarKind(p.kind)) {
+      const dx = p.x - cx0
+      const dz = p.z - cz0
+      cars.push({ p, d2: dx * dx + dz * dz })
+      continue
+    }
+    stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot)
+  }
+  cars.sort((a, b) => a.d2 - b.d2 || a.p.x - b.p.x || a.p.z - b.p.z)
+  const vehicleSpawns: VehicleSpawnRequest[] = []
+  for (let i = 0; i < cars.length; i++) {
+    const p = cars[i].p
+    if (i < MAX_REAL_VEHICLES) {
       const { sx, sz } = propGrids[p.kind]
       const [w, d] = p.rot % 2 === 0 ? [sx, sz] : [sz, sx]
       vehicleSpawns.push({
@@ -944,9 +964,9 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
         // yaw rotation maps forward to (-sin, -cos) — so yaw = -rot·π/2
         yaw: -p.rot * (Math.PI / 2),
       })
-      continue
+    } else {
+      stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot) // static voxel car
     }
-    stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot)
   }
 
   // vegetation last: leaf blobs fill AIR only, so canopies drape around

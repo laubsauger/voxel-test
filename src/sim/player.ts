@@ -11,7 +11,7 @@
  */
 import type Jolt from 'jolt-physics'
 import { DT, type Sim } from './loop'
-import { VOXEL_SIZE, WORLD_VY } from '../world/chunks'
+import { VOXEL_SIZE, WORLD_VX, WORLD_VY, WORLD_VZ } from '../world/chunks'
 import { MAT_FLESH, material } from './materials'
 import type { PhysicsWorld } from './physics'
 
@@ -233,10 +233,11 @@ function makeCapsule(api: PhysicsWorld['api'], halfCyl: number): Jolt.Shape {
   return shape
 }
 
-/** deterministic spawn column per player — world-center road crossing (T50) */
+/** deterministic spawn column per player — world-center arterial crossing.
+ * B32 — derived from world size (was hardcoded 102.4 m = the old center). */
 function spawnPoint(sim: Sim, playerId: number): { x: number; y: number; z: number } {
-  const x = 102.4 + playerId * 1.0
-  const z = 102.4
+  const x = (WORLD_VX >> 1) * VOXEL_SIZE + playerId * 1.0
+  const z = (WORLD_VZ >> 1) * VOXEL_SIZE
   // scan down for the highest solid voxel in the spawn column (deterministic)
   const vx = Math.floor(x / VOXEL_SIZE)
   const vz = Math.floor(z / VOXEL_SIZE)

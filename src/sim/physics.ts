@@ -265,7 +265,10 @@ export class PhysicsWorld {
   constructor(api: JoltApi) {
     this.api = api
     const settings = new api.JoltSettings()
-    settings.mMaxBodies = 32768
+    // B32 — one static body per non-empty chunk: the 4× world (128² surface
+    // chunks) needs ~4× the old headroom. Overflowing this crashes Jolt inside
+    // Step ('null function' in WASM), so size it well above the surface count.
+    settings.mMaxBodies = 131072
     settings.mMaxWorkerThreads = 0 // single-threaded: determinism (V2, I.jolt)
 
     const objectFilter = new api.ObjectLayerPairFilterTable(NUM_OBJECT_LAYERS)

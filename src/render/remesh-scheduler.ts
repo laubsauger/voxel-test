@@ -30,6 +30,17 @@ export function chunkCenter(ci: number): Vec3Like {
 
 export class RemeshScheduler {
   private readonly pending = new Set<number>()
+  // B32 — sorted-order cache. Sorting the whole pending set every frame is
+  // O(n log n) and at a 4× world (~55k pending during the initial burst) that
+  // alone dropped the frame rate into single digits. The nearest-first order
+  // only changes when the camera moves or new chunks are enqueued, so we cache
+  // the sorted list + a cursor and rebuild lazily.
+  private sorted: number[] = []
+  private cursor = 0
+  private dirty = true
+  private camX = Infinity
+  private camY = Infinity
+  private camZ = Infinity
 
   get size(): number {
     return this.pending.size
@@ -41,7 +52,10 @@ export class RemeshScheduler {
 
   /** idempotent — re-dirtying a queued chunk does not duplicate work */
   enqueue(ci: number): void {
-    this.pending.add(ci)
+    if (!this.pending.has(ci)) {
+      this.pending.add(ci)
+      this.dirty = true // new chunk → the cached order is stale
+    }
   }
 
   /**
@@ -50,24 +64,39 @@ export class RemeshScheduler {
    */
   take(budget: number, cam: Vec3Like): number[] {
     if (budget <= 0 || this.pending.size === 0) return []
-    const scored: Array<[number, number]> = []
-    for (const ci of this.pending) {
-      const c = chunkCenter(ci)
-      const dx = c.x - cam.x
-      const dy = c.y - cam.y
-      const dz = c.z - cam.z
-      scored.push([ci, dx * dx + dy * dy + dz * dz])
+    // rebuild the sorted order only when the set changed or the camera moved
+    // more than ~half a chunk since the last sort (order is stable otherwise)
+    const chunkM = CHUNK * VOXEL_SIZE
+    const moved =
+      Math.abs(cam.x - this.camX) + Math.abs(cam.y - this.camY) + Math.abs(cam.z - this.camZ) > chunkM * 0.5
+    if (this.dirty || moved) {
+      this.sorted = [...this.pending]
+      this.sorted.sort((a, b) => {
+        const ca = chunkCenter(a)
+        const cb = chunkCenter(b)
+        const da = (ca.x - cam.x) ** 2 + (ca.y - cam.y) ** 2 + (ca.z - cam.z) ** 2
+        const db = (cb.x - cam.x) ** 2 + (cb.y - cam.y) ** 2 + (cb.z - cam.z) ** 2
+        return da - db || a - b
+      })
+      this.cursor = 0
+      this.dirty = false
+      this.camX = cam.x
+      this.camY = cam.y
+      this.camZ = cam.z
     }
-    scored.sort((a, b) => a[1] - b[1] || a[0] - b[0])
     const out: number[] = []
-    for (let i = 0; i < scored.length && out.length < budget; i++) {
-      out.push(scored[i][0])
-      this.pending.delete(scored[i][0])
+    // pop from the cached order, skipping any already-removed entries
+    while (this.cursor < this.sorted.length && out.length < budget) {
+      const ci = this.sorted[this.cursor++]
+      if (this.pending.delete(ci)) out.push(ci)
     }
     return out
   }
 
   clear(): void {
     this.pending.clear()
+    this.sorted = []
+    this.cursor = 0
+    this.dirty = true
   }
 }

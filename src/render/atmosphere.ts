@@ -317,7 +317,7 @@ const FOG_BASE_Y = 5
 const FOG_HEIGHT_SCALE = 22
 /** distance range (m) for the aerial tint ramp */
 const FOG_NEAR = 40
-const FOG_FAR = 420
+const FOG_FAR = 720 // B32 — pushed out for the 4× world (410 m/side)
 /** max fog blend — subtle aerial perspective, never soup */
 const FOG_MAX = 0.38
 

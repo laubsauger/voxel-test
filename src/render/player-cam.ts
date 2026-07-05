@@ -71,7 +71,7 @@ export class PlayerCam {
   private chaseSnap = true
 
   constructor(aspect: number, dom?: HTMLElement) {
-    this.camera = new PerspectiveCamera(75, aspect, 0.05, 500)
+    this.camera = new PerspectiveCamera(75, aspect, 0.05, 1200) // B32 — 4× world
     if (dom) {
       document.addEventListener('keydown', (e) => {
         if (e.code === 'KeyV') this.toggle()

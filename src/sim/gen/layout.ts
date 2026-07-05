@@ -58,7 +58,7 @@ export interface Road {
   sidewalks: [Rect, Rect]
 }
 
-export type DistrictKind = 'suburb' | 'rowhouse' | 'commercial' | 'park' | 'beach'
+export type DistrictKind = 'suburb' | 'rowhouse' | 'commercial' | 'park' | 'beach' | 'desert' | 'airport'
 
 export interface District {
   bi: number
@@ -352,7 +352,20 @@ export const WALL_T = 2 // 20 cm walls
 export const SPAWN_VX = WORLD_VX >> 1
 export const SPAWN_VZ = WORLD_VZ >> 1
 
-const ROAD_CENTERS = [192, 608, 1024, 1440, 1856]
+const BLOCK_PITCH = 416 // road-center spacing (unchanged from the T50 grid)
+const GRID_MARGIN = 240 // nature/beach band left outside the outermost road
+/** road centers, generated to fill the world centered on the spawn arterial
+ * (SPAWN_VX). Odd count → the middle road is the arterial. Scales with
+ * WORLD_VX automatically (B32: 5 roads @2048 → 9 roads @4096). */
+function buildRoadCenters(): number[] {
+  const half = Math.floor((SPAWN_VX - GRID_MARGIN) / BLOCK_PITCH)
+  const c: number[] = []
+  for (let i = -half; i <= half; i++) c.push(SPAWN_VX + i * BLOCK_PITCH)
+  return c
+}
+const ROAD_CENTERS = buildRoadCenters()
+/** block count per axis (blocks sit between adjacent road centers) */
+const BLOCKS = ROAD_CENTERS.length - 1
 const ROAD_HALF_RES = 30 // residential asphalt 6 m wide
 const ROAD_HALF_ART = 40 // arterial asphalt 8 m wide (T50)
 const WALK_W = 12 // 1.2 m sidewalks
@@ -474,8 +487,8 @@ function makeRoads(): Road[] {
   return roads
 }
 
-/** T50 — fixed district plan (see header diagram); content inside is seeded */
-const DISTRICT_MAP: DistrictKind[][] = [
+/** T50 downtown core — the 4×4 plan, kept centered on the spawn arterial (B32) */
+const CORE_MAP: DistrictKind[][] = [
   ['rowhouse', 'rowhouse', 'commercial', 'commercial'],
   ['rowhouse', 'suburb', 'suburb', 'commercial'],
   ['rowhouse', 'suburb', 'suburb', 'commercial'],
@@ -491,20 +504,43 @@ function blockRect(bi: number, bj: number): Rect {
   }
 }
 
+/** first block index of the central 4×4 core (per axis) */
+const CORE_LO = (BLOCKS >> 1) - 2
+
+/**
+ * District kind for block (bi,bj). The CORE_MAP fills the central 4×4 downtown;
+ * the surrounding ring is parkland/nature by default. Named outer districts
+ * (desert trailer park, airport) are carved out by corner/edge rules (B32);
+ * the coast (beach) is the south margin strip, added in makeDistricts.
+ */
+function districtKindAt(bi: number, bj: number): DistrictKind {
+  const hi = CORE_LO + 3
+  if (bi >= CORE_LO && bi <= hi && bj >= CORE_LO && bj <= hi) {
+    return CORE_MAP[bj - CORE_LO][bi - CORE_LO]
+  }
+  const last = BLOCKS - 1
+  // desert trailer park — north-east corner (2×2)
+  if (bi >= last - 1 && bj <= 1) return 'desert'
+  // airport — a long flat apron on the west edge (1 block wide × 3 tall)
+  if (bi === 0 && bj >= CORE_LO && bj <= CORE_LO + 2) return 'airport'
+  return 'park'
+}
+
 function makeDistricts(): District[] {
   const out: District[] = []
-  for (let bj = 0; bj < 4; bj++) {
-    for (let bi = 0; bi < 4; bi++) {
-      out.push({ bi, bj, kind: DISTRICT_MAP[bj][bi], rect: blockRect(bi, bj) })
+  for (let bj = 0; bj < BLOCKS; bj++) {
+    for (let bi = 0; bi < BLOCKS; bi++) {
+      out.push({ bi, bj, kind: districtKindAt(bi, bj), rect: blockRect(bi, bj) })
     }
   }
+  const li = ROAD_CENTERS.length - 1
   out.push({
     bi: -1,
-    bj: 4,
+    bj: BLOCKS,
     kind: 'beach',
     rect: {
       x0: 0,
-      z0: ROAD_CENTERS[4] + roadExtentAt(4) + 1,
+      z0: ROAD_CENTERS[li] + roadExtentAt(li) + 1,
       x1: WORLD_VX - 1,
       z1: WORLD_VZ - 1,
     },
