@@ -20,6 +20,7 @@ WebGPU voxel demolition sandbox. Break the world, stress the physics, splash thr
 - Dynamic water with flooding and drainage
 - Buoyant materials and floating debris
 - Drivable vehicles
+- Bicycles and motorbikes
 - Flyable aircraft
 - First-person and third-person play
 - Voxel player body with damage

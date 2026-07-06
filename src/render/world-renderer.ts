@@ -253,6 +253,7 @@ export class WorldRenderer {
       opts.scene,
       this.chunks.material,
       this.chunks.transparentMaterial,
+      (x, z) => this.chunks.hasMeshAt(x, z), // B37 — hold coarse cells until full meshes exist
     )
     // B35 — no enqueueAll: view-distance streaming (ChunkMeshManager.update)
     // meshes only the regions near the camera each frame and evicts the rest,

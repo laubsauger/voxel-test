@@ -67,6 +67,9 @@ export class LodManager {
     private readonly parent: Object3D,
     private readonly material: Material,
     private readonly transparentMaterial: Material,
+    /** B37 — true once the full-detail meshes for world (x,z) exist; a near
+     *  coarse cell is held until then so the building never vanishes mid-approach */
+    private readonly isMeshedAt: (x: number, z: number) => boolean,
   ) {}
 
   /** stream coarse LOD cells around the camera (call once per frame) */
@@ -78,6 +81,13 @@ export class LodManager {
       this.lastCamCellZ = camCellZ
       this.reclassify(cam)
     }
+    // B37 — per-frame: evict a NEAR cell only once its full-detail meshes are
+    // actually present (mesh-ready check changes continuously, not just on cell
+    // crossings). Until then the coarse cell stays and fills the gap.
+    for (const ci of [...this.cells.keys()]) {
+      const d2 = this.cellDist2(ci, cam)
+      if (d2 < LOD_NEAR2 && this.cellMeshed(ci)) this.evictCell(ci)
+    }
     // drain the build queue under a per-frame budget
     let built = 0
     while (built < BUILD_BUDGET && this.buildQueue.length > 0) {
@@ -88,11 +98,20 @@ export class LodManager {
     }
   }
 
+  /** are the full-detail meshes present across the cell (sampled at its centre)? */
+  private cellMeshed(ci: number): boolean {
+    const cx = ci % CELLS_X
+    const cz = (ci / CELLS_X) | 0
+    return this.isMeshedAt((cx + 0.5) * CELL_M, (cz + 0.5) * CELL_M)
+  }
+
   /** decide which cells should have LOD meshes, evict the rest, queue new ones */
   private reclassify(cam: Vec3Like): void {
-    // evict cells now out of the LOD band
+    // evict cells too FAR (far side); NEAR-side eviction waits for the full mesh
+    // (handled per-frame in update via cellMeshed) so nothing pops out early.
     for (const ci of [...this.cells.keys()]) {
-      if (!this.inBand(ci, cam)) this.evictCell(ci)
+      const d2 = this.cellDist2(ci, cam)
+      if (d2 >= LOD_FAR2 || (d2 < LOD_NEAR2 && this.cellMeshed(ci))) this.evictCell(ci)
     }
     // queue in-band cells that are missing, nearest first
     const want: { ci: number; d2: number }[] = []
@@ -104,16 +123,13 @@ export class LodManager {
         const ci = cx + cz * CELLS_X
         if (this.cells.has(ci)) continue
         const d2 = this.cellDist2(ci, cam)
-        if (d2 >= LOD_NEAR2 && d2 < LOD_FAR2) want.push({ ci, d2 })
+        // within LOD_FAR and either in the coarse band OR a near cell whose full
+        // meshes aren't up yet (gap-fill on a fast/teleport approach)
+        if (d2 < LOD_FAR2 && (d2 >= LOD_NEAR2 || !this.cellMeshed(ci))) want.push({ ci, d2 })
       }
     }
     want.sort((a, b) => a.d2 - b.d2)
     this.buildQueue = want.map((w) => w.ci)
-  }
-
-  private inBand(ci: number, cam: Vec3Like): boolean {
-    const d2 = this.cellDist2(ci, cam)
-    return d2 >= LOD_NEAR2 && d2 < LOD_FAR2
   }
 
   /** squared horizontal distance from camera to the cell centre (metres) */

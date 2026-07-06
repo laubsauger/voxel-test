@@ -679,6 +679,23 @@ export class ChunkMeshManager {
     this.parent.add(mesh)
   }
 
+  /** B37 — true if the region column at world (x,z) has at least one built
+   *  full-detail mesh. The LOD manager holds a coarse cell in place until the
+   *  full meshes for that area exist, so a fast approach no longer sees the
+   *  building VANISH and rebuild over several seconds (LOD pop-out gap). */
+  hasMeshAt(worldX: number, worldZ: number): boolean {
+    const cx = Math.floor(worldX / (CHUNK * VOXEL_SIZE))
+    const cz = Math.floor(worldZ / (CHUNK * VOXEL_SIZE))
+    if (cx < 0 || cz < 0 || cx >= WORLD_CX || cz >= WORLD_CZ) return true
+    const rx = (cx / REGION) | 0
+    const rz = (cz / REGION) | 0
+    for (let ry = 0; ry < REGION_CY; ry++) {
+      const ri = rx + rz * REGION_CX + ry * REGION_CX * REGION_CZ
+      if (this.regionMeshes.has(ri) || this.regionMeshesT.has(ri)) return true
+    }
+    return false
+  }
+
   dispose(): void {
     for (const w of this.workers) w.terminate()
     this.workers.length = 0
