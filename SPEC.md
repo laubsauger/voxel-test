@@ -29,6 +29,7 @@ Browser voxel sandbox: fully destructible suburban arena (terrain→player), str
 - I.boot: URL params control boot path. `?boot=game&seed=N` = bypass menu straight into scene (agents/CDP smoke, dev iteration). `?dev=1` = dev settings + profiling HUD on. Default = preloader → menu.
 - I.settings: settings store. Graphics (quality tiers, post toggles), audio (master/music/sfx volume 0-100), controls, gameplay + dev section (profiling, debug draws, scene seed). Persist localStorage. Render-layer only, never sim state.
 - I.audio: asset pipeline (node script, ElevenLabs API, key in .env.dev — NEVER committed/bundled/logged) → generated SFX+music in public/audio/ + manifest.json. Runtime: WebAudio engine, gain buses master→{music,sfx}, positional 3D SFX, surface-aware footsteps. Render layer (V6).
+- I.box3d: Box3D — erincatto/box3d, C17, 3D, v0.1.0 (2026-06-30). Soft-step solver, CCD (continuous collision = tunneling defense), multi-shape/compound bodies. Web: Emscripten build, SSE2 WASM (or BOX3D_DISABLE_SIMD). NO prebuilt npm binding at v0.1 → we compile lib→WASM + author JS glue (T78). PRECISION: undocumented, Box2D-v3 lineage = single float, so user's "double-precision" pos claim likely FALSE — treat transforms as f32. b3dWorld (downward gravity, fixed 60Hz step + substeps), static box/compound colliders, dynamic bodies. Spike-only, NOT in main game.
 
 ## §V invariants
 
@@ -45,6 +46,8 @@ Browser voxel sandbox: fully destructible suburban arena (terrain→player), str
 - V11: render interpolates between sim ticks. No sim stepping from rAF directly.
 - V12: dynamic island bodies stay dynamic after settle. No re-weld v1.
 - V13: single I.mat authority = src/sim/materials.ts. Other layers derive params by id, never redefine id assignments. Test enforces render/sim id agreement.
+- V14: Box3D spike ISOLATED. Own boot path (I.boot ?boot=box3d-spike) + own scene/loop. Never imports Jolt sim, never writes I.cmd/sim state, never wired to lockstep/MP (I.net) or determinism harness (I.hash). Eval sandbox only. V1-V13 do NOT govern spike.
+- V15: each dynamic b3dBody ↔ exactly 1 three.js mesh (1:1). After each physics step, mesh world transform == body transform (pos+orientation copied, no drift). Sync test: N bodies → N meshes, transforms match post-step.
 
 ## §T tasks
 
@@ -126,6 +129,12 @@ T54|x|[P] projectile entities: thrown bomb = sim projectile (arc, bounce, fuse t
 T52|x|[UI] audio wiring per INTEGRATION-audio.md (B9: engine init on gesture, listener sync, footstep poller, event hooks) + fullscreen setting & quick-access + mute quick-access in main/pause menus + ESC toggles pause closed (B10)|T34,T37|B9,B10,I.audio,I.settings
 T48|x|[PL] procedural animation rig: render-side bone animation of voxel segments — walk/run cycles stride-matched to velocity (NO foot skating), idle sway, jump/fall/land, crouch pose, yaw/pitch aim. Sim segments stay authoritative for damage (V6)|T22,T46|§C,V6
 T49|x|[PL] FP viewmodel: hands (+feet when looking down) visible in first person, equipped hotbar tool rendered in hand, FP anims (swing/dig, place, recoil, bob synced to stride)|T48,T28|§C,V6
+T78|x|[SPIKE] Box3D WASM bridge + boot gate: build erincatto/box3d → WASM via Emscripten (SSE2 or BOX3D_DISABLE_SIMD), author JS glue (world/body/shape create, step, transform read). Confirm loads in Chrome. Init b3dWorld (downward gravity matching Jolt scale), fixed 60Hz step folded into existing rAF render loop (reuse WebGPURenderer + fly cam from T1, NOT sim FixedStepDriver). New I.boot path ?boot=box3d-spike, own scene module, no menu. Transforms f32 (precision undocumented)|T1|I.box3d,I.boot,V14
+T79|.|[SPIKE] example level via existing voxel system: flat grid ground + 3-5 voxel houses. Reuse I.chunk store + T6 greedy mesher for VISUALS (own tiny voxel grids, not the suburb procgen). Static, hand-placed, deterministic-not-required|T78,T6|I.chunk,V14
+T80|.|[SPIKE] voxel→Box3D static colliders: two mappings behind toggle — (a) per-solid-voxel b3dBoxShape, (b) greedy-box compound (reuse T12 greedy-box logic from island extraction). Ground + houses. Measure build cost + collider count each mode|T79|I.box3d,V14
+T81|.|[SPIKE] dynamic drop spawner: rain b3dBody cubes/spheres from sky onto/around houses. Each body → 1 three.js mesh (own material, NOT sim island path). Key/HUD trigger to burst-spawn|T78|I.box3d,V15
+T82|.|[SPIKE] state sync: after b3dWorld step, copy body pos+orientation → matching three.js mesh transform. No sim-tick interpolation (V11 not in scope — direct copy). Enforce V15 1:1|T81|I.box3d,V15
+T83|.|[SPIKE] eval report: CDP smoke (?boot=box3d-spike) capturing the 3 questions — (1) voxel-edge contact snag/jitter, (2) tunneling of fast bodies vs thin voxel walls (Box3D CCD on vs off), (3) perf: frame cost under M bodies × N static colliders, per-mapping (T80 a vs b), substep behavior. Screenshots + frame-time trace → findings doc. NO 60fps gate (eval, not ship)|T80,T82|I.box3d,§C
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 
