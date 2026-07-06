@@ -110,6 +110,14 @@ export interface StampResult {
   aircraftSpawns: AircraftSpawnRequest[]
 }
 
+/** hard cap on LIVE (drivable) vehicles — each is a per-tick Jolt vehicle, so
+ *  the parked overflow is stamped as static voxel cars (B32 perf budget). */
+export const MAX_REAL_VEHICLES = 48
+/** P13 — cars whose footprint centres are within this many voxels (~6.4 m) are
+ *  one cluster (same lot / row / driveway) and share drivability all-or-nothing,
+ *  so adjacent parked look-alikes never split into a random drivable subset. */
+export const CLUSTER_GAP = 64
+
 const GRASS_DEPTH = 3
 const ROAD_DEPTH = 3
 const WALK_DEPTH = 2
@@ -1265,30 +1273,89 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   for (const m of layout.mailboxes) stampMailbox(store, m, layout.groundY)
   for (const b of layout.bins) stampBin(store, b, layout.groundY)
 
-  // car props → real drivable vehicles, but only the nearest MAX_REAL_VEHICLES
-  // to the world centre (spawn). B32 — each parked car is a LIVE Jolt vehicle
-  // (per-tick wheel raycasts + step listener); at the 4× world there are ~113
-  // of them, enough to halve the frame rate. We cap the live set to a perf
-  // budget (~the old 2× world's count) and stamp the rest as static voxel cars.
-  // Deterministic: cars ranked by squared distance to centre, ties by x then z.
-  const MAX_REAL_VEHICLES = 48
+  // car props → real drivable vehicles. Each live one is a Jolt vehicle stepped
+  // every tick (wheel raycasts + step listener); at this world size there are
+  // ~150 of them, enough to halve the frame rate, so we keep the live set to a
+  // perf budget (MAX_REAL_VEHICLES) and stamp the overflow as static voxel cars.
+  //
+  // P13 — selection is CLUSTER-COHERENT, not a raw nearest-N cut. The old cut
+  // ranked individual cars by distance to centre, so a parking lot straddling
+  // the budget boundary came out half drivable / half static look-alikes — a
+  // "random-looking subset" the player can't predict. Now cars within
+  // CLUSTER_GAP of each other (same lot / row / driveway) form a cluster and we
+  // admit WHOLE clusters, nearest-centre-first, until the budget is spent: two
+  // ADJACENT parked cars are always BOTH drivable or BOTH static. Deterministic
+  // (V2): min-index union, clusters ranked by (nearest-car dist², cx, cz, root),
+  // spawns emitted in ascending prop order — identical on every lockstep peer.
   const cx0 = WORLD_VX / 2
   const cz0 = WORLD_VZ / 2
-  const cars: { p: (typeof layout.props)[number]; d2: number }[] = []
+  const cars: { p: (typeof layout.props)[number]; cx: number; cz: number }[] = []
   for (const p of layout.props) {
     if (isCarKind(p.kind)) {
-      const dx = p.x - cx0
-      const dz = p.z - cz0
-      cars.push({ p, d2: dx * dx + dz * dz })
+      const { sx, sz } = propGrids[p.kind]
+      const [w, d] = p.rot % 2 === 0 ? [sx, sz] : [sz, sx]
+      cars.push({ p, cx: p.x + w / 2, cz: p.z + d / 2 })
       continue
     }
     stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot)
   }
-  cars.sort((a, b) => a.d2 - b.d2 || a.p.x - b.p.x || a.p.z - b.p.z)
+  // union-find: merge cars whose footprint centres are within CLUSTER_GAP
+  const parent = cars.map((_, i) => i)
+  const find = (i: number): number => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    }
+    return i
+  }
+  const gap2 = CLUSTER_GAP * CLUSTER_GAP
+  for (let i = 0; i < cars.length; i++) {
+    for (let j = i + 1; j < cars.length; j++) {
+      const dx = cars[i].cx - cars[j].cx
+      const dz = cars[i].cz - cars[j].cz
+      if (dx * dx + dz * dz <= gap2) {
+        const ra = find(i)
+        const rb = find(j)
+        if (ra !== rb) parent[Math.max(ra, rb)] = Math.min(ra, rb)
+      }
+    }
+  }
+  // gather clusters (root → member indices) and rank by nearest-car distance
+  const clusterOf = new Map<number, number[]>()
+  for (let i = 0; i < cars.length; i++) {
+    const r = find(i)
+    const arr = clusterOf.get(r)
+    if (arr) arr.push(i)
+    else clusterOf.set(r, [i])
+  }
+  const clusters = [...clusterOf.values()].map((members) => {
+    let d2 = Infinity
+    let repx = 0
+    let repz = 0
+    for (const i of members) {
+      const dd = (cars[i].cx - cx0) ** 2 + (cars[i].cz - cz0) ** 2
+      if (dd < d2) {
+        d2 = dd
+        repx = cars[i].cx
+        repz = cars[i].cz
+      }
+    }
+    return { members, d2, repx, repz, root: members[0] }
+  })
+  clusters.sort((a, b) => a.d2 - b.d2 || a.repx - b.repx || a.repz - b.repz || a.root - b.root)
+  // admit whole clusters nearest-first until the budget is spent; an overflowing
+  // cluster is skipped (never split) — it and every un-admitted cluster go static.
+  const real = new Set<number>()
+  let used = 0
+  for (const c of clusters) {
+    if (used + c.members.length > MAX_REAL_VEHICLES) continue
+    for (const i of c.members) real.add(i)
+    used += c.members.length
+  }
   const vehicleSpawns: VehicleSpawnRequest[] = []
   for (let i = 0; i < cars.length; i++) {
-    const p = cars[i].p
-    if (i < MAX_REAL_VEHICLES) {
+    const { p } = cars[i]
+    if (real.has(i)) {
       const { sx, sz } = propGrids[p.kind]
       const [w, d] = p.rot % 2 === 0 ? [sx, sz] : [sz, sx]
       vehicleSpawns.push({

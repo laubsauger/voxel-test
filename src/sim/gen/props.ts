@@ -57,36 +57,42 @@ function arches(g: VoxelGrid, yBody: number, zws: number[], span = 6): void {
   }
 }
 
-/** sedan: 1.8 m wide × 4.0 m long, 1.6 m tall — hood, glass cabin, trunk.
- * B31 — cabin raised (roof y13→15) so a seated 1.65 m driver clears the roof. */
+/** sedan: 1.8 m wide × 4.0 m long, 1.8 m tall — hood, glass cabin, trunk.
+ * B31 — cabin raised (roof y13→15) so a seated 1.65 m driver clears the roof.
+ * P15 — greenhouse raised again (roof y15→17) so the car reads taller next to
+ * the 1.65 m player. Only the MID cabin grows; the front hood/grille stays low
+ * (y≤8) so a forward crash still noses into a wall and crumples (see
+ * handleCrash in vehicle.ts — dent search finds the low front). */
 function buildSedan(body: number): VoxelGrid {
-  const g = makeGrid(18, 16, 40)
+  const g = makeGrid(18, 18, 40)
   fill(g, 1, 4, 1, 16, 8, 38, body)
   arches(g, 4, [5, 29])
   wheels(g, [5, 29])
   // cabin: glass greenhouse with body pillars + roof
-  fill(g, 2, 9, 12, 15, 14, 31, MAT_GLASS)
-  fill(g, 2, 9, 12, 15, 14, 13, body) // A pillars
-  fill(g, 2, 9, 30, 15, 14, 31, body) // C pillars
-  fill(g, 2, 15, 12, 15, 15, 31, body) // roof
+  fill(g, 2, 9, 12, 15, 16, 31, MAT_GLASS)
+  fill(g, 2, 9, 12, 15, 16, 13, body) // A pillars
+  fill(g, 2, 9, 30, 15, 16, 31, body) // C pillars
+  fill(g, 2, 17, 12, 15, 17, 31, body) // roof
   fill(g, 5, 5, 0, 12, 6, 0, MAT_METAL) // grille
   lights(g, 6, 0, 39)
   return g
 }
 
 /** pickup: cab up front, open bed with side walls + tailgate.
- * B31 — cab raised (roof y13→15) so a seated driver fits. */
+ * B31 — cab raised (roof y13→15) so a seated driver fits.
+ * P15 — cab greenhouse raised (roof y15→17) to read taller; the hood (y≤8,
+ * z≤9) stays low so a forward crash crumples the nose. */
 function buildPickup(body: number): VoxelGrid {
-  const g = makeGrid(18, 16, 42)
+  const g = makeGrid(18, 18, 42)
   fill(g, 1, 4, 1, 16, 7, 40, body) // chassis
   arches(g, 4, [5, 31])
   wheels(g, [5, 31])
   fill(g, 2, 8, 1, 15, 8, 9, body) // hood
   // cab
-  fill(g, 2, 8, 10, 15, 14, 22, MAT_GLASS)
-  fill(g, 2, 8, 10, 15, 14, 11, body)
-  fill(g, 2, 8, 21, 15, 14, 22, body)
-  fill(g, 2, 15, 10, 15, 15, 22, body)
+  fill(g, 2, 8, 10, 15, 16, 22, MAT_GLASS)
+  fill(g, 2, 8, 10, 15, 16, 11, body)
+  fill(g, 2, 8, 21, 15, 16, 22, body)
+  fill(g, 2, 17, 10, 15, 17, 22, body)
   // bed walls + tailgate (interior stays open)
   fill(g, 1, 8, 23, 2, 9, 41, body)
   fill(g, 15, 8, 23, 16, 9, 41, body)
@@ -96,19 +102,21 @@ function buildPickup(body: number): VoxelGrid {
   return g
 }
 
-/** van: tall box, big windshield, side window band */
+/** van: tall box, big windshield, side window band.
+ * P15 — box + roof raised (roof y15→18) so it reads taller than the raised
+ * sedan/pickup (vans are the tallest car). */
 function buildVan(body: number): VoxelGrid {
-  const g = makeGrid(18, 16, 44)
-  fill(g, 1, 4, 1, 16, 14, 42, body)
+  const g = makeGrid(18, 19, 44)
+  fill(g, 1, 4, 1, 16, 17, 42, body)
   arches(g, 4, [6, 33])
   wheels(g, [6, 33])
-  fill(g, 3, 9, 1, 14, 13, 1, MAT_GLASS) // windshield
+  fill(g, 3, 9, 1, 14, 16, 1, MAT_GLASS) // windshield
   // side window band with pillars every 8 voxels
   for (const x of [1, 16]) {
-    fill(g, x, 9, 10, x, 12, 40, MAT_GLASS)
-    for (let z = 10; z <= 40; z += 8) fill(g, x, 9, z, x, 12, z, body)
+    fill(g, x, 9, 10, x, 15, 40, MAT_GLASS)
+    for (let z = 10; z <= 40; z += 8) fill(g, x, 9, z, x, 15, z, body)
   }
-  fill(g, 2, 15, 4, 15, 15, 40, body) // roof cap
+  fill(g, 2, 18, 4, 15, 18, 40, body) // roof cap
   fill(g, 5, 5, 0, 12, 6, 0, MAT_METAL)
   lights(g, 6, 0, 43)
   return g
