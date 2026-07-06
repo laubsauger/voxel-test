@@ -7,8 +7,12 @@
  */
 
 export const DEFAULT_SEED = 1337
-/** T71 — default signaling server (npm run signal listens here) */
-export const DEFAULT_SIGNAL_URL = 'ws://localhost:8081'
+/**
+ * Default signaling backend. 'peerjs' = PeerJS cloud broker (no server to run,
+ * works from the static Pages deploy). Override with `?signal=ws://host:port`
+ * to use the self-hosted signal server (server/signal.mjs) — mp-e2e does this.
+ */
+export const DEFAULT_SIGNAL_URL = 'peerjs'
 
 export interface BootConfig {
   mode: 'menu' | 'game'

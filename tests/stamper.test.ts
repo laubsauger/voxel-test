@@ -149,7 +149,8 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     expect(layout.beaches.length).toBe(1)
     const beach = layout.beaches[0]
     const sx = beach.sand.x0 + 80
-    const sz = beach.sand.z0 + 6
+    // P7 — the beach now has inland dunes; check flat wet sand near the shore
+    const sz = beach.ocean.z0 - 10
     expect(store.getVoxel(sx, g - 1, sz), 'sand surface').toBe(MAT_SAND) // B32 — real sand
     expect(store.getVoxel(sx, g, sz), 'walkable beach air').toBe(MAT_AIR)
     const bx = beach.boardwalk.x0 + 80

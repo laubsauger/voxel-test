@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "jolt-physics": "^1.0.0",
+    "peerjs": "^1.5.5",
     "three": "^0.185.1"
   },
   "devDependencies": {

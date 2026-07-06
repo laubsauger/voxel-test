@@ -42,7 +42,8 @@ import { installVehicleDevControls } from './render/vehicle-meshes'
 import { generateLayout } from './sim/gen/layout'
 import { WORLD_VX, WORLD_VZ } from './world/chunks'
 import { MpLobby, NetHud, StallBanner, DesyncOverlay } from './ui/mp'
-import { SignalingClient } from './net/signaling'
+import { SignalingClient, type Signaling } from './net/signaling'
+import { PeerSignalingClient } from './net/peer-signaling'
 import { GuestLobby, HostLobby, HOST_PLAYER_ID, playerName, type SessionPlayer } from './net/session'
 import { LockstepClient, LockstepDriver, LockstepHost, DEFAULT_INPUT_DELAY, type LockstepNode } from './net/lockstep'
 import { DesyncDetectorHost, DesyncReporter, DEFAULT_HASH_INTERVAL, type DesyncEvent } from './net/desync'
@@ -570,11 +571,16 @@ function onDesyncEvent(e: DesyncEvent): void {
   ])
 }
 
-async function connectSignaling(): Promise<SignalingClient | null> {
+/** ws://|wss:// → self-hosted signal server; anything else → PeerJS cloud broker */
+const usesWsServer = /^wss?:\/\//.test(boot.signalUrl)
+
+async function connectSignaling(): Promise<Signaling | null> {
   mpLobby.show('connecting')
   mpLobby.setStatus(boot.signalUrl)
   try {
-    const sig = await SignalingClient.connect(boot.signalUrl)
+    const sig = usesWsServer
+      ? await SignalingClient.connect(boot.signalUrl)
+      : await PeerSignalingClient.connect(boot.signalUrl)
     sig.onError = (err) => {
       console.error('[net]', err)
       if (mpSession) mpFatal('Connection lost', [err.message])
@@ -582,7 +588,11 @@ async function connectSignaling(): Promise<SignalingClient | null> {
     }
     return sig
   } catch (e) {
-    mpLobby.setStatus(`cannot reach signal server at ${boot.signalUrl} — is \`npm run signal\` up?`)
+    mpLobby.setStatus(
+      usesWsServer
+        ? `cannot reach signal server at ${boot.signalUrl} — is \`npm run signal\` up?`
+        : `cannot reach PeerJS broker — check your connection`,
+    )
     console.error('[net] signaling connect failed:', e)
     return null
   }

@@ -67,6 +67,19 @@ export interface SignalingOptions {
 /** 'rtc' = WebRTC DataChannel (real sessions); 'ws' = signaling-relay (tests) */
 export type Transport = 'rtc' | 'ws'
 
+/**
+ * Backend-agnostic signaling surface. SignalingClient (custom ws server) and
+ * PeerSignalingClient (peerjs cloud) both satisfy it; main.ts picks by URL.
+ */
+export interface Signaling {
+  selfId: number
+  onError: (err: Error) => void
+  onPeerLeft: (peerId: number) => void
+  hostRoom(onPeer: (peerId: number, channel: Channel) => void, transport?: Transport): Promise<string>
+  joinRoom(code: string, transport?: Transport): Promise<{ hostId: number; channel: Channel }>
+  close(): void
+}
+
 interface ServerMsg {
   t: string
   [key: string]: unknown
@@ -76,7 +89,7 @@ interface ServerMsg {
  * Connection to the signaling server (server/signal.mjs). One instance per
  * session; discard after WebRTC channels are up (handshake only).
  */
-export class SignalingClient {
+export class SignalingClient implements Signaling {
   selfId = 0
   /** V10: transport failures surface loud — integrator wires this to the UI */
   onError: (err: Error) => void = (err) => {

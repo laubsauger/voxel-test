@@ -738,17 +738,31 @@ function stampPond(store: ChunkStore, pond: Pond, g: number): void {
 function stampBeach(store: ChunkStore, beach: Beach, g: number): void {
   const s = beach.sand
   store.fillBox(s.x0, g - WALK_DEPTH, s.z0, s.x1, g - 1, s.z1, BEACH_SAND_MAT)
-  store.fillBox(s.x0, g, s.z0, s.x1, g + 2, s.z1, MAT_AIR)
+  store.fillBox(s.x0, g, s.z0, s.x1, g + 34, s.z1, MAT_AIR) // clear tall (for dunes)
+
+  // P7 — natural dune profile: value-noise sand hills that rise INLAND and taper
+  // to flat wet sand at the waterline (so the shore reads natural, no flat slab).
+  const waterZ0 = beach.ocean.z0
+  const RANGE = Math.max(1, waterZ0 - s.z0)
+  for (let z = s.z0; z < waterZ0; z += 2) {
+    const inland = Math.min(1, (waterZ0 - z) / RANGE) // 1 far inland → 0 at shore
+    const amp = inland * inland * 40 // ease-in: flat beach, hills toward the back
+    for (let x = s.x0; x <= s.x1; x += 2) {
+      const n = valueNoise(x, z, 42, 0x8eac13)
+      const hgt = Math.floor(Math.max(0, n - 0.42) * amp)
+      if (hgt > 0) store.fillBox(x, g, z, x + 1, g + hgt - 1, z + 1, BEACH_SAND_MAT)
+    }
+  }
 
   const w = beach.boardwalk
+  store.fillBox(w.x0, g, w.z0, w.x1, g + 34, w.z1, MAT_AIR) // boardwalk cuts flat through dunes
   store.fillBox(w.x0, g - WALK_DEPTH, w.z0, w.x1, g - 1, w.z1, MAT_WOOD)
-  store.fillBox(w.x0, g, w.z0, w.x1, g + 2, w.z1, MAT_AIR)
   for (let x = w.x0; x <= w.x1; x += 6) {
     store.fillBox(x, g - 1, w.z0, x, g - 1, w.z1, MAT_ROOFTILE)
   }
 
   const o = beach.ocean
-  store.fillBox(o.x0, o.y0, o.z0, o.x1, g + 2, o.z1, MAT_AIR)
+  store.fillBox(o.x0, o.y0, o.z0, o.x1, g + 34, o.z1, MAT_AIR)
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,11 +1082,15 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   }
 
   stampTerrain(store, layout)
+  stampRoads(store, layout)
+  stampMarkings(store, layout)
+  // B37/P8 — beach/desert/airport stamp AFTER roads so the grid does NOT cut
+  // through them: their surface (sand/apron) overwrites the road voxels within
+  // their bounds (also kills the coplanar road/apron z-fight). Bordering roads
+  // outside the district rects stay, so the districts still connect to the grid.
   for (const beach of layout.beaches) stampBeach(store, beach, layout.groundY)
   for (const d of layout.deserts) stampDesert(store, d, layout.groundY)
   for (const a of layout.airports) stampAirport(store, a, layout.groundY)
-  stampRoads(store, layout)
-  stampMarkings(store, layout)
   for (const h of layout.houses) stampHouse(store, layout, h)
   stampVilla(store, layout)
   for (const b of layout.rowBlocks) stampRowBlock(store, layout, b)

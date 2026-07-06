@@ -25,9 +25,9 @@ describe('parseBootParams (I.boot)', () => {
     expect(cfg.seed).toBe(1337)
   })
 
-  it('T71 — ?signal=ws://... overrides the signaling server (mp-e2e per-process ports)', () => {
+  it('T71 — ?signal=ws://... overrides the default PeerJS backend (mp-e2e per-process ports)', () => {
     expect(parseBootParams('?signal=ws%3A%2F%2Flocalhost%3A9911').signalUrl).toBe('ws://localhost:9911')
-    expect(parseBootParams('').signalUrl).toBe('ws://localhost:8081')
+    expect(parseBootParams('').signalUrl).toBe('peerjs')
   })
 
   it('?dev=1 enables the profiling overlay flag', () => {

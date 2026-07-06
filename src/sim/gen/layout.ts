@@ -1662,14 +1662,33 @@ export function generateLayout(seed: number): Layout {
     ...com.towers.map((t) => t.rect),
     villa.cabana,
   ].map((r) => growRect(r, 2))
+
+  // P8 — the airport/beach/desert districts stamp their surface AFTER the road
+  // grid (so no roads cut through them). Drop road-following furniture + curb
+  // cars that fall inside those districts — otherwise grid lamps/fences/bins/
+  // cars are left orphaned on bare apron/sand. (House-attached mailboxes never
+  // land in these districts, so they keep their per-house count.)
+  const districtRects: Rect[] = [
+    ...airports.map((a) => a.apron),
+    ...beaches.map((b) => b.rect),
+    ...deserts.map((d) => d.rect),
+  ]
+  const inDistrict = (x: number, z: number): boolean =>
+    districtRects.some((r) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1)
+
   const clearedProps = props.filter(
-    (p) => !isCarKind(p.kind) || !buildingKeep.some((b) => rectsTouch(propRect(p), b)),
+    (p) =>
+      (!isCarKind(p.kind) || !buildingKeep.some((b) => rectsTouch(propRect(p), b))) &&
+      !inDistrict(p.x, p.z),
   )
+  const keptLamps = lamps.filter((l) => !inDistrict(l.x, l.z))
+  const keptBins = bins.filter((b) => !inDistrict(b.x, b.z))
+  const keptFences = fences.filter((f) => !inDistrict((f.x0 + f.x1) >> 1, (f.z0 + f.z1) >> 1))
 
   return {
     seed, groundY: GROUND_Y, roads, districts, lots, houses, pools, villa,
     rowBlocks, towers: com.towers, parking: com.parking, plazas: com.plazas,
     ponds: park.ponds, beaches, deserts, airports, parkPaths: park.parkPaths,
-    props: clearedProps, trees, shrubs, fences, lamps, mailboxes, bins,
+    props: clearedProps, trees, shrubs, fences: keptFences, lamps: keptLamps, mailboxes, bins: keptBins,
   }
 }
