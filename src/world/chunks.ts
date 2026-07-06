@@ -27,6 +27,14 @@ export const enum ChunkKind {
   Empty = 0,
   Uniform = 1,
   Dense = 2,
+  /**
+   * P18 — memory-compressed form of a Dense chunk: a small material palette +
+   * bit-packed indices. LOGICALLY still a Dense chunk (it decompresses to the
+   * exact same 32768 bytes); the kind exists only so the store knows to inflate
+   * on access. Never observed outside ChunkStore — chunkAt() inflates it away,
+   * and hash/snapshot read the logical Dense bytes via denseView().
+   */
+  Palette = 3,
 }
 
 export interface Chunk {
@@ -35,7 +43,27 @@ export interface Chunk {
   mat: number
   /** voxel data for Dense chunks, index = x + z*32 + y*1024 */
   data: Uint8Array | null
+  /** P18 — Palette chunks: material table (palette index → material id) */
+  palette: Uint8Array | null
+  /** P18 — Palette chunks: bit-packed palette indices (bits each, dense order) */
+  packed: Uint8Array | null
+  /** P18 — Palette chunks: bits per packed index (1..7) */
+  bits: number
 }
+
+/** P18 — max distinct materials we palette-compress; above this the packed
+ *  indices (>7 bits) save too little to bother, so the chunk stays Dense. */
+const PALETTE_MAX = 128
+
+/** ceil(log2(n)) clamped to a 1-bit minimum */
+function bitsFor(n: number): number {
+  let b = 1
+  while (1 << b < n) b++
+  return b
+}
+
+/** material id → palette index scratch, reused across compress() calls (-1 = unseen) */
+const paletteSlot = new Int16Array(256).fill(-1)
 
 export function chunkIndex(cx: number, cy: number, cz: number): number {
   return cx + cz * WORLD_CX + cy * WORLD_CX * WORLD_CZ
@@ -53,6 +81,8 @@ export class ChunkStore {
   private readonly chunks: Chunk[] = new Array(CHUNK_COUNT)
   /** chunk indices touched since last drain — consumed by mesher/mirror */
   readonly dirty = new Set<number>()
+  /** P18 — persistent cursor for compactStep's background sweep */
+  private compactCursor = 0
   /**
    * Per-voxel mutation hook (set in main.ts wiring): water CA subscribes so
    * settled pools wake when a wall is breached. Runs in-tick — must stay
@@ -63,11 +93,30 @@ export class ChunkStore {
 
   constructor() {
     for (let i = 0; i < CHUNK_COUNT; i++) {
-      this.chunks[i] = { kind: ChunkKind.Empty, mat: 0, data: null }
+      this.chunks[i] = { kind: ChunkKind.Empty, mat: 0, data: null, palette: null, packed: null, bits: 0 }
     }
   }
 
+  /**
+   * Chunk view for consumers that need the Dense byte array (mesher, physics,
+   * water, snapshot restore). P18: a Palette chunk is inflated back to Dense
+   * here, so callers NEVER observe the compressed form — no consumer changed
+   * for compression. Consumers stream near the players, so inflation is bounded
+   * to that hot set; the cold bulk stays compressed.
+   */
   chunkAt(index: number): Chunk {
+    const c = this.chunks[index]
+    if (c.kind === ChunkKind.Palette) this.inflate(c)
+    return c
+  }
+
+  /**
+   * P18 — raw chunk view that does NOT inflate a compressed chunk. Only the
+   * determinism hash and snapshot serialize use this; they read the logical
+   * voxels via denseView() so a Palette chunk is byte-for-byte indistinguishable
+   * from its Dense form (V3). Do not read .data directly off the result.
+   */
+  chunkAtRaw(index: number): Chunk {
     return this.chunks[index]
   }
 
@@ -79,8 +128,17 @@ export class ChunkStore {
         return 0
       case ChunkKind.Uniform:
         return c.mat
-      default:
+      case ChunkKind.Dense:
         return c.data![voxelInChunk(x, y, z)]
+      default: {
+        // Palette — direct bit-unpack read (cold chunk stays compressed; a
+        // scattered read must not inflate the whole thing).
+        const vi = voxelInChunk(x, y, z)
+        const bitPos = vi * c.bits
+        const byteIdx = bitPos >> 3
+        const idx = ((c.packed![byteIdx] | (c.packed![byteIdx + 1] << 8)) >>> (bitPos & 7)) & ((1 << c.bits) - 1)
+        return c.palette![idx]
+      }
     }
   }
 
@@ -89,6 +147,7 @@ export class ChunkStore {
     const ci = chunkIndex(x >> 5, y >> 5, z >> 5)
     const c = this.chunks[ci]
     const vi = voxelInChunk(x, y, z)
+    if (c.kind === ChunkKind.Palette) this.inflate(c) // P18 — a write makes the chunk hot; go back to flat Dense
     if (c.kind === ChunkKind.Dense) {
       if (c.data![vi] === mat) return
       c.data![vi] = mat
@@ -109,6 +168,126 @@ export class ChunkStore {
     c.kind = ChunkKind.Dense
     c.data = data
     c.mat = 0
+  }
+
+  /**
+   * P18 — Palette → Dense, rebuilding the exact original 32768 bytes. Lossless
+   * by construction (each voxel = palette[index]). Called on any access that
+   * needs the flat array (chunkAt, setVoxel).
+   */
+  private inflate(c: Chunk): void {
+    const pal = c.palette!
+    const pk = c.packed!
+    const bits = c.bits
+    const mask = (1 << bits) - 1
+    const data = new Uint8Array(CHUNK_VOL)
+    for (let i = 0; i < CHUNK_VOL; i++) {
+      const bitPos = i * bits
+      const byteIdx = bitPos >> 3
+      const idx = ((pk[byteIdx] | (pk[byteIdx + 1] << 8)) >>> (bitPos & 7)) & mask
+      data[i] = pal[idx]
+    }
+    c.kind = ChunkKind.Dense
+    c.data = data
+    c.palette = null
+    c.packed = null
+    c.bits = 0
+    c.mat = 0
+  }
+
+  /**
+   * P18 — compress a Dense chunk in place to a Palette (memory only). The chunk
+   * stays LOGICALLY Dense: inflate() rebuilds byte-identical data, and hash /
+   * snapshot read it as Dense via denseView(). So whether this ran does NOT
+   * change the determinism hash or serialized bytes (V3) — peers may compress
+   * on different schedules and still agree. No-op unless the chunk is Dense with
+   * ≤ PALETTE_MAX distinct materials. Returns true if it compressed.
+   */
+  compress(index: number): boolean {
+    const c = this.chunks[index]
+    if (c.kind !== ChunkKind.Dense) return false
+    const data = c.data!
+    const palette = new Uint8Array(PALETTE_MAX)
+    let n = 0
+    for (let i = 0; i < CHUNK_VOL; i++) {
+      const m = data[i]
+      if (paletteSlot[m] < 0) {
+        if (n >= PALETTE_MAX) {
+          for (let k = 0; k < n; k++) paletteSlot[palette[k]] = -1 // reset scratch on bail
+          return false
+        }
+        paletteSlot[m] = n
+        palette[n++] = m
+      }
+    }
+    const bits = bitsFor(n)
+    const packed = new Uint8Array(((CHUNK_VOL * bits + 7) >> 3) + 1) // +1 pad: 2-byte reads never OOB
+    for (let i = 0; i < CHUNK_VOL; i++) {
+      const v = paletteSlot[data[i]]
+      const bitPos = i * bits
+      const byteIdx = bitPos >> 3
+      const bitOff = bitPos & 7
+      packed[byteIdx] |= (v << bitOff) & 0xff
+      packed[byteIdx + 1] |= v >> (8 - bitOff)
+    }
+    for (let k = 0; k < n; k++) paletteSlot[palette[k]] = -1 // reset scratch for next call
+    c.kind = ChunkKind.Palette
+    c.palette = palette.slice(0, n) // exact-size copy; drops the PALETTE_MAX temp
+    c.packed = packed
+    c.bits = bits
+    c.data = null
+    c.mat = 0
+    return true
+  }
+
+  /**
+   * P18 — logical Dense voxel bytes WITHOUT inflating storage. Dense returns the
+   * live array (no copy); Palette unpacks into `scratch` (length CHUNK_VOL) and
+   * returns it. Null for empty/uniform. Lets the hash + snapshot scan every
+   * chunk while keeping memory flat, and makes their output identical whether or
+   * not a chunk is compressed.
+   */
+  denseView(index: number, scratch: Uint8Array): Uint8Array | null {
+    const c = this.chunks[index]
+    if (c.kind === ChunkKind.Dense) return c.data!
+    if (c.kind !== ChunkKind.Palette) return null
+    const pal = c.palette!
+    const pk = c.packed!
+    const bits = c.bits
+    const mask = (1 << bits) - 1
+    for (let i = 0; i < CHUNK_VOL; i++) {
+      const bitPos = i * bits
+      const byteIdx = bitPos >> 3
+      scratch[i] = pal[((pk[byteIdx] | (pk[byteIdx + 1] << 8)) >>> (bitPos & 7)) & mask]
+    }
+    return scratch
+  }
+
+  /**
+   * P18 — background memory compaction. Compresses up to `maxCompress` Dense
+   * chunks to Palette per call, advancing a persistent cursor over the world so
+   * repeated calls sweep everything. Skips chunks pending remesh (this.dirty) so
+   * a just-edited chunk isn't compressed only to inflate again next frame.
+   * Memory-only: logical voxels/hash are unchanged, so this runs OFF the sim
+   * tick and its (non-deterministic) schedule cannot cause desync. Returns the
+   * approximate bytes reclaimed this call.
+   */
+  compactStep(maxCompress: number, maxScan: number): number {
+    let reclaimed = 0
+    let compressed = 0
+    let scanned = 0
+    let i = this.compactCursor
+    while (compressed < maxCompress && scanned < maxScan) {
+      const c = this.chunks[i]
+      if (c.kind === ChunkKind.Dense && !this.dirty.has(i) && this.compress(i)) {
+        compressed++
+        reclaimed += CHUNK_VOL - this.chunks[i].packed!.length - this.chunks[i].palette!.length
+      }
+      scanned++
+      if (++i >= CHUNK_COUNT) i = 0
+    }
+    this.compactCursor = i
+    return reclaimed
   }
 
   /**
@@ -133,6 +312,9 @@ export class ChunkStore {
             c.kind = mat === 0 ? ChunkKind.Empty : ChunkKind.Uniform
             c.mat = mat === 0 ? 0 : mat
             c.data = null
+            c.palette = null // P18 — drop any prior compressed payload
+            c.packed = null
+            c.bits = 0
             this.dirty.add(ci)
           } else {
             const lx0 = Math.max(x0, bx0), lx1 = Math.min(x1, bx0 + 31)

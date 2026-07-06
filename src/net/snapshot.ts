@@ -186,10 +186,15 @@ const enum DenseMode {
 const chunksSection: SnapshotSection = {
   serialize(sim) {
     const w = new ByteWriter()
+    // P18 — scratch to read a Palette (compressed) chunk's logical bytes without
+    // inflating it: a full-world serialize must not decompress the cold world,
+    // and a Palette chunk serializes byte-identically to its Dense form.
+    const scratch = new Uint8Array(CHUNK_VOL)
     for (let i = 0; i < CHUNK_COUNT; i++) {
-      const c = sim.world.chunkAt(i)
-      if (c.kind === ChunkKind.Dense) {
-        const rle = rleEncode(c.data!)
+      const c = sim.world.chunkAtRaw(i)
+      if (c.kind === ChunkKind.Dense || c.kind === ChunkKind.Palette) {
+        const data = sim.world.denseView(i, scratch)! // live array (Dense) or unpacked (Palette)
+        const rle = rleEncode(data)
         if (rle.length < CHUNK_VOL) {
           w.u8(ChunkKind.Dense)
           w.u8(DenseMode.Rle)
@@ -200,7 +205,7 @@ const chunksSection: SnapshotSection = {
           w.u8(ChunkKind.Dense)
           w.u8(DenseMode.Raw)
           w.u32(CHUNK_VOL)
-          w.bytes(c.data!)
+          w.bytes(data)
         }
       } else {
         // empty/uniform: 2 bytes each
