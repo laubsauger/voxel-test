@@ -35,6 +35,7 @@ import {
 } from './atmosphere'
 import { BlockyClouds } from './clouds'
 import { ChunkMeshManager } from './chunk-mesh-manager'
+import { LodManager } from './lod-manager'
 import {
   createChunkMaterial,
   createTransparentChunkMaterial,
@@ -107,6 +108,7 @@ const FOCUS_MAX_LEAD = 12.8
 
 export class WorldRenderer {
   readonly chunks: ChunkMeshManager
+  private readonly lod: LodManager
   readonly sun: DirectionalLight
   /** T14: debris/dust bursts, render-only (V6) */
   readonly particles: DebrisParticles
@@ -186,7 +188,12 @@ export class WorldRenderer {
     // area (sharper shadows) and drops the fog-hidden fringe. (The real perf win
     // was REGION 8, not shorter shadows — see chunk-mesh-manager; this is kept
     // just for the crisper look.) 3 cascades.
-    this.csm = new CSMShadowNode(this.sun, { cascades: 3, maxFar: 110, mode: 'practical' })
+    // B37 — 3→2 cascades. The frame is CPU-bound on three.js iterating every
+    // region mesh ONCE PER PASS (main + one shadow render per cascade); dropping
+    // a cascade removes a whole scene-traversal + shadow render each frame. The
+    // 2048² map splits over 2 slices instead of 3 (slightly coarser mid-range
+    // shadows) — a good trade for the per-frame object-processing saved.
+    this.csm = new CSMShadowNode(this.sun, { cascades: 2, maxFar: 110, mode: 'practical' })
     this.csm.fade = true
     // custom shadow node hook (not yet in @types/three)
     ;(this.sun.shadow as DirectionalLightShadow & { shadowNode?: CSMShadowNode }).shadowNode =
@@ -233,6 +240,15 @@ export class WorldRenderer {
       maxRegionBuildsPerFrame: opts.maxRegionBuildsPerFrame,
       dirtySource: opts.dirtySource,
     })
+    // B37 — coarse LOD tier for the far field (reuses the chunk materials so it
+    // shades identically, just blocky). Full meshes now stop at ~120 m; the LOD
+    // cells carry 120–340 m as a handful of big draws instead of ~1700.
+    this.lod = new LodManager(
+      opts.world,
+      opts.scene,
+      this.chunks.material,
+      this.chunks.transparentMaterial,
+    )
     // B35 — no enqueueAll: view-distance streaming (ChunkMeshManager.update)
     // meshes only the regions near the camera each frame and evicts the rest,
     // so the world is materialised on demand rather than all ~54k chunks up
@@ -367,6 +383,7 @@ export class WorldRenderer {
     }
     this.prevCamPos.copy(camPos)
     this.chunks.update(this.meshFocus)
+    this.lod.update(camPos) // B37 — coarse distant cells beyond the full-mesh radius
     if (this.firstUpdate) {
       this.firstUpdate = false
       if (this.debrisEnabled) {
@@ -543,6 +560,7 @@ export class WorldRenderer {
   }
 
   dispose(): void {
+    this.lod.dispose()
     this.chunks.dispose()
     this.csm.dispose()
     this.clouds?.dispose()
