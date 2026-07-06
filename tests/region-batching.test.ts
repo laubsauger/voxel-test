@@ -32,19 +32,18 @@ describe('T35 region batching', () => {
   })
 
   it('bounds draw calls: the STAMPED town occupies few enough regions for the fps budget', () => {
-    // WHY: empty regions produce no meshes and no draws — the total geometry
-    // scales with regions that contain non-empty chunks. B32 — the world grew
-    // 4× in area (128² surface chunks), so total occupancy is ~4× the T50
-    // world; per-FRAME draws stay tiny because regions are frustum-culled (the
-    // smoke gate observes ~18 draws/frame). This bound catches procgen changes
-    // that would blow the total geometry budget beyond the 4× world's baseline.
+    // WHY: this is a coarse whole-world geometry guard catching procgen blow-ups.
+    // Per-FRAME draws are now bounded by BOTH frustum culling AND view-distance
+    // streaming (B35 — only the ~240 m bubble is resident), so the total occupied
+    // region count is only a loose sanity bound, not the runtime draw count.
+    // B36 — REGION reverted 8→4 (cheap edits), so ~8× more, smaller regions; the
+    // 5× world has more surface too. Bound scaled to the 5× REGION-4 occupancy.
     const store = new ChunkStore()
     stampScene(store, generateLayout(1337), placeholderProps())
     const occupied = new Set<number>()
     for (let ci = 0; ci < CHUNK_COUNT; ci++) {
       if (store.chunkAt(ci).kind !== ChunkKind.Empty) occupied.add(regionIndex(ci))
     }
-    // 4× the old ≤1600 bound for the 4× world (per-frame is frustum-culled)
-    expect(occupied.size * 4).toBeLessThanOrEqual(6400)
+    expect(occupied.size * 4).toBeLessThanOrEqual(9000)
   })
 })

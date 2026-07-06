@@ -75,14 +75,13 @@ const MAX_REGION_DEFER = 8
 const REGION_BUILD_MS_BUDGET = 3
 
 /** chunks per region edge — REGION³ chunks merge into ONE draw call (T35).
- * B34 — 4→8: the 4× world's frame was CPU DRAW-CALL bound (every region mesh is
- * submitted once for the main pass + once per shadow cascade), not fragment- or
- * geometry-bound. 8³ regions = ~8× fewer meshes = ~8× fewer draw calls across
- * all passes → the single biggest win of the perf pass (retina ~29→63 fps at
- * FULL quality, zero visual change — identical geometry, just fewer draws). The
- * GPU had ample headroom, so the coarser frustum-cull granularity costs nothing
- * here; edit rebuilds concat a bigger region but stay within the V7 ms budget. */
-export const REGION = 8
+ * B36 — reverted 8→4. REGION 8 cut draw calls (a win only on a draw-call-bound
+ * GPU, e.g. my headless test box), but made every EDIT re-concatenate and
+ * re-upload an 8³=512-chunk merged buffer — catastrophic for a digging game on
+ * a fill-bound GPU (terrain breakage tanked to ~10 fps). At 4 an edit rebuilds a
+ * 4³=64-chunk region: 8× cheaper. Draw count is not the bottleneck on the real
+ * target hardware (full-HD integrated GPU is fill/shading-bound). */
+export const REGION = 4
 const REGION_CX = Math.ceil(WORLD_CX / REGION)
 const REGION_CZ = Math.ceil(WORLD_CZ / REGION)
 const REGION_CY = Math.ceil(WORLD_CY / REGION)
