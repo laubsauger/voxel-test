@@ -14,15 +14,13 @@ import {
   WebGPURenderer,
   DirectionalLight,
   HemisphereLight,
-  Mesh,
-  BoxGeometry,
-  MeshStandardMaterial,
   Color,
 } from 'three/webgpu'
 import { FlyCam } from '../render/flycam'
 import { SpikeWorld, type DynamicHandle } from './box3d-bridge'
 import { buildTestLevel, clusterToGroup, solidCount, type VoxelCluster } from './houses'
 import { buildColliders, type ColliderMode, type ColliderStats } from './colliders'
+import { spawnDynamic, burstSpawn, type SpawnCtx, type DynamicMeshRecord } from './spawner'
 
 const app = document.getElementById('app')!
 const hud = document.getElementById('hud')!
@@ -79,26 +77,14 @@ async function main(): Promise<void> {
   let ccd = true
   let stats: ColliderStats = { mode, bodyCount: 0, solidVoxels: 0, buildMs: 0 }
 
-  const meshes = new Map<number, Mesh>()
+  const meshes = new Map<number, DynamicMeshRecord>()
+  let ctx: SpawnCtx
   function clearDynamicMeshes(): void {
-    for (const m of meshes.values()) {
-      scene.remove(m)
-      m.geometry.dispose()
+    for (const rec of meshes.values()) {
+      scene.remove(rec.mesh)
+      rec.mesh.geometry.dispose()
     }
     meshes.clear()
-  }
-
-  // dynamic box, one render mesh per body (V15). T81 layers a burst spawner on top.
-  function spawnBox(x: number, y: number, z: number, bullet = false): void {
-    const half = { x: 0.5, y: 0.5, z: 0.5 }
-    const h = phys.spawnDynamicBox({ x, y, z }, half, bullet)
-    const mesh = new Mesh(
-      new BoxGeometry(half.x * 2, half.y * 2, half.z * 2),
-      new MeshStandardMaterial({ color: 0xd8843a, roughness: 0.7 }),
-    )
-    mesh.castShadow = true
-    scene.add(mesh)
-    meshes.set(h.id, mesh)
   }
 
   // (re)build the physics world under the current collider mode. Recreating the
@@ -108,9 +94,10 @@ async function main(): Promise<void> {
     clearDynamicMeshes()
     phys = await SpikeWorld.create({ continuous: ccd })
     stats = buildColliders(phys, level, mode)
+    ctx = { phys, scene, meshes }
     // a couple of proof drops so a rebuild is immediately visible/testable
-    spawnBox(0, 6, 0)
-    spawnBox(1.2, 9, -0.4)
+    spawnDynamic(ctx, 'box', { x: 0, y: 6, z: 0 })
+    spawnDynamic(ctx, 'sphere', { x: 1.2, y: 9, z: -0.4 })
   }
 
   await buildWorld()
@@ -118,16 +105,16 @@ async function main(): Promise<void> {
   // sync render mesh transforms from physics (T82 direct copy, no interpolation)
   function sync(): void {
     for (const h of phys.dynamics as DynamicHandle[]) {
-      const mesh = meshes.get(h.id)
-      if (!mesh) continue
+      const rec = meshes.get(h.id)
+      if (!rec) continue
       const p = h.position()
       const r = h.rotation()
-      mesh.position.set(p.x, p.y, p.z)
-      mesh.quaternion.set(r.x, r.y, r.z, r.w)
+      rec.mesh.position.set(p.x, p.y, p.z)
+      rec.mesh.quaternion.set(r.x, r.y, r.z, r.w)
     }
   }
 
-  // --- controls: 1/2 collider mode, C continuous-collision -------------------
+  // --- controls: 1/2 collider mode, C cont-collision, Space burst, B bullet ---
   addEventListener('keydown', (e) => {
     if (e.code === 'Digit1' && mode !== 'per-voxel') {
       mode = 'per-voxel'
@@ -138,6 +125,12 @@ async function main(): Promise<void> {
     } else if (e.code === 'KeyC') {
       ccd = !ccd
       phys.setContinuous(ccd)
+    } else if (e.code === 'Space') {
+      e.preventDefault()
+      burstSpawn(ctx, 24)
+    } else if (e.code === 'KeyB') {
+      // fast downward bullet onto a house roof — tunneling probe (T83 q2)
+      spawnDynamic(ctx, 'sphere', { x: -0.4, y: 14, z: 0 }, { size: 0.25, bullet: ccd, speed: 80 })
     }
   })
 
@@ -175,7 +168,9 @@ async function main(): Promise<void> {
     get phys() {
       return phys
     },
-    spawnBox,
+    spawn: (kind: 'box' | 'sphere', pos: { x: number; y: number; z: number }, opts?: object) =>
+      spawnDynamic(ctx, kind, pos, opts ?? {}),
+    burst: (n = 24) => burstSpawn(ctx, n),
     meshes,
     level,
     totalSolid,

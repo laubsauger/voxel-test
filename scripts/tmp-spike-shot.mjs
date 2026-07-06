@@ -79,6 +79,23 @@ try {
   await sleep(1200)
   await page.screenshot({ path: `${OUT}/spike-colliders.png` })
 
+  // T81/T82: burst spawn, verify 1:1 mesh↔body (V15) + no NaN drift
+  await page.evaluate(() => globalThis.__spike.burst(24))
+  await sleep(2500)
+  const burst = await page.evaluate(() => {
+    const s = globalThis.__spike
+    const dyn = s.phys.dynamics.length
+    const meshes = s.meshes.size
+    let nan = 0
+    for (const h of s.phys.dynamics) {
+      const p = h.position()
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) nan++
+    }
+    return { dyn, meshes, nan, oneToOne: dyn === meshes }
+  })
+  console.log('BURST:', JSON.stringify(burst))
+  await page.screenshot({ path: `${OUT}/spike-burst.png` })
+
   const hud = await page.evaluate(() => document.getElementById('hud')?.textContent ?? '')
   const spike = await page.evaluate(() => {
     const s = globalThis.__spike
