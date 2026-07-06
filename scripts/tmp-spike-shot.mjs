@@ -67,6 +67,18 @@ try {
   })
   console.log('DIAG:', JSON.stringify(diag))
 
+  // T80: exercise both collider mappings, capture counts + build time
+  const greedy = await page.evaluate(() => ({ ...globalThis.__spike.stats }))
+  await page.evaluate(() => globalThis.__spike.setMode('per-voxel'))
+  await sleep(1500)
+  const perVoxel = await page.evaluate(() => ({ ...globalThis.__spike.stats }))
+  const perVoxelStep = await page.evaluate(() => globalThis.__spike.phys.profile().step)
+  console.log('MAP greedy:', JSON.stringify(greedy))
+  console.log('MAP per-voxel:', JSON.stringify(perVoxel), 'stepMs', perVoxelStep.toFixed(3))
+  await page.evaluate(() => globalThis.__spike.setMode('greedy'))
+  await sleep(1200)
+  await page.screenshot({ path: `${OUT}/spike-colliders.png` })
+
   const hud = await page.evaluate(() => document.getElementById('hud')?.textContent ?? '')
   const spike = await page.evaluate(() => {
     const s = globalThis.__spike

@@ -18,12 +18,11 @@ import {
   BoxGeometry,
   MeshStandardMaterial,
   Color,
-  Quaternion,
 } from 'three/webgpu'
 import { FlyCam } from '../render/flycam'
 import { SpikeWorld, type DynamicHandle } from './box3d-bridge'
 import { buildTestLevel, clusterToGroup, solidCount, type VoxelCluster } from './houses'
-import { VOXEL_SIZE } from '../world/chunks'
+import { buildColliders, type ColliderMode, type ColliderStats } from './colliders'
 
 const app = document.getElementById('app')!
 const hud = document.getElementById('hud')!
@@ -69,31 +68,30 @@ async function main(): Promise<void> {
     cam.camera.updateProjectionMatrix()
   })
 
-  // --- Box3D world (I.box3d) -------------------------------------------------
-  const phys = await SpikeWorld.create({ continuous: true })
-
   // --- T79 example level: voxel ground + houses (visuals from the game mesher) --
   const level: VoxelCluster[] = buildTestLevel()
-  const groundCluster = level.find((c) => c.label === 'ground')!
-  const groundTopY = groundCluster.sy * VOXEL_SIZE
   for (const c of level) scene.add(clusterToGroup(c))
+  const totalSolid = level.reduce((n, c) => n + solidCount(c), 0)
 
-  // T79 placeholder physics floor (flat box at the voxel-ground top). T80
-  // replaces this + adds house colliders by mapping the actual voxels.
-  const groundHalfX = (groundCluster.sx * VOXEL_SIZE) / 2
-  const groundHalfZ = (groundCluster.sz * VOXEL_SIZE) / 2
-  phys.addStaticBox(
-    { x: 0, y: groundTopY - 0.5, z: 0 },
-    { x: groundHalfX, y: 0.5, z: groundHalfZ },
-  )
+  // --- Box3D world + T80 collider mapping (I.box3d) --------------------------
+  let phys: SpikeWorld
+  let mode: ColliderMode = 'greedy' // default = fewer bodies; Digit1/2 toggles
+  let ccd = true
+  let stats: ColliderStats = { mode, bodyCount: 0, solidVoxels: 0, buildMs: 0 }
 
-  // --- T78 bridge proof: a couple of dynamic boxes, mesh per body (V15) ------
-  // (T81 generalises this into a spawner; kept minimal here to keep T78 verifiable.)
   const meshes = new Map<number, Mesh>()
-  const _q = new Quaternion()
-  function spawnBox(x: number, y: number, z: number): void {
+  function clearDynamicMeshes(): void {
+    for (const m of meshes.values()) {
+      scene.remove(m)
+      m.geometry.dispose()
+    }
+    meshes.clear()
+  }
+
+  // dynamic box, one render mesh per body (V15). T81 layers a burst spawner on top.
+  function spawnBox(x: number, y: number, z: number, bullet = false): void {
     const half = { x: 0.5, y: 0.5, z: 0.5 }
-    const h = phys.spawnDynamicBox({ x, y, z }, half)
+    const h = phys.spawnDynamicBox({ x, y, z }, half, bullet)
     const mesh = new Mesh(
       new BoxGeometry(half.x * 2, half.y * 2, half.z * 2),
       new MeshStandardMaterial({ color: 0xd8843a, roughness: 0.7 }),
@@ -102,8 +100,20 @@ async function main(): Promise<void> {
     scene.add(mesh)
     meshes.set(h.id, mesh)
   }
-  spawnBox(0, 6, 0)
-  spawnBox(1.2, 9, -0.4)
+
+  // (re)build the physics world under the current collider mode. Recreating the
+  // world is the clean way to swap mappings (no per-body static removal API).
+  async function buildWorld(): Promise<void> {
+    phys?.destroy()
+    clearDynamicMeshes()
+    phys = await SpikeWorld.create({ continuous: ccd })
+    stats = buildColliders(phys, level, mode)
+    // a couple of proof drops so a rebuild is immediately visible/testable
+    spawnBox(0, 6, 0)
+    spawnBox(1.2, 9, -0.4)
+  }
+
+  await buildWorld()
 
   // sync render mesh transforms from physics (T82 direct copy, no interpolation)
   function sync(): void {
@@ -116,6 +126,20 @@ async function main(): Promise<void> {
       mesh.quaternion.set(r.x, r.y, r.z, r.w)
     }
   }
+
+  // --- controls: 1/2 collider mode, C continuous-collision -------------------
+  addEventListener('keydown', (e) => {
+    if (e.code === 'Digit1' && mode !== 'per-voxel') {
+      mode = 'per-voxel'
+      void buildWorld()
+    } else if (e.code === 'Digit2' && mode !== 'greedy') {
+      mode = 'greedy'
+      void buildWorld()
+    } else if (e.code === 'KeyC') {
+      ccd = !ccd
+      phys.setContinuous(ccd)
+    }
+  })
 
   let acc = 0
   let last = 0
@@ -140,20 +164,30 @@ async function main(): Promise<void> {
 
     const prof = phys.profile()
     hud.textContent =
-      `BOX3D SPIKE\n` +
-      `bodies dyn ${phys.dynamics.length}  static ${phys.staticColliderCount}\n` +
-      `awake ${phys.awakeCount}  steps ${steps}\n` +
+      `BOX3D SPIKE   [1]per-voxel [2]greedy  [C]cont=${ccd ? 'on' : 'off'}\n` +
+      `mode ${stats.mode}  static bodies ${stats.bodyCount} / ${stats.solidVoxels} voxels  build ${stats.buildMs.toFixed(1)}ms\n` +
+      `dyn ${phys.dynamics.length}  awake ${phys.awakeCount}  steps ${steps}\n` +
       `step ${prof.step.toFixed(2)}ms  solve ${prof.solve.toFixed(2)}ms`
   })
 
   // expose for CDP smoke (T83)
-  const totalSolid = level.reduce((n, c) => n + solidCount(c), 0)
   ;(globalThis as unknown as { __spike: unknown }).__spike = {
-    phys,
+    get phys() {
+      return phys
+    },
     spawnBox,
     meshes,
     level,
     totalSolid,
+    get stats() {
+      return stats
+    },
+    setMode: (m: ColliderMode) => {
+      if (m !== mode) {
+        mode = m
+        return buildWorld()
+      }
+    },
     scene,
     cam: cam.camera,
   }
