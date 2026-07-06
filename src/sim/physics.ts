@@ -46,6 +46,14 @@ import {
   tickVehiclesPreStep,
   type VehicleEntity,
 } from './vehicle'
+import {
+  disposeAircraft,
+  hashAircraft,
+  registerAircraftOps,
+  tickAircraftPostStep,
+  tickAircraftPreStep,
+  type AircraftEntity,
+} from './aircraft'
 
 type JoltApi = typeof Jolt
 
@@ -131,6 +139,7 @@ const FULL_CHUNK_BOX: Box[] = [{ x: 0, y: 0, z: 0, sx: CHUNK, sy: CHUNK, sz: CHU
  */
 const COLLIDER_PLAYER_RADIUS = 64 // m — walk/dig/interaction bubble
 const COLLIDER_BODY_RADIUS = 30 // m — around each vehicle / debris island
+const COLLIDER_AIRCRAFT_RADIUS = 48 // m — planes move fast; keep more world solid ahead
 const COLLIDER_KEEP_MARGIN = 20 // m — evict only beyond radius+margin (hysteresis)
 /** per-tick build/evict caps (steady state) — the burst at load is unbudgeted */
 const COLLIDER_BUILD_BUDGET = 64
@@ -266,11 +275,17 @@ export class PhysicsWorld {
   /** T64 drivable vehicles keyed by entity id (V8) — see vehicle.ts */
   readonly vehicles = new Map<number, VehicleEntity>()
 
+  /** P17 flyable aircraft keyed by entity id (V8) — see aircraft.ts */
+  readonly aircraft = new Map<number, AircraftEntity>()
+
   /** total bodies removed by the kill plane — hashed sim state (T40, V3) */
   removedBodies = 0
 
   /** T64 — vehicles fully despawned (kill plane / emptied); hashed sim state */
   removedVehicles = 0
+
+  /** P17 — aircraft fully despawned (kill plane / emptied); hashed sim state */
+  removedAircraft = 0
 
   /** sim back-reference for vehicle damage inside blast handling (set in createPhysics) */
   simRef: Sim | null = null
@@ -363,8 +378,10 @@ export class PhysicsWorld {
     tickVehiclesPlow(sim, this) // T64 — carve weak materials BEFORE collider rebuild
     this.structuralPass(sim)
     tickVehiclesPreStep(this) // T64 — driver input → Jolt controller
+    tickAircraftPreStep(this) // P17 — pilot input → arcade flight velocity
     this.joltInterface.Step(DT, 1)
     tickVehiclesPostStep(sim, this) // T64 — readback, crash damage, seat sync
+    tickAircraftPostStep(sim, this) // P17 — readback, crash damage, seat sync
     updatePlayers(this, sim) // character controllers, fixed order (T21)
     tickProjectiles(sim, this) // T54 — bomb arcs/fuses; detonation spawns ejecta this tick
     this.readbackBodies()
@@ -617,6 +634,7 @@ export class PhysicsWorld {
     }
     for (const p of this.players.values()) stamp(p.px, p.pz)
     for (const v of this.vehicles.values()) stamp(v.px, v.pz)
+    for (const a of this.aircraft.values()) stamp(a.px, a.pz)
     for (const b of this.bodies.values()) stamp(b.px, b.pz)
     if (sig === this.lastAnchorSig && !this.colliderBurst) return // nothing crossed a chunk
     this.lastAnchorSig = sig
@@ -643,6 +661,7 @@ export class PhysicsWorld {
     }
     for (const p of this.players.values()) addBubble(p.px, p.pz, COLLIDER_PLAYER_RADIUS)
     for (const v of this.vehicles.values()) addBubble(v.px, v.pz, COLLIDER_BODY_RADIUS)
+    for (const a of this.aircraft.values()) addBubble(a.px, a.pz, COLLIDER_AIRCRAFT_RADIUS)
     for (const b of this.bodies.values()) addBubble(b.px, b.pz, COLLIDER_BODY_RADIUS)
 
     // build in-range chunks not yet built (ascending ci; unbudgeted at load)
@@ -678,6 +697,7 @@ export class PhysicsWorld {
     }
     for (const p of this.players.values()) if (test(p.px, p.pz, COLLIDER_PLAYER_RADIUS)) return true
     for (const v of this.vehicles.values()) if (test(v.px, v.pz, COLLIDER_BODY_RADIUS)) return true
+    for (const a of this.aircraft.values()) if (test(a.px, a.pz, COLLIDER_AIRCRAFT_RADIUS)) return true
     for (const b of this.bodies.values()) if (test(b.px, b.pz, COLLIDER_BODY_RADIUS)) return true
     return false
   }
@@ -953,6 +973,7 @@ export class PhysicsWorld {
   dispose(): void {
     const api = this.api
     disposeVehicles(this) // T64 — constraints/listeners must go before bodies
+    disposeAircraft(this) // P17 — flyable aircraft bodies
     for (const body of this.chunkBodies.values()) {
       this.bodyInterface.RemoveBody(body.GetID())
       this.bodyInterface.DestroyBody(body.GetID())
@@ -1016,6 +1037,9 @@ export function hashPhysics(phys: PhysicsWorld): number {
     // T64 — seat state is sim state (V3)
     h.u32(p.seatedVehicle)
     h.u32(p.seat)
+    // P17 — aircraft seat state is sim state (V3)
+    h.u32(p.seatedAircraft)
+    h.u32(p.aircraftSeat)
     for (const seg of p.segments) {
       h.u32(seg.count)
       h.bytes(seg.grid)
@@ -1023,6 +1047,8 @@ export function hashPhysics(phys: PhysicsWorld): number {
   }
   // T64 — vehicles are sim state (V3)
   hashVehicles(h, phys)
+  // P17 — aircraft are sim state (V3)
+  hashAircraft(h, phys)
   return h.value
 }
 
@@ -1038,6 +1064,7 @@ export async function createPhysics(sim: Sim): Promise<PhysicsWorld> {
   registerPlayerOps(sim, phys)
   registerProjectileOps(sim, phys) // T54 — 'throw' op; integration runs in phys.tick
   registerVehicleOps(sim, phys) // T64 — vehicle_spawn/enter/exit ops
+  registerAircraftOps(sim, phys) // P17 — aircraft_spawn/enter/exit ops
   phys.simRef = sim // T64 — blast → vehicle damage path needs the sim
   attachEditPhysics(sim, phys) // B17 — dig pushes rubble
 

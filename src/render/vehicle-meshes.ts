@@ -34,6 +34,7 @@ import type { Sim } from '../sim/loop'
 import { VOXEL_SIZE, CHUNK, WORLD_VY } from '../world/chunks'
 import { buildPaddedChunk, meshChunk } from './mesher'
 import { nextSeq } from './command-seq'
+import { nearestAircraftInRange } from '../sim/aircraft'
 
 interface Entry {
   group: Group
@@ -249,7 +250,13 @@ export function installVehicleDevControls(
     if (e.code === 'Enter') {
       const p = phys.players.get(playerId)
       if (!p) return
-      const kind = p.seatedVehicle !== 0 ? 'vehicle_exit' : 'vehicle_enter'
+      // P17 — one Enter key rides either a car or a plane: exit whatever we're
+      // in, else board the nearest aircraft if one is in range, else a vehicle.
+      let kind: 'vehicle_enter' | 'vehicle_exit' | 'aircraft_enter' | 'aircraft_exit'
+      if (p.seatedAircraft !== 0) kind = 'aircraft_exit'
+      else if (p.seatedVehicle !== 0) kind = 'vehicle_exit'
+      else if (nearestAircraftInRange(phys, p)) kind = 'aircraft_enter'
+      else kind = 'vehicle_enter'
       sim.queue.push({ tick: sim.tick, playerId, seq: nextSeq(), op: { kind } })
       return
     }

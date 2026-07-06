@@ -204,6 +204,15 @@ export interface PlayerEntity {
   seatedVehicle: number
   /** T64 — seat index in the vehicle's seat list (0 = driver); hashed */
   seat: number
+  /**
+   * P17 — aircraft entity id the player is piloting (0 = not flying). Same
+   * contract as seatedVehicle: while set, updatePlayers skips the capsule and
+   * the aircraft system (src/sim/aircraft.ts) drives px/py/pz from the seat.
+   * Hashed sim state (V3).
+   */
+  seatedAircraft: number
+  /** P17 — seat index in the aircraft's seat list (0 = pilot); hashed */
+  aircraftSeat: number
   char: Jolt.CharacterVirtual
   /** standing capsule shape — retained for crouch↔stand swaps (T44) */
   standShape: Jolt.Shape
@@ -291,6 +300,8 @@ export function spawnPlayer(sim: Sim, phys: PhysicsWorld, playerId: number): Pla
     noclip: false,
     seatedVehicle: 0,
     seat: 0,
+    seatedAircraft: 0,
+    aircraftSeat: 0,
     char,
     standShape,
     crouchShape,
@@ -465,6 +476,8 @@ export function updatePlayers(phys: PhysicsWorld, sim: Sim): void {
     // T64 — seated in a vehicle: capsule parked, the vehicle system owns
     // position (seat-follow) and input (drive mapping). Deterministic skip.
     if (p.seatedVehicle !== 0) continue
+    // P17 — piloting an aircraft: same deal, the aircraft system owns position.
+    if (p.seatedAircraft !== 0) continue
 
     const grounded = p.char.GetGroundState() === api.EGroundState_OnGround
 
