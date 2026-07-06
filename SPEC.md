@@ -176,8 +176,8 @@ P6|~|S|trailer-park roads too clean/fancy|added jittered dirt tracks INSIDE; bor
 P7|x|M|beach is ugly|road grid cuts through it; want dune terrain (value-noise sand height, analog to trailer-park terrain, beach biome), natural sand→water shoreline, no grid interruption
 P8|x|S|airport interrupted by road grid + z-fighting|except airport district from the road grid; kill coplanar apron/foundation z-fight
 P9|.|S|z-fighting on tower foundations|coplanar overlap outside highrises — depth offset / dedupe the slab
-P10|.|M|water waves in pools ugly|too high-frequency, too dark, unnatural — lower freq, lighten, smoother surface
-P11|.|M|disturbed water side faces glitch|displaced water voxels at differing heights show broken lines / missing side faces (skin not closed on height steps) — B20 follow-up
+P10|x|M|water waves in pools ugly|too high-frequency, too dark, unnatural — lower freq, lighten, smoother surface
+P11|x|M|disturbed water side faces glitch|displaced water voxels at differing heights show broken lines / missing side faces (skin not closed on height steps) — B20 follow-up
 P12|x|S|first-person camera inside vehicles|toggle FP/chase while seated (currently chase only)
 P13|.|M|some cars cannot be driven|subset of parked cars fail the enter/drive path — find + fix
 P14|.|M|two-wheelers not in the world|bicycle/scooter are rideable archetypes (T76) but never placed as city props — models + scatter placement
@@ -191,3 +191,5 @@ P21|x|M|farmhouse / hacienda on the outer nature rim|occasional large rural buil
 P22|.|L|outer-rim blocks 2× size|bigger plots + half the intersections on the nature rim → more open, distinct from the dense city grid (grid/road-gen change)
 P23|x|S|highrise variety|all towers identical — add ≥1 more facade/massing style (setbacks, brick+glass mix, different mullion/crown)
 P24|x|S|input box less stylish than before|a text input lost styling (regression) — restore the nicer look
+P25|.|S|bomb/explosion damage too weak on hard surfaces|highrises + roads barely dent — scale destruction or add power vs hard materials
+P26|.|S|pistol muzzle black lines + black square|tracer/muzzle-flash renders as black lines (trajectory to impact) + a semi-opaque black square at the muzzle — VFX material/blend bug
