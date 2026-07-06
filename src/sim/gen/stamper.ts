@@ -916,6 +916,35 @@ function stampDesert(store: ChunkStore, plot: DesertPlot, g: number): void {
   }
 }
 
+/**
+ * P6 — the desert trailer park is run-down, so the tidy city arterial that
+ * borders it should NOT read as a clean asphalt grid. Degrade the road surface
+ * in a frame around each desert block into a shoddy patchwork: washed-out bare
+ * DIRT patches + cracked/patched CONCRETE, driven by deterministic position
+ * noise (V2). Surface voxel only and asphalt/paint-guarded, so it only touches
+ * the bordering roadway (never the sand, grass, or any feature) and never the
+ * block interior (the desert's own dirt tracks handle that). Runs after roads +
+ * markings so it also wipes the crisp lane paint on those worn approaches. */
+function stampShoddyDesertRoads(store: ChunkStore, layout: Layout): void {
+  const g = layout.groundY
+  const y = g - 1
+  const M = 48 // reaches across the bordering residential road (extent ~42) + curb
+  for (const d of layout.deserts) {
+    const r = d.rect
+    for (let z = Math.max(0, r.z0 - M); z <= Math.min(WORLD_VZ - 1, r.z1 + M); z++) {
+      for (let x = Math.max(0, r.x0 - M); x <= Math.min(WORLD_VX - 1, r.x1 + M); x++) {
+        // leave the block interior alone (that is desert sand + its dirt tracks)
+        if (x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1) continue
+        const cur = store.getVoxel(x, y, z)
+        if (cur !== MAT_ASPHALT && cur !== MAT_PAINT) continue // roadway only
+        const n = valueNoise(x, z, 22, (0x5c0ff1 ^ d.seed) >>> 0)
+        if (n > 0.62) store.setVoxel(x, y, z, MAT_DIRT) // washed-out bare patch
+        else if (n > 0.5 || (hash3(x, 5, z, 0xba77e) & 7) === 0) store.setVoxel(x, y, z, MAT_CONCRETE) // cracked/patched
+      }
+    }
+  }
+}
+
 /** a parked airliner: tube fuselage, swept wings, tail fin. ~24 m long. */
 /** P20 — small high-wing Cessna-style plane: ~7 m fuselage, ~9 m wingspan, fixed
  * gear. Footprint along its axis: fuselage 70 vox from origin, wings ±45.
@@ -1242,6 +1271,9 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   // outside the district rects stay, so the districts still connect to the grid.
   for (const beach of layout.beaches) stampBeach(store, beach, layout.groundY)
   for (const d of layout.deserts) stampDesert(store, d, layout.groundY)
+  // P6 — rough up the city roads bordering the trailer park (after markings so
+  // it wipes the crisp lane paint; after the desert fill so the sand stays clean)
+  stampShoddyDesertRoads(store, layout)
   const aircraftSpawns: AircraftSpawnRequest[] = []
   for (const a of layout.airports) stampAirport(store, a, layout.groundY, aircraftSpawns)
   for (const h of layout.houses) stampHouse(store, layout, h)

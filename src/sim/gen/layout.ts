@@ -415,11 +415,28 @@ const BLOCK_PITCH = 416 // road-center spacing (unchanged from the T50 grid)
 const GRID_MARGIN = 240 // nature/beach band left outside the outermost road
 /** road centers, generated to fill the world centered on the spawn arterial
  * (SPAWN_VX). Odd count → the middle road is the arterial. Scales with
- * WORLD_VX automatically (B32: 5 roads @2048 → 9 roads @4096). */
+ * WORLD_VX automatically (B32: 5 roads @2048 → 9 roads @4096).
+ *
+ * P22 — the dense downtown grid only belongs downtown: the central 4×4 core
+ * (the 5 roads at half-2..half+2 bounding it) keeps the full BLOCK_PITCH
+ * spacing, but the surrounding NATURE RIM is thinned to every-other road so
+ * its blocks are ~2× the core's and the edge reads open/rural. The uniform
+ * grid is symmetric with an ODD road count, so both outermost roads (the even
+ * endpoints i=0 and i=2·half) always survive the parity filter — the world
+ * extent, the beach margin and every core road position are unchanged; only
+ * the interior rim roads (odd indices outside the core) are dropped. Because
+ * equal counts fall on each side, the recomputed CORE_LO still lands on the
+ * core, so districtKindAt/blockRect need no changes. */
 function buildRoadCenters(): number[] {
   const half = Math.floor((SPAWN_VX - GRID_MARGIN) / BLOCK_PITCH)
+  const coreLo = half - 2
+  const coreHi = half + 2
   const c: number[] = []
-  for (let i = -half; i <= half; i++) c.push(SPAWN_VX + i * BLOCK_PITCH)
+  for (let i = -half; i <= half; i++) {
+    const idx = i + half
+    // keep the dense core intact; outside it, keep only every-other road
+    if ((idx >= coreLo && idx <= coreHi) || idx % 2 === 0) c.push(SPAWN_VX + i * BLOCK_PITCH)
+  }
   return c
 }
 const ROAD_CENTERS = buildRoadCenters()
