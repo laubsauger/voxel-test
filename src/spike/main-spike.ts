@@ -16,13 +16,14 @@ import {
   HemisphereLight,
   Mesh,
   BoxGeometry,
-  PlaneGeometry,
   MeshStandardMaterial,
   Color,
   Quaternion,
 } from 'three/webgpu'
 import { FlyCam } from '../render/flycam'
 import { SpikeWorld, type DynamicHandle } from './box3d-bridge'
+import { buildTestLevel, clusterToGroup, solidCount, type VoxelCluster } from './houses'
+import { VOXEL_SIZE } from '../world/chunks'
 
 const app = document.getElementById('app')!
 const hud = document.getElementById('hud')!
@@ -52,7 +53,9 @@ async function main(): Promise<void> {
   scene.background = new Color(0x8fb6e8)
 
   const cam = new FlyCam(renderer.domElement, innerWidth / innerHeight)
-  cam.camera.position.set(14, 10, 14)
+  // FlyCam's fixed default forward is ~(-0.65,-0.39,+0.65); sit on the ray from
+  // the scene (origin) along -forward so the houses are framed on boot.
+  cam.camera.position.set(9, 6.5, -9)
 
   const sun = new DirectionalLight(0xffffff, 2.4)
   sun.position.set(30, 50, 20)
@@ -69,15 +72,20 @@ async function main(): Promise<void> {
   // --- Box3D world (I.box3d) -------------------------------------------------
   const phys = await SpikeWorld.create({ continuous: true })
 
-  // ground: static box collider + matching visual plane
-  const GROUND_HALF = 30
-  phys.addStaticBox({ x: 0, y: -0.5, z: 0 }, { x: GROUND_HALF, y: 0.5, z: GROUND_HALF })
-  const ground = new Mesh(
-    new PlaneGeometry(GROUND_HALF * 2, GROUND_HALF * 2),
-    new MeshStandardMaterial({ color: 0x5a6b4a, roughness: 1 }),
+  // --- T79 example level: voxel ground + houses (visuals from the game mesher) --
+  const level: VoxelCluster[] = buildTestLevel()
+  const groundCluster = level.find((c) => c.label === 'ground')!
+  const groundTopY = groundCluster.sy * VOXEL_SIZE
+  for (const c of level) scene.add(clusterToGroup(c))
+
+  // T79 placeholder physics floor (flat box at the voxel-ground top). T80
+  // replaces this + adds house colliders by mapping the actual voxels.
+  const groundHalfX = (groundCluster.sx * VOXEL_SIZE) / 2
+  const groundHalfZ = (groundCluster.sz * VOXEL_SIZE) / 2
+  phys.addStaticBox(
+    { x: 0, y: groundTopY - 0.5, z: 0 },
+    { x: groundHalfX, y: 0.5, z: groundHalfZ },
   )
-  ground.rotation.x = -Math.PI / 2
-  scene.add(ground)
 
   // --- T78 bridge proof: a couple of dynamic boxes, mesh per body (V15) ------
   // (T81 generalises this into a spawner; kept minimal here to keep T78 verifiable.)
@@ -139,7 +147,16 @@ async function main(): Promise<void> {
   })
 
   // expose for CDP smoke (T83)
-  ;(globalThis as unknown as { __spike: unknown }).__spike = { phys, spawnBox, meshes }
+  const totalSolid = level.reduce((n, c) => n + solidCount(c), 0)
+  ;(globalThis as unknown as { __spike: unknown }).__spike = {
+    phys,
+    spawnBox,
+    meshes,
+    level,
+    totalSolid,
+    scene,
+    cam: cam.camera,
+  }
 }
 
 main().catch((e) => die(`Box3D spike boot failed:\n${e?.message ?? e}`))
