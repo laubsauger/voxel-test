@@ -158,15 +158,16 @@ export class PlayerMesh {
   }
 
   /**
-   * First-person body rig (T49): torso + legs stay visible (looking down
-   * shows your own chest/legs/feet, not a floating pair of legs); head is
-   * hidden (camera lives inside it) and the body arms are hidden because the
-   * FP viewmodel supplies the arms. The body-tuck offset in update() keeps
-   * the torso from filling the frame.
+   * First-person body rig (T49): only the LEGS/pelvis stay visible (looking
+   * down shows your own legs/feet); the whole UPPER body (torso + head + arms)
+   * is hidden. B37 — the torso used to stay visible, but on turning/backward-
+   * walk the animated torso/neck poked into the near plane ("head glitching in")
+   * even with the tuck offset + a raised near clip. Hiding it kills that for
+   * good; the FP viewmodel supplies the arms/hands anyway.
    */
   setFirstPerson(fp: boolean): void {
     this.firstPerson = fp
-    this.torsoPivot.visible = true
+    this.torsoPivot.visible = !fp // hides torso + head + arms (its children)
     this.headPivot.visible = !fp
     this.armLPivot.visible = !fp
     this.armRPivot.visible = !fp
