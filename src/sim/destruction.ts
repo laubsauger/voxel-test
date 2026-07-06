@@ -52,8 +52,12 @@ export const EJECTA_CLUMP_MAX = 16
 export const EXPLOSION_SAMPLE_CAP = 128
 
 /** bomb detonation parameters (T54) — shared by the projectile fuse */
-export const BOMB_RADIUS = 14
-export const BOMB_POWER = 5
+export const BOMB_RADIUS = 15
+// P25 — was 5: bombs barely dented hard surfaces (concrete str 5 broke only at
+// the exact core, metal str 8 never, asphalt roads shrugged). At 9 the core
+// craters concrete/asphalt properly and dents metal, while VAPORIZE_RATIO (3)
+// still keeps most of it as satisfying debris rather than dust.
+export const BOMB_POWER = 9
 
 export interface ExplosionStats {
   /** total voxels removed from the world */
