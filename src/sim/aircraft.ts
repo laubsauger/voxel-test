@@ -39,6 +39,7 @@ import { greedyBoxes } from './greedy-boxes'
 import { destroySphere, runExplosion } from './destruction'
 import type { VoxelGrid } from './vox/remap'
 import type { DynamicBody, PhysicsWorld } from './physics'
+import type Jolt from 'jolt-physics'
 import {
   INPUT_BACK,
   INPUT_CROUCH,
@@ -503,7 +504,7 @@ export function tickAircraftPreStep(phys: PhysicsWorld): void {
       if (bits & INPUT_CROUCH) pitchInput -= 1 // nose down
       if (bits & INPUT_RIGHT) turnInput += 1
       if (bits & INPUT_LEFT) turnInput -= 1
-      phys.bodyInterface.ActivateBody(a.body.GetID())
+      phys.bodyInterface.ActivateBody((a.body as Jolt.Body).GetID())
       a.throttle = clamp01(a.throttle + throttleInput * THROTTLE_RATE * DT)
     } else {
       // no pilot: engine spools down, plane coasts to a stop / rests on gear
@@ -539,7 +540,7 @@ export function tickAircraftPreStep(phys: PhysicsWorld): void {
 
     const nv = new api.Vec3(nvx, nvy, nvz)
     const nw = new api.Vec3(awx, awy, awz)
-    phys.bodyInterface.SetLinearAndAngularVelocity(a.body.GetID(), nv, nw)
+    phys.bodyInterface.SetLinearAndAngularVelocity((a.body as Jolt.Body).GetID(), nv, nw)
     api.destroy(nv)
     api.destroy(nw)
   }
@@ -558,16 +559,16 @@ export function tickAircraftPostStep(sim: Sim, phys: PhysicsWorld): void {
     const pvy = a.vy
     const pvz = a.vz
 
-    const pos = a.body.GetPosition()
+    const pos = (a.body as Jolt.Body).GetPosition()
     a.px = pos.GetX()
     a.py = pos.GetY()
     a.pz = pos.GetZ()
-    const rot = a.body.GetRotation()
+    const rot = (a.body as Jolt.Body).GetRotation()
     a.qx = rot.GetX()
     a.qy = rot.GetY()
     a.qz = rot.GetZ()
     a.qw = rot.GetW()
-    const vel = a.body.GetLinearVelocity()
+    const vel = (a.body as Jolt.Body).GetLinearVelocity()
     a.vx = vel.GetX()
     a.vy = vel.GetY()
     a.vz = vel.GetZ()
@@ -741,8 +742,8 @@ function rebuildAircraftShape(phys: PhysicsWorld, a: AircraftEntity): void {
   const boxes = greedyBoxes(a.grid, a.sx, a.sy, a.sz)
   if (boxes.length === 0) return // caller handles empty via wreck/despawn
   const shape = phys.buildBoxesShape(boxes)
-  phys.bodyInterface.SetShape(a.body.GetID(), shape, false, phys.api.EActivation_Activate)
-  a.body.GetMotionProperties().SetInverseMass(1 / Math.max(a.mass, 1))
+  phys.bodyInterface.SetShape((a.body as Jolt.Body).GetID(), shape, false, phys.api.EActivation_Activate)
+  ;(a.body as Jolt.Body).GetMotionProperties().SetInverseMass(1 / Math.max(a.mass, 1))
 }
 
 /**
@@ -758,12 +759,12 @@ export function convertToWreck(sim: Sim, phys: PhysicsWorld, a: AircraftEntity):
   }
   phys.aircraft.delete(a.id)
   if (a.count <= 0 || greedyBoxes(a.grid, a.sx, a.sy, a.sz).length === 0) {
-    phys.bodyInterface.RemoveBody(a.body.GetID())
-    phys.bodyInterface.DestroyBody(a.body.GetID())
+    phys.bodyInterface.RemoveBody((a.body as Jolt.Body).GetID())
+    phys.bodyInterface.DestroyBody((a.body as Jolt.Body).GetID())
     phys.removedAircraft++
     return
   }
-  phys.bodyInterface.SetGravityFactor(a.body.GetID(), 1) // wreck falls again
+  phys.bodyInterface.SetGravityFactor((a.body as Jolt.Body).GetID(), 1) // wreck falls again
   a.version++
   phys.bodies.set(a.id, a) // AircraftEntity IS a DynamicBody
 }
@@ -776,8 +777,8 @@ export function despawnAircraft(sim: Sim, phys: PhysicsWorld, a: AircraftEntity)
     if (p) unseatPlayer(phys, p, a.px, a.py + a.sy * VOXEL_SIZE + 0.2, a.pz)
   }
   phys.aircraft.delete(a.id)
-  phys.bodyInterface.RemoveBody(a.body.GetID())
-  phys.bodyInterface.DestroyBody(a.body.GetID())
+  phys.bodyInterface.RemoveBody((a.body as Jolt.Body).GetID())
+  phys.bodyInterface.DestroyBody((a.body as Jolt.Body).GetID())
   phys.removedAircraft++
 }
 
@@ -835,7 +836,7 @@ export function hashAircraft(
 export function disposeAircraft(phys: PhysicsWorld): void {
   for (const a of [...phys.aircraft.values()]) {
     phys.aircraft.delete(a.id)
-    phys.bodyInterface.RemoveBody(a.body.GetID())
-    phys.bodyInterface.DestroyBody(a.body.GetID())
+    phys.bodyInterface.RemoveBody((a.body as Jolt.Body).GetID())
+    phys.bodyInterface.DestroyBody((a.body as Jolt.Body).GetID())
   }
 }

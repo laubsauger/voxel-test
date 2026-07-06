@@ -3,6 +3,7 @@ import { Sim } from '../src/sim/loop'
 import { hashSim } from '../src/sim/hash'
 import { registerEditOps } from '../src/sim/edit-ops'
 import { createPhysics, hashPhysics, loadJolt, type PhysicsWorld } from '../src/sim/physics'
+import type Jolt from 'jolt-physics'
 import {
   EJECTA_CLUMP_MAX,
   EXPLOSION_SAMPLE_CAP,
@@ -154,7 +155,7 @@ describe('explosion falloff zones (T55, B14, B16)', () => {
     let outward = 0
     let total = 0
     for (const b of phys.bodies.values()) {
-      const v = b.body.GetLinearVelocity()
+      const v = (b.body as Jolt.Body).GetLinearVelocity()
       const rx = b.px - cx, ry = b.py - cy, rz = b.pz - cz
       const dot = v.GetX() * rx + v.GetY() * ry + v.GetZ() * rz
       total++
@@ -294,7 +295,7 @@ describe('bodies react to tools (B17)', () => {
     sim.step()
     expect(body.count).toBeLessThan(count0) // voxels removed from the grid
     expect(body.version).toBeGreaterThan(version0) // render rebuild trigger
-    const v = body.body.GetLinearVelocity()
+    const v = (body.body as Jolt.Body).GetLinearVelocity()
     expect(v.GetX()).toBeGreaterThan(0.05) // shoved along the shot
     // shot event reports the body hit with a surface normal facing the shooter
     const shot = sim.drainEvents().find((e) => e.kind === 'shot')
@@ -328,7 +329,7 @@ describe('bodies react to tools (B17)', () => {
       op: { kind: 'dig', x: 57, y: 42, z: 62, r: 4 },
     })
     sim.step()
-    const v = body.body.GetLinearVelocity()
+    const v = (body.body as Jolt.Body).GetLinearVelocity()
     expect(v.GetX()).toBeGreaterThan(0.02) // pushed away in +x
     phys.dispose()
   }, 30000)

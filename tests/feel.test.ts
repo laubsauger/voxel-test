@@ -1,3 +1,4 @@
+import type Jolt from 'jolt-physics'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Sim } from '../src/sim/loop'
 import { registerEditOps } from '../src/sim/edit-ops'
@@ -51,7 +52,7 @@ async function blastSpeed(mat: number): Promise<number> {
     op: { kind: 'explode', x: 50, y: 42, z: 62, r: 8, power: 2 },
   })
   sim.step()
-  const v = body.body.GetLinearVelocity()
+  const v = (body.body as Jolt.Body).GetLinearVelocity()
   const speed = Math.sqrt(v.GetX() * v.GetX() + v.GetZ() * v.GetZ())
   phys.dispose()
   return speed
@@ -73,8 +74,8 @@ describe('per-material friction/restitution (T40.2)', () => {
     const { phys } = await setupWithIsland(MAT_METAL)
     const body = [...phys.bodies.values()][0]
     expect(body.mat).toBe(MAT_METAL)
-    expect(body.body.GetFriction()).toBeCloseTo(materialFeel(MAT_METAL).friction, 6)
-    expect(body.body.GetRestitution()).toBeCloseTo(materialFeel(MAT_METAL).restitution, 6)
+    expect((body.body as Jolt.Body).GetFriction()).toBeCloseTo(materialFeel(MAT_METAL).friction, 6)
+    expect((body.body as Jolt.Body).GetRestitution()).toBeCloseTo(materialFeel(MAT_METAL).restitution, 6)
     phys.dispose()
   }, 30000)
 
@@ -97,12 +98,12 @@ describe('velocity clamps (T40.3)', () => {
       op: { kind: 'explode', x: 50, y: 42, z: 62, r: 8, power: 1e9 },
     })
     for (let i = 0; i < 5; i++) sim.step()
-    const v = body.body.GetLinearVelocity()
+    const v = (body.body as Jolt.Body).GetLinearVelocity()
     const speed = Math.sqrt(v.GetX() ** 2 + v.GetY() ** 2 + v.GetZ() ** 2)
     expect(Number.isFinite(speed)).toBe(true)
     // small tolerance: gravity may add up to g·DT between clamp and readback
     expect(speed).toBeLessThanOrEqual(MAX_BODY_LINEAR_VELOCITY + 0.5)
-    const av = body.body.GetAngularVelocity()
+    const av = (body.body as Jolt.Body).GetAngularVelocity()
     const spin = Math.sqrt(av.GetX() ** 2 + av.GetY() ** 2 + av.GetZ() ** 2)
     expect(spin).toBeLessThanOrEqual(MAX_BODY_ANGULAR_VELOCITY + 1e-6)
     expect(Number.isFinite(body.px + body.py + body.pz)).toBe(true)
@@ -148,7 +149,7 @@ describe('sleep tuning (T40.5, V12)', () => {
     let sleptAt = -1
     for (let i = 0; i < 300; i++) {
       sim.step()
-      if (!body.body.IsActive()) {
+      if (!(body.body as Jolt.Body).IsActive()) {
         sleptAt = i
         break
       }
@@ -161,7 +162,7 @@ describe('sleep tuning (T40.5, V12)', () => {
     // …but the body is still dynamic (V12: sleep allowed, no re-weld/staticization)
     expect(phys.bodies.size).toBe(1)
     const api = phys.api
-    expect(body.body.GetMotionType()).toBe(api.EMotionType_Dynamic)
+    expect((body.body as Jolt.Body).GetMotionType()).toBe(api.EMotionType_Dynamic)
     phys.dispose()
   }, 30000)
 })

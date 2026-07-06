@@ -946,7 +946,7 @@ function plowPass(sim: Sim, phys: PhysicsWorld, v: VehicleEntity): void {
   const scale = Math.sqrt(v2) / speed
   const api = phys.api
   const nv = new api.Vec3(v.vx * scale, v.vy * scale, v.vz * scale)
-  v.body.SetLinearVelocity(nv)
+  ;(v.body as Jolt.Body).SetLinearVelocity(nv)
   api.destroy(nv)
   v.vx *= scale
   v.vy *= scale
@@ -1002,7 +1002,7 @@ export function tickVehiclesPreStep(phys: PhysicsWorld): void {
         // no throttle: handbrake reads as a hard stop, plain coasting drags
         brake = handBrake ? 0.6 : 0.2
       }
-      phys.bodyInterface.ActivateBody(v.body.GetID())
+      phys.bodyInterface.ActivateBody((v.body as Jolt.Body).GetID())
     } else {
       handBrake = 1 // parked
     }
@@ -1024,16 +1024,16 @@ export function tickVehiclesPostStep(sim: Sim, phys: PhysicsWorld): void {
     const prevVy = v.vy
     const prevVz = v.vz
 
-    const pos = v.body.GetPosition()
+    const pos = (v.body as Jolt.Body).GetPosition()
     v.px = pos.GetX()
     v.py = pos.GetY()
     v.pz = pos.GetZ()
-    const rot = v.body.GetRotation()
+    const rot = (v.body as Jolt.Body).GetRotation()
     v.qx = rot.GetX()
     v.qy = rot.GetY()
     v.qz = rot.GetZ()
     v.qw = rot.GetW()
-    const vel = v.body.GetLinearVelocity()
+    const vel = (v.body as Jolt.Body).GetLinearVelocity()
     v.vx = vel.GetX()
     v.vy = vel.GetY()
     v.vz = vel.GetZ()
@@ -1336,8 +1336,8 @@ function rebuildVehicleShape(phys: PhysicsWorld, v: VehicleEntity): void {
   const comOffset = new api.Vec3(0, -COM_DROP, 0)
   const shape = new api.OffsetCenterOfMassShape(inner, comOffset)
   api.destroy(comOffset)
-  phys.bodyInterface.SetShape(v.body.GetID(), shape, false, api.EActivation_Activate)
-  v.body.GetMotionProperties().SetInverseMass(1 / Math.max(v.mass, 1))
+  phys.bodyInterface.SetShape((v.body as Jolt.Body).GetID(), shape, false, api.EActivation_Activate)
+  ;(v.body as Jolt.Body).GetMotionProperties().SetInverseMass(1 / Math.max(v.mass, 1))
 }
 
 /**
@@ -1396,8 +1396,8 @@ export function convertToWreck(sim: Sim, phys: PhysicsWorld, v: VehicleEntity): 
   phys.vehicles.delete(v.id)
   if (v.count <= 0 || greedyBoxes(v.grid, v.sx, v.sy, v.sz).length === 0) {
     // nothing left — despawn the body outright
-    phys.bodyInterface.RemoveBody(v.body.GetID())
-    phys.bodyInterface.DestroyBody(v.body.GetID())
+    phys.bodyInterface.RemoveBody((v.body as Jolt.Body).GetID())
+    phys.bodyInterface.DestroyBody((v.body as Jolt.Body).GetID())
     phys.removedVehicles++
     return
   }
@@ -1414,8 +1414,8 @@ export function despawnVehicle(sim: Sim, phys: PhysicsWorld, v: VehicleEntity): 
   }
   removeVehicleConstraint(phys, v)
   phys.vehicles.delete(v.id)
-  phys.bodyInterface.RemoveBody(v.body.GetID())
-  phys.bodyInterface.DestroyBody(v.body.GetID())
+  phys.bodyInterface.RemoveBody((v.body as Jolt.Body).GetID())
+  phys.bodyInterface.DestroyBody((v.body as Jolt.Body).GetID())
   phys.removedVehicles++
 }
 
@@ -1514,7 +1514,7 @@ export function disposeVehicles(phys: PhysicsWorld): void {
   for (const v of [...phys.vehicles.values()]) {
     removeVehicleConstraint(phys, v)
     phys.vehicles.delete(v.id)
-    phys.bodyInterface.RemoveBody(v.body.GetID())
-    phys.bodyInterface.DestroyBody(v.body.GetID())
+    phys.bodyInterface.RemoveBody((v.body as Jolt.Body).GetID())
+    phys.bodyInterface.DestroyBody((v.body as Jolt.Body).GetID())
   }
 }

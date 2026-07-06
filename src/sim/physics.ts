@@ -10,6 +10,7 @@
  * All mutations here run inside command handlers or sim systems (V1).
  */
 import Jolt from 'jolt-physics'
+import type { DynamicBody, BodyRayHit, IPhysicsWorld } from './iphysics'
 import { DT, type Sim } from './loop'
 import { Fnv } from './hash'
 import {
@@ -198,49 +199,13 @@ export function loadJolt(): Promise<JoltApi> {
  * layout x + z*sx + y*sx*sz; the body-local origin is grid corner (0,0,0).
  * Transform fields mirror Jolt state after each step — hashable (V3).
  */
-export interface DynamicBody {
-  /** entity id via sim.allocEntityId() (V8) */
-  id: number
-  sx: number
-  sy: number
-  sz: number
-  grid: Uint8Array
-  /** live voxel count */
-  count: number
-  /** kg — voxel count × material density × voxel volume */
-  mass: number
-  /** dominant material id (most voxels, ties → lowest id) — feel + buoyancy */
-  mat: number
-  px: number
-  py: number
-  pz: number
-  qx: number
-  qy: number
-  qz: number
-  qw: number
-  /** stable Jolt body pointer (BodyID wrappers returned by Jolt are transient temps) */
-  body: Jolt.Body
-  /** bumped when grid content changes — render rebuild trigger */
-  version: number
-  /** B37 — ticks the body has been at rest; ≥ REWELD_TICKS ⇒ re-weld to static */
-  restTicks: number
-}
+// DynamicBody + BodyRayHit moved to backend-agnostic ./iphysics (Box3D spike
+// B30). Re-exported here so existing importers keep their `./physics` path.
+// DynamicBody.body is `unknown` at the contract level; this Jolt backend stores
+// a Jolt.Body and casts via joltBody() below.
+export type { DynamicBody, BodyRayHit } from './iphysics'
 
-/** B17 — result of a ray cast against dynamic island bodies */
-export interface BodyRayHit {
-  body: DynamicBody
-  fraction: number
-  /** hit point, world meters */
-  px: number
-  py: number
-  pz: number
-  /** surface normal at the hit */
-  nx: number
-  ny: number
-  nz: number
-}
-
-export class PhysicsWorld {
+export class PhysicsWorld implements IPhysicsWorld {
   readonly api: JoltApi
   readonly joltInterface: Jolt.JoltInterface
   readonly physicsSystem: Jolt.PhysicsSystem
@@ -426,8 +391,8 @@ export class PhysicsWorld {
     doomed.sort((a, b) => a - b)
     for (const id of doomed) {
       const b = this.bodies.get(id)!
-      this.bodyInterface.RemoveBody(b.body.GetID())
-      this.bodyInterface.DestroyBody(b.body.GetID())
+      this.bodyInterface.RemoveBody((b.body as Jolt.Body).GetID())
+      this.bodyInterface.DestroyBody((b.body as Jolt.Body).GetID())
       this.bodies.delete(id)
       this.removedBodies++
     }
@@ -452,8 +417,8 @@ export class PhysicsWorld {
     }
     for (const id of doomed) {
       const b = this.bodies.get(id)!
-      this.bodyInterface.RemoveBody(b.body.GetID())
-      this.bodyInterface.DestroyBody(b.body.GetID())
+      this.bodyInterface.RemoveBody((b.body as Jolt.Body).GetID())
+      this.bodyInterface.DestroyBody((b.body as Jolt.Body).GetID())
       this.bodies.delete(id)
       this.removedBodies++
     }
@@ -527,7 +492,7 @@ export class PhysicsWorld {
     }
     const v = new api.Vec3(vx, vy, vz)
     const w = new api.Vec3(wx, wy, wz)
-    this.bodyInterface.SetLinearAndAngularVelocity(b.body.GetID(), v, w)
+    this.bodyInterface.SetLinearAndAngularVelocity((b.body as Jolt.Body).GetID(), v, w)
     api.destroy(v)
     api.destroy(w)
   }
@@ -803,17 +768,17 @@ export class PhysicsWorld {
   /** Mirror Jolt transforms into hashable entity fields after each step. */
   private readbackBodies(): void {
     for (const b of this.bodies.values()) {
-      const p = b.body.GetPosition()
+      const p = (b.body as Jolt.Body).GetPosition()
       b.px = p.GetX()
       b.py = p.GetY()
       b.pz = p.GetZ()
-      const q = b.body.GetRotation()
+      const q = (b.body as Jolt.Body).GetRotation()
       b.qx = q.GetX()
       b.qy = q.GetY()
       b.qz = q.GetZ()
       b.qw = q.GetW()
       // B37 — rest tracking for re-weld (deterministic: Jolt velocity is hashed)
-      const lv = b.body.GetLinearVelocity()
+      const lv = (b.body as Jolt.Body).GetLinearVelocity()
       const sp2 = lv.GetX() * lv.GetX() + lv.GetY() * lv.GetY() + lv.GetZ() * lv.GetZ()
       b.restTicks = sp2 < REST_SPEED_SQ ? b.restTicks + 1 : 0
     }
@@ -900,7 +865,7 @@ export class PhysicsWorld {
         const py = oy + dy * maxDist * f
         const pz = oz + dz * maxDist * f
         const pos = new api.RVec3(px, py, pz)
-        const n = body.body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, pos)
+        const n = (body.body as Jolt.Body).GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, pos)
         out = { body, fraction: f, px, py, pz, nx: n.GetX(), ny: n.GetY(), nz: n.GetZ() }
         api.destroy(pos)
       }
@@ -916,10 +881,10 @@ export class PhysicsWorld {
   /** B17 — impulse on a body at a world point (shot response). */
   impulseBodyAt(b: DynamicBody, ix: number, iy: number, iz: number, px: number, py: number, pz: number): void {
     const api = this.api
-    this.bodyInterface.ActivateBody(b.body.GetID())
+    this.bodyInterface.ActivateBody((b.body as Jolt.Body).GetID())
     const imp = new api.Vec3(ix, iy, iz)
     const at = new api.RVec3(px, py, pz)
-    b.body.AddImpulse(imp, at)
+    ;(b.body as Jolt.Body).AddImpulse(imp, at)
     api.destroy(imp)
     api.destroy(at)
   }
@@ -994,9 +959,9 @@ export class PhysicsWorld {
       return removed
     }
     const shape = this.buildBoxesShape(boxes)
-    this.bodyInterface.SetShape(b.body.GetID(), shape, false, this.api.EActivation_Activate)
+    this.bodyInterface.SetShape((b.body as Jolt.Body).GetID(), shape, false, this.api.EActivation_Activate)
     // keep the explicit voxel mass authoritative (inertia stays shape-derived)
-    b.body.GetMotionProperties().SetInverseMass(1 / Math.max(b.mass, 0.001))
+    ;(b.body as Jolt.Body).GetMotionProperties().SetInverseMass(1 / Math.max(b.mass, 0.001))
     return removed
   }
 
@@ -1026,8 +991,8 @@ export class PhysicsWorld {
 
   /** Remove a body from the sim + Jolt (emptied by damage). Hash-visible via removedBodies. */
   private despawnBody(b: DynamicBody): void {
-    this.bodyInterface.RemoveBody(b.body.GetID())
-    this.bodyInterface.DestroyBody(b.body.GetID())
+    this.bodyInterface.RemoveBody((b.body as Jolt.Body).GetID())
+    this.bodyInterface.DestroyBody((b.body as Jolt.Body).GetID())
     this.bodies.delete(b.id)
     this.removedBodies++
   }
@@ -1036,7 +1001,7 @@ export class PhysicsWorld {
   applyRadialImpulse(cx: number, cy: number, cz: number, radius: number, strength: number): void {
     const api = this.api
     for (const b of this.bodies.values()) {
-      const p = b.body.GetPosition()
+      const p = (b.body as Jolt.Body).GetPosition()
       const dx = p.GetX() - cx
       const dy = p.GetY() - cy
       const dz = p.GetZ() - cz
@@ -1047,13 +1012,13 @@ export class PhysicsWorld {
       const mag = strength * falloff
       // straight up if the body sits exactly at the blast center
       const imp = new api.Vec3(dx * inv * mag, dist > 1e-6 ? dy * inv * mag : mag, dz * inv * mag)
-      this.bodyInterface.ActivateBody(b.body.GetID())
-      b.body.AddImpulse(imp)
+      this.bodyInterface.ActivateBody((b.body as Jolt.Body).GetID())
+      ;(b.body as Jolt.Body).AddImpulse(imp)
       api.destroy(imp)
     }
     // T64 — shockwave shoves vehicles too (deterministic id order)
     for (const v of this.vehicles.values()) {
-      const p = v.body.GetPosition()
+      const p = (v.body as Jolt.Body).GetPosition()
       const dx = p.GetX() - cx
       const dy = p.GetY() - cy
       const dz = p.GetZ() - cz
@@ -1063,8 +1028,8 @@ export class PhysicsWorld {
       const inv = dist > 1e-6 ? 1 / dist : 0
       const mag = strength * falloff
       const imp = new api.Vec3(dx * inv * mag, dist > 1e-6 ? dy * inv * mag : mag, dz * inv * mag)
-      this.bodyInterface.ActivateBody(v.body.GetID())
-      v.body.AddImpulse(imp)
+      this.bodyInterface.ActivateBody((v.body as Jolt.Body).GetID())
+      ;(v.body as Jolt.Body).AddImpulse(imp)
       api.destroy(imp)
     }
   }
@@ -1080,8 +1045,8 @@ export class PhysicsWorld {
     }
     this.chunkBodies.clear()
     for (const b of this.bodies.values()) {
-      this.bodyInterface.RemoveBody(b.body.GetID())
-      this.bodyInterface.DestroyBody(b.body.GetID())
+      this.bodyInterface.RemoveBody((b.body as Jolt.Body).GetID())
+      this.bodyInterface.DestroyBody((b.body as Jolt.Body).GetID())
     }
     this.bodies.clear()
     this.projectiles.clear()

@@ -33,6 +33,7 @@
  * — the next nearby impulse/edit will.
  */
 import type { Sim } from './loop'
+import type Jolt from 'jolt-physics'
 import { VOXEL_SIZE } from '../world/chunks'
 import { MAT_FLAG_FLOATS, VOXEL_VOLUME, material } from './materials'
 import type { PhysicsWorld } from './physics'
@@ -62,7 +63,7 @@ export function applyBuoyancy(phys: PhysicsWorld, water: WaterSim): void {
   for (const id of ids) {
     const b = phys.bodies.get(id)!
     if ((material(b.mat).flags & MAT_FLAG_FLOATS) === 0) continue
-    if (!b.body.IsActive()) continue // sleeping floater stays frozen (see header)
+    if (!(b.body as Jolt.Body).IsActive()) continue // sleeping floater stays frozen (see header)
 
     // FloatingBodyAdapter: world-space sample points = occupied voxel centers
     // (stride 2 for big bodies), rotated by the body transform each tick.
@@ -91,9 +92,9 @@ export function applyBuoyancy(phys: PhysicsWorld, water: WaterSim): void {
     }
     if (samples.length === 0) continue
 
-    const com = b.body.GetCenterOfMassPosition() // transient wrapper — read now
+    const com = (b.body as Jolt.Body).GetCenterOfMassPosition() // transient wrapper — read now
     const centerOfMass = { x: com.GetX(), y: com.GetY(), z: com.GetZ() }
-    const vel = b.body.GetLinearVelocity()
+    const vel = (b.body as Jolt.Body).GetLinearVelocity()
     const velocity = { x: vel.GetX(), y: vel.GetY(), z: vel.GetZ() }
 
     const r = computeBuoyancy((x, y, z) => water.levelAt(x, y, z), {
@@ -105,17 +106,17 @@ export function applyBuoyancy(phys: PhysicsWorld, water: WaterSim): void {
     if (r.submergedFraction === 0) continue
 
     const f = new api.Vec3(r.force.x, r.force.y, r.force.z)
-    b.body.AddForce(f) // at COM — consumed by the next tick's Jolt step
+    ;(b.body as Jolt.Body).AddForce(f) // at COM — consumed by the next tick's Jolt step
     api.destroy(f)
     const t = new api.Vec3(r.torque.x, r.torque.y, r.torque.z)
-    b.body.AddTorque(t)
+    ;(b.body as Jolt.Body).AddTorque(t)
     api.destroy(t)
 
     // extra angular damping by submersion — bodies bob, they don't pirouette
     const k = 1 - BUOYANCY_ANGULAR_DAMP * r.submergedFraction
-    const av = b.body.GetAngularVelocity()
+    const av = (b.body as Jolt.Body).GetAngularVelocity()
     const nav = new api.Vec3(av.GetX() * k, av.GetY() * k, av.GetZ() * k)
-    b.body.SetAngularVelocity(nav)
+    ;(b.body as Jolt.Body).SetAngularVelocity(nav)
     api.destroy(nav)
   }
 }
