@@ -173,6 +173,16 @@ export class PlayerMesh {
   }
 
   /**
+   * P12 — seated first-person: unlike on-foot FP the seated body keeps its
+   * arms (hands stay on the wheel), so only the head is hidden to stop the
+   * camera-inside-the-skull backface stare. Call after setFirstPerson(false),
+   * which already restored torso/arm visibility for the seated pose.
+   */
+  setSeatedHeadHidden(hidden: boolean): void {
+    this.headPivot.visible = !hidden
+  }
+
+  /**
    * Call once per rendered frame with the sim player entity (read-only, V6).
    * `dt` optional — when omitted (legacy T22 wiring) an internal clock is used.
    * `seatYaw` — when the player is seated in a vehicle, the vehicle heading

@@ -444,7 +444,7 @@ export class Game {
       this.playerVisuals.update(dt, player, camMode, this.equippedTool?.() ?? 'dig', seatYaw)
       if (player) {
         if (this.state === 'play') {
-          if (seatedV) this.cam.updateVehicle(seatedV, this.sim.world, dt)
+          if (seatedV) this.cam.updateVehicle(seatedV, this.sim.world, dt, player)
           else this.cam.update(player, this.sim.world)
         }
 

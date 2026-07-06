@@ -22,6 +22,15 @@ export const CHASE_DISTANCE = 6.5
 export const CHASE_HEIGHT = 2.6
 /** spring stiffness (1/s) for the chase follow — higher = tighter */
 export const CHASE_STIFFNESS = 5
+/** P12 — seated first-person eye above the parked capsule origin (py ≈ chassis
+ * floor). Voxel cars are authored as SOLID blocks (glass cabin included), so the
+ * seat is embedded in glass — a true in-cabin view just sees murk. Instead the
+ * eye rides at cabin-roof height, pushed forward past the windshield, so the
+ * driver looks out over the hood down the road. Tuned for the sedan cabin
+ * (roof ≈ 1.5 m, windshield ≈ 1.2 m forward of the front axle). */
+export const SEAT_EYE_HEIGHT = 1.35
+/** P12 — forward offset (m) off the seat to clear the windshield glass shell. */
+export const SEAT_EYE_FORWARD = 0.85
 
 /** minimal vehicle transform slice the chase cam reads (V6: read-only) */
 export interface ChaseTarget {
@@ -91,10 +100,32 @@ export class PlayerCam {
    * fp/tp mode on the first call; the next update() (player on foot again)
    * restores it. Call once per rendered frame while the player is seated.
    */
-  updateVehicle(v: ChaseTarget, world: ChunkStore, dt: number): void {
+  updateVehicle(v: ChaseTarget, world: ChunkStore, dt: number, player?: PlayerEntity): void {
     if (this.savedMode === null) {
+      // P12 — save the on-foot fp/tp mode (restored on exit) and always board
+      // in the chase cam; KeyV then toggles to the in-vehicle first person.
       this.savedMode = this.mode
+      this.mode = 'tp'
       this.chaseSnap = true
+    }
+    // P12 — in-vehicle first person: camera at the driver's head, yaw locked to
+    // the vehicle heading (looking forward through the windshield), pitch from
+    // the mouse. The seated body is rendered with its head hidden (player-visuals)
+    // so we don't stare at head backfaces; the arms stay on the wheel.
+    if (this.mode === 'fp' && player) {
+      const yaw = Math.atan2(2 * (v.qx * v.qz + v.qw * v.qy), 1 - 2 * (v.qx * v.qx + v.qy * v.qy))
+      // vehicle forward (same -z convention as the player): (-sin, -cos)
+      const fwx = -Math.sin(yaw)
+      const fwz = -Math.cos(yaw)
+      this.camera.rotation.set(player.pitch, yaw, 0, 'YXZ')
+      this.camera.position.set(
+        player.px + fwx * SEAT_EYE_FORWARD,
+        player.py + SEAT_EYE_HEIGHT,
+        player.pz + fwz * SEAT_EYE_FORWARD,
+      )
+      // re-snap the chase spring so toggling back to third person doesn't swing
+      this.chaseSnap = true
+      return
     }
     // vehicle center + forward (local -z) from the quaternion
     const cxo = (v.sx * VOXEL_SIZE) / 2
