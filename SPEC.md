@@ -182,7 +182,6 @@ P12|x|S|first-person camera inside vehicles|toggle FP/chase while seated (curren
 P13|x|M|some cars cannot be driven|subset of parked cars fail the enter/drive path — find + fix
 P14|x|M|two-wheelers not in the world|bicycle/scooter are rideable archetypes (T76) but never placed as city props — models + scatter placement
 P15|x|M|car vertical proportions compressed|raising the car grid broke crash crumple (grid height ⇄ vehicle collision) — needs a seat/collision-aware pass, not a naive grid bump
-P16|.|L|occlusion culling|remaining CPU object-count lever: cull region meshes / LOD cells fully behind others (open sightlines e.g. east arterial, beach)
 P17|x|L|flyable plane|aircraft flight controller — the parked airport planes become pilotable
 P18|x|L|palette chunk compression|bit-packed palette store for COLD chunks (memory), keep active chunks flat (CPU-bound safe), lossless + deterministic — unlocks world >5-6×
 P19|x|S|TNT (remote detonator) + rocket launcher missing from action hotbar|T73 authored but not wired to hotbar slots — add + fire path
