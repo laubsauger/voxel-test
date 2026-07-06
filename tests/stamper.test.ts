@@ -5,9 +5,8 @@ import { ChunkStore, ChunkKind, CHUNK_COUNT, VOXEL_SIZE, WORLD_VX, WORLD_VZ } fr
 // Derived from world size so a future resize never breaks the re-basing.
 const CVX = WORLD_VX >> 1
 import { Fnv } from '../src/sim/hash'
-import { generateLayout, isCarKind, DOOR_W, STAIR_W, STAIR_TREAD, STAIR_STEPS, WALL_T, type House, type Layout, type Opening } from '../src/sim/gen/layout'
+import { generateLayout, isCarKind, isTwoWheelerKind, DOOR_W, STAIR_W, STAIR_TREAD, STAIR_STEPS, WALL_T, PROP_DIMS, type House, type Layout, type Opening } from '../src/sim/gen/layout'
 import { stampScene, MAX_REAL_VEHICLES, CLUSTER_GAP } from '../src/sim/gen/stamper'
-import { PROP_DIMS } from '../src/sim/gen/layout'
 import { placeholderProps } from '../src/sim/gen/props'
 import {
   MAT_AIR,
@@ -195,9 +194,13 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     // ADJACENT parked cars are ALWAYS both drivable or both static.
     const cars = layout.props.filter((p) => isCarKind(p.kind))
     expect(cars.length).toBeGreaterThan(0)
-    // capped to the perf budget, never over
-    expect(vehicleSpawns.length).toBeGreaterThan(0)
-    expect(vehicleSpawns.length).toBeLessThanOrEqual(MAX_REAL_VEHICLES)
+    // P14 — every two-wheeler is a live (uncapped) vehicle, added on top of the
+    // capped car spawns. Cars stay capped to the perf budget.
+    const twoWheelers = layout.props.filter((p) => isTwoWheelerKind(p.kind))
+    const carSpawns = vehicleSpawns.length - twoWheelers.length
+    expect(carSpawns).toBeGreaterThan(0)
+    expect(carSpawns).toBeLessThanOrEqual(MAX_REAL_VEHICLES)
+    expect(vehicleSpawns.length).toBe(Math.min(cars.length, MAX_REAL_VEHICLES) + twoWheelers.length)
 
     // footprint centre (voxels) of a car prop, respecting rotation
     const centre = (p: (typeof cars)[number]) => {
@@ -213,8 +216,8 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
       )
     }
     const flags = cars.map(drivable)
-    // every spawn is accounted for by exactly one car (no phantom spawns)
-    expect(flags.filter(Boolean).length).toBe(vehicleSpawns.length)
+    // every CAR spawn is accounted for by exactly one car (two-wheelers separate)
+    expect(flags.filter(Boolean).length).toBe(carSpawns)
 
     // the nearest car to the centre is drivable (nearest cluster admitted first)
     const cx0 = WORLD_VX / 2
@@ -250,6 +253,35 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
           expect(flags[i], `adjacent cars ${i},${j} share drivability`).toBe(flags[j])
         }
       }
+    }
+  })
+
+  it('P14 — bicycles AND scooters are placed and emitted as ridable vehicle spawns', () => {
+    // WHY: two-wheelers exist as drivable archetypes but were never placed in
+    // the world. They must be (a) scattered as props, (b) converted to LIVE
+    // vehicle spawns (uncapped — small), and (c) NOT left as static voxels
+    // (a stamped bike would be a fake, non-ridable duplicate). This encodes the
+    // whole point of P14: you can walk up to a parked bike/scooter and Ride it.
+    const bikes = layout.props.filter((p) => p.kind === 'bicycle')
+    const scooters = layout.props.filter((p) => p.kind === 'scooter')
+    expect(bikes.length, 'bicycles scattered').toBeGreaterThan(0)
+    expect(scooters.length, 'scooters scattered').toBeGreaterThan(0)
+    // every two-wheeler prop has a matching spawn in its footprint (ridable)
+    for (const p of [...bikes, ...scooters]) {
+      const spawn = vehicleSpawns.find(
+        (v) => v.archetype === p.kind
+          && v.cx / VOXEL_SIZE > p.x && v.cx / VOXEL_SIZE < p.x + 24
+          && v.cz / VOXEL_SIZE > p.z && v.cz / VOXEL_SIZE < p.z + 24,
+      )
+      expect(spawn, `${p.kind} at (${p.x},${p.z}) has a ridable spawn`).toBeTruthy()
+    }
+    // spawn archetypes must resolve to the two-wheeler kinds
+    expect(vehicleSpawns.some((v) => v.archetype === 'bicycle')).toBe(true)
+    expect(vehicleSpawns.some((v) => v.archetype === 'scooter')).toBe(true)
+    // and NONE of the parked two-wheelers is stamped as static scenery voxels:
+    // sample the frame center; it must be air (the vehicle carries the voxels)
+    for (const p of [...bikes, ...scooters]) {
+      expect(store.getVoxel(p.x + 1, p.y + 6, p.z + 8), `${p.kind} not stamped static`).toBe(MAT_AIR)
     }
   })
 

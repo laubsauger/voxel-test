@@ -9,7 +9,8 @@
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
     "signal": "node server/signal.mjs",
-    "mp-e2e": "node scripts/mp-e2e.mjs"
+    "mp-e2e": "node scripts/mp-e2e.mjs",
+    "mp-local": "node scripts/mp-local.mjs"
   },
   "dependencies": {
     "jolt-physics": "^1.0.0",

@@ -29,7 +29,7 @@ import { RocketMeshes } from './render/rocket-meshes'
 import { TntMeshes } from './render/tnt-meshes'
 import { FixedStepDriver, Sim } from './sim/loop'
 import type { Op } from './sim/commands'
-import type { LockstepDriver, LockstepNode } from './net/lockstep'
+import { HIDDEN_HEARTBEAT_LEAD, type LockstepDriver, type LockstepNode } from './net/lockstep'
 import { registerEditOps } from './sim/edit-ops'
 import { registerShootOp } from './sim/shoot-op'
 import { createPhysics, loadJolt, type PhysicsWorld } from './sim/physics'
@@ -416,7 +416,14 @@ export class Game {
         clearInterval(pump)
         return
       }
-      if (!this.net || performance.now() - this.lastRafAt < 250) return
+      if (!this.net) return
+      // Hidden-tab heartbeat: a backgrounded tab stops stepping, so it stops
+      // emitting inputs and the ACTIVE peer stalls at the barrier waiting on us
+      // (the ping-pong lockup). Keep our input flowing ahead so peers never
+      // stall. Gated on document.hidden — a hidden tab receives no input, so
+      // pre-committing empty inputs is lossless; NEVER while visible.
+      if (document.hidden) this.net.node.pumpEmptyInput(HIDDEN_HEARTBEAT_LEAD)
+      if (performance.now() - this.lastRafAt < 250) return
       // real background tabs throttle timers to ~1s — 60 steps covers a full
       // second so a hidden tab holds 60Hz instead of dragging the barrier
       this.net.driver.maxStepsPerAdvance = 60

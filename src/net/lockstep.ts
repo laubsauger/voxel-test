@@ -20,6 +20,15 @@ import { TICK_MS } from '../sim/loop'
 import type { Channel, Wire } from './channel'
 
 export const DEFAULT_INPUT_DELAY = 3 // ticks (~50ms at 60Hz) — hides co-op RTT
+/**
+ * Hidden-tab heartbeat lead (ticks). A backgrounded tab's rAF is paused and its
+ * timers clamp to ~1s, so it stops emitting inputs and the ACTIVE peer stalls at
+ * the barrier waiting on it (see pumpEmptyInput). While hidden, the peer keeps
+ * this many empty inputs buffered ahead of the last bundle it received, so the
+ * host can keep releasing and the visible peer never stalls. ~3s covers the
+ * hidden-timer clamp with margin.
+ */
+export const HIDDEN_HEARTBEAT_LEAD = 180
 
 export interface InputMsg {
   t: 'ls/input'
@@ -62,6 +71,14 @@ export class LockstepNode {
   private readonly bundles = new Map<number, Command[]>()
   private readonly stepHooks: ((sim: Sim) => void)[] = []
   private readonly dropHooks: ((playerId: number, tick: number) => void)[] = []
+  /**
+   * Next tick to stamp local input for. Decoupled from sim.tick so a hidden tab
+   * can emit inputs ahead without stepping (pumpEmptyInput). In normal stepping
+   * it stays exactly `sim.tick + inputDelay`, preserving the input-delay contract.
+   */
+  private nextInputTick: number
+  /** highest bundle tick received — the heartbeat leads this (see pumpEmptyInput) */
+  private highestBundleTick = -1
 
   constructor(
     readonly sim: Sim,
@@ -70,11 +87,40 @@ export class LockstepNode {
     readonly inputDelay: number = DEFAULT_INPUT_DELAY,
   ) {
     if (inputDelay < 1) throw new Error('lockstep: inputDelay must be >= 1')
+    // ticks 0..inputDelay-1 have no possible input (nobody has stepped yet);
+    // the host releases them empty on start(). First real input is for inputDelay.
+    this.nextInputTick = inputDelay
   }
 
   /** queue a local op; it ships with the next step, applying at tick+inputDelay everywhere */
   submitLocal(op: Op): void {
     this.pending.push(op)
+  }
+
+  /** stamp any pending local ops for the next input tick and ship them (empty is valid) */
+  private emitInput(): void {
+    const tick = this.nextInputTick++
+    const cmds: Command[] = this.pending.map((op) => ({ tick, playerId: this.playerId, seq: this.seq++, op }))
+    this.pending.length = 0
+    this.sendInput({ t: 'ls/input', playerId: this.playerId, tick, cmds })
+  }
+
+  /**
+   * Hidden-tab heartbeat: emit empty inputs for future ticks so peers aren't
+   * blocked while this tab isn't stepping (rAF paused). Tops up to `lead` ticks
+   * ahead of the last bundle received, so the host keeps releasing and the
+   * ACTIVE peer never stalls waiting on us.
+   *
+   * Safe ONLY when the local player has no real input to lose — the caller gates
+   * on document.hidden (a hidden tab receives no input, so empty is correct). If
+   * a real op is queued we skip, never pre-committing empty over it. tryStep
+   * won't re-emit these ticks (its emission gate), so no duplicates and the
+   * input-tick lead closes as the sim catches up on return to foreground.
+   */
+  pumpEmptyInput(lead: number = HIDDEN_HEARTBEAT_LEAD): void {
+    if (this.pending.length > 0) return
+    const target = this.highestBundleTick + lead
+    for (let guard = 0; this.nextInputTick <= target && guard <= lead; guard++) this.emitInput()
   }
 
   /** hook invoked after every successful sim step (desync reporting, render sync) */
@@ -93,6 +139,7 @@ export class LockstepNode {
       throw new Error(`lockstep: duplicate or stale bundle for tick ${msg.tick} (sim at ${this.sim.tick})`)
     }
     this.bundles.set(msg.tick, msg.cmds)
+    if (msg.tick > this.highestBundleTick) this.highestBundleTick = msg.tick
     if (msg.dropped) for (const pid of msg.dropped) for (const hook of this.dropHooks) hook(pid, msg.tick)
   }
 
@@ -112,17 +159,12 @@ export class LockstepNode {
     if (!cmds) return false // tick barrier
     this.bundles.delete(tick)
 
-    // ship local input for the future tick — sent EVERY step, even when empty,
-    // so the host can release every tick explicitly
-    const target = tick + this.inputDelay
-    const stamped: Command[] = this.pending.map((op) => ({
-      tick: target,
-      playerId: this.playerId,
-      seq: this.seq++,
-      op,
-    }))
-    this.pending.length = 0
-    this.sendInput({ t: 'ls/input', playerId: this.playerId, tick: target, cmds: stamped })
+    // ship local input for tick+inputDelay — sent EVERY step, even when empty, so
+    // the host can release every tick explicitly. UNLESS the hidden-tab heartbeat
+    // already emitted this far ahead (nextInputTick past tick+inputDelay): then
+    // we're catching the sim up through buffered bundles and must NOT re-emit —
+    // the lead closes tick-by-tick until normal emission resumes.
+    if (this.nextInputTick <= tick + this.inputDelay) this.emitInput()
 
     for (const c of cmds) this.sim.queue.push(c) // V1: transport only feeds the queue
     this.sim.step()

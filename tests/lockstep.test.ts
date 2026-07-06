@@ -185,6 +185,72 @@ describe('tick barrier stall (T25, V10-adjacent: waiting, never drifting)', () =
   })
 })
 
+describe('hidden-tab heartbeat (backgrounded peer keeps input flowing)', () => {
+  // WHY: a peer emits input only as a side effect of stepping (tryStep). A tab
+  // that stops stepping (hidden: rAF paused) emits nothing, so the ACTIVE peer
+  // drains its inputDelay buffer and stalls — then it too stops emitting, and
+  // the two ping-pong. pumpEmptyInput keeps a hidden peer emitting empty inputs
+  // ahead so the active peer never stalls waiting on it.
+
+  it('a peer that stops stepping but heartbeats lets the other peer keep advancing', () => {
+    const s = makeSession(1)
+    pump(s.nodes, 10) // both reach tick 10
+    // client goes "hidden": no tryStep, but heartbeats inputs. Host keeps stepping.
+    for (let r = 0; r < 40; r++) {
+      s.nodes[1].pumpEmptyInput(60) // client heartbeat only
+      s.nodes[0].tryStep() // host steps
+    }
+    // host advanced far past the stall point purely on the client's heartbeat
+    // inputs — WITHOUT the heartbeat it would stall ~13 (inputDelay past tick 10)
+    expect(s.sims[0].tick).toBeGreaterThan(40)
+    expect(s.sims[1].tick).toBe(10) // client sim frozen (it never stepped)
+  })
+
+  it('without a heartbeat, a non-stepping peer stalls the other within inputDelay', () => {
+    const s = makeSession(1)
+    pump(s.nodes, 10)
+    for (let r = 0; r < 40; r++) s.nodes[0].tryStep() // host alone, client silent
+    // host stalls once it exhausts the client inputs already in flight (~delay)
+    expect(s.sims[0].tick).toBeLessThan(15)
+  })
+
+  it('heartbeat then resume: no duplicate-input throw, lead closes, sims converge', () => {
+    const s = makeSession(1)
+    pump(s.nodes, 5)
+    // client hidden window: heartbeats ahead while the host keeps stepping
+    for (let r = 0; r < 20; r++) {
+      s.nodes[1].pumpEmptyInput(30)
+      s.nodes[0].tryStep()
+    }
+    const hostAhead = s.sims[0].tick
+    expect(hostAhead).toBeGreaterThan(5)
+    // client returns to foreground and catches up; a real op it submits after
+    // resuming must still land identically on both peers (no dup-input throw)
+    for (let r = 0; r < 100; r++) {
+      if (s.nodes[1].sim.tick === hostAhead + 2) s.nodes[1].submitLocal(dig(120))
+      s.nodes[0].tryStep()
+      s.nodes[1].tryStep()
+    }
+    // client caught up well past the freeze; the two settle to within inputDelay
+    // (host stalls only once it gets >delay ahead of the client's live emission)
+    expect(s.sims[1].tick).toBeGreaterThan(hostAhead)
+    expect(Math.abs(s.sims[0].tick - s.sims[1].tick)).toBeLessThanOrEqual(3)
+    // deterministic through the hidden window: the common prefix agrees exactly
+    const n = Math.min(s.hashes[0].length, s.hashes[1].length)
+    expect(s.hashes[1].slice(0, n)).toEqual(s.hashes[0].slice(0, n))
+    expect(s.sims[0].world.getVoxel(120, 60, 100)).toBe(0) // post-resume op landed on both
+    expect(s.sims[1].world.getVoxel(120, 60, 100)).toBe(0)
+  })
+
+  it('heartbeat never pre-commits empty over a queued real op', () => {
+    const sent: number[] = []
+    const node = new LockstepNode(makeSim(), 1, (m) => sent.push(m.tick), 3)
+    node.submitLocal(dig(10)) // real op queued
+    node.pumpEmptyInput(60) // must NOT flush empties past it
+    expect(sent).toEqual([]) // skipped — the real op is preserved for the next step
+  })
+})
+
 describe('lockstep loud failures (V10)', () => {
   it('duplicate bundle for a tick throws', () => {
     const sim = makeSim()

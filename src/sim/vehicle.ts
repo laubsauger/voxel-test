@@ -286,55 +286,18 @@ export interface VehicleArchetype {
   suspMax: number
 }
 
-// ---- T76 two-wheelers: authored voxel frames (wheels are physics-only) -----
-
-function makeGrid(sx: number, sy: number, sz: number): VoxelGrid {
-  return { sx, sy, sz, mats: new Uint8Array(sx * sy * sz) }
-}
-
-function gfill(g: VoxelGrid, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, m: number): void {
-  for (let y = y0; y <= y1; y++)
-    for (let z = z0; z <= z1; z++)
-      for (let x = x0; x <= x1; x++) g.mats[x + z * g.sx + y * g.sx * g.sz] = m
-}
-
-/** bicycle: thin metal frame, saddle + handlebar (0.4 × 1.3 × 1.8 m) */
-function buildBicycle(): VoxelGrid {
-  const g = makeGrid(4, 13, 18)
-  gfill(g, 1, 4, 2, 2, 8, 3, MAT_METAL) // head tube / fork column
-  gfill(g, 1, 8, 2, 2, 9, 4, MAT_METAL) // stem
-  gfill(g, 0, 9, 2, 3, 9, 3, MAT_ASPHALT) // handlebar grips
-  gfill(g, 1, 4, 4, 2, 5, 14, MAT_METAL) // top/down tube spine
-  gfill(g, 1, 6, 12, 2, 8, 13, MAT_METAL) // seat post
-  gfill(g, 0, 9, 12, 3, 9, 14, MAT_ASPHALT) // saddle
-  gfill(g, 1, 4, 14, 2, 6, 15, MAT_METAL) // rear stay
-  return g
-}
-
-/** delivery scooter: step-through frame + big rear topbox (0.6 × 1.4 × 2.0 m) */
-function buildScooter(): VoxelGrid {
-  const g = makeGrid(6, 14, 20)
-  const body = 12 // MAT_ROOFTILE — moped red
-  gfill(g, 1, 3, 1, 4, 4, 18, MAT_METAL) // floorboard / spine
-  gfill(g, 1, 4, 1, 4, 10, 3, body) // front apron
-  gfill(g, 2, 6, 1, 3, 6, 1, 13) // MAT_LAMP headlight
-  gfill(g, 0, 10, 1, 5, 10, 3, MAT_ASPHALT) // handlebar
-  gfill(g, 1, 5, 9, 4, 7, 14, body) // seat base
-  gfill(g, 0, 7, 9, 5, 8, 14, MAT_ASPHALT) // saddle
-  gfill(g, 0, 4, 15, 5, 9, 19, 7) // MAT_PLASTER — delivery topbox
-  return g
-}
-
-let twoWheelCache: Record<string, VoxelGrid> | undefined
+// ---- T76/P14 two-wheelers: voxel frames now live in gen/props (buildBicycle /
+// buildScooter) so the parked prop and the ridable chassis are ONE model.
+// resolveArchetype reads them from placeholderProps; wheels are physics-only. --
 
 /** resolve an archetype name to its full spec (cached grids, pure data — V2) */
 export function resolveArchetype(archetype: string): VehicleArchetype {
   const base = archetypeBase(archetype)
   if (base === 'bicycle' || base === 'scooter') {
-    twoWheelCache ??= { bicycle: buildBicycle(), scooter: buildScooter() }
+    propCache ??= placeholderProps()
     if (base === 'bicycle') {
       return {
-        grid: twoWheelCache.bicycle,
+        grid: propCache.bicycle,
         wheels: [
           { x: 0.2, y: 0.45, z: 0.3, radius: 0.22, width: 0.1, steerable: true, handbrake: false },
           { x: 0.2, y: 0.45, z: 1.5, radius: 0.22, width: 0.1, steerable: false, handbrake: true },
@@ -350,7 +313,7 @@ export function resolveArchetype(archetype: string): VehicleArchetype {
       }
     }
     return {
-      grid: twoWheelCache.scooter,
+      grid: propCache.scooter,
       wheels: [
         { x: 0.3, y: 0.45, z: 0.35, radius: 0.22, width: 0.12, steerable: true, handbrake: false },
         { x: 0.3, y: 0.45, z: 1.65, radius: 0.22, width: 0.12, steerable: false, handbrake: true },
