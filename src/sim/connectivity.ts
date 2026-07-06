@@ -88,7 +88,7 @@ export function clampRegion(r: Region): Region {
  * for even a single dig is chunk-aligned, ~80³ = 512k cells — per-cell
  * getVoxel dominated the in-tick cost). Pure read; identical values.
  */
-function snapshotRegion(
+export function snapshotRegion(
   world: ChunkStore,
   x0: number,
   y0: number,

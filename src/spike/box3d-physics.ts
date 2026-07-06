@@ -27,6 +27,7 @@ import {
 } from '../world/chunks'
 import { greedyBoxes } from '../sim/greedy-boxes'
 import { findUnsupportedIslands, type Island, type IslandVoxel } from '../sim/connectivity'
+import { findStressCollapses } from '../sim/structure'
 import { material, VOXEL_VOLUME } from '../sim/materials'
 import { registerDestructionOps } from '../sim/destruction'
 import { attachEditPhysics } from '../sim/edit-ops'
@@ -57,8 +58,12 @@ function chunkUnionRegion(chunkIndices: number[], margin: number) {
 }
 
 /** ticks a debris body must rest before it welds back to the static world */
-const REWELD_TICKS = 90 // ~1.5 s — "reweld sooner" (user); Jolt uses 210
+const REWELD_TICKS = 45 // ~0.75 s — weld rubble fast so body slots free up under heavy collapse
 const REST_SPEED_SQ = 0.09 // (0.3 m/s)²
+/** hard cap on live dynamic bodies — stress collapse pauses above this so a big
+ *  building doesn't spawn thousands of fragments in one tick (perf guardrail);
+ *  reweld drains the pile and collapse resumes. */
+const BODY_CAP = 500
 
 export interface PhysProfile {
   structuralMs: number
@@ -79,6 +84,8 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
   private pendingConnectivity: number[] = []
   /** reweld toggle (perf A/B) + last-tick profile */
   reweldEnabled = true
+  /** T56 weak-neck stress collapse toggle */
+  stressEnabled = true
   readonly prof: PhysProfile = { structuralMs: 0, stepMs: 0, readbackMs: 0, reweldMs: 0, bodies: 0, awake: 0, weldedThisTick: 0 }
 
   private constructor(world: B3World) {
@@ -239,6 +246,14 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     if (check.length === 0) return
     const region = chunkUnionRegion(check, CONNECTIVITY_MARGIN)
     for (const island of findUnsupportedIslands(sim.world, region)) this.extractIsland(sim, island)
+    // T56 — weak-neck stress collapse. Expand the region UP (to see the mass a
+    // low edit must still support) and out (to enclose the building footprint),
+    // else a thin base neck never sees its true load. Clamped in findStressCollapses.
+    if (this.stressEnabled && this.bodies.size < BODY_CAP) {
+      const sr = { x0: region.x0 - 10, y0: region.y0, z0: region.z0 - 10, x1: region.x1 + 10, y1: region.y1 + 44, z1: region.z1 + 10 }
+      const budget = BODY_CAP - this.bodies.size
+      for (const island of findStressCollapses(sim.world, sr, { maxIslands: budget })) this.extractIsland(sim, island)
+    }
     const dirtied = sim.world.drainDirty()
     for (const ci of dirtied) {
       this.rebuildChunkBody(sim.world, ci)
