@@ -344,6 +344,14 @@ const tools = new ToolController(game, hud, (e) => {
     case 'explode':
       gameAudio.onExplosion(e.x, e.y, e.z, e.power)
       break
+    case 'rocket': // P19 — launch report; the impact boom rides explosion events
+      gameAudio.onShoot()
+      break
+    case 'tnt_place': // P19 — soft click as the charge is set down
+      void sfxPlay('ui-hotbar', { position: { x: e.x, y: e.y, z: e.z }, volume: 0.5 })
+      break
+    case 'tnt_detonate': // P19 — chained booms ride the sim explosion events
+      break
   }
 })
 hud.onSelect = () => void sfxPlay('ui-hotbar')

@@ -4,7 +4,7 @@
  * mutation goes through the tool controller's command pushes.
  */
 
-export type ToolId = 'dig' | 'build' | 'gun' | 'bomb'
+export type ToolId = 'dig' | 'build' | 'gun' | 'bomb' | 'rocket' | 'tnt'
 
 export interface ToolDef {
   id: ToolId
@@ -32,6 +32,16 @@ export const TOOLS: ToolDef[] = [
     id: 'bomb',
     label: 'Bomb',
     icon: '<circle cx="10.5" cy="14" r="6"/><path d="M14 9.5l2.2-2.2M16.5 7c.6-1.6 1.4-2.4 3.5-2.5M19 7.5l1 1M20.5 4l1-1"/>',
+  },
+  {
+    id: 'rocket',
+    label: 'Rocket',
+    icon: '<path d="M12 2c2.8 1.8 4.5 4.9 4.5 8.5 0 2.4-.8 4.4-1.7 6H9.2c-.9-1.6-1.7-3.6-1.7-6C7.5 6.9 9.2 3.8 12 2z"/><circle cx="12" cy="9" r="1.6"/><path d="M9.2 16.5 6.5 20l2.7-1.2M14.8 16.5 17.5 20l-2.7-1.2M12 16.5V21"/>',
+  },
+  {
+    id: 'tnt',
+    label: 'TNT',
+    icon: '<rect x="4" y="9" width="16" height="11" rx="1"/><path d="M4 13h16"/><path d="M12 9V5m0 0 2.5-2M12 5 9.5 3"/>',
   },
 ]
 
