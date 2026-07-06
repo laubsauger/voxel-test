@@ -32,6 +32,7 @@ import { registerEditOps } from './sim/edit-ops'
 import { registerShootOp } from './sim/shoot-op'
 import { createPhysics, loadJolt, type PhysicsWorld } from './sim/physics'
 import { spawnVehicle, type VehicleEntity } from './sim/vehicle'
+import { spawnAircraft } from './sim/aircraft'
 import { attachBuoyancy } from './sim/buoyancy-coupling'
 import { attachWaterSim, type WaterSim } from './sim/water/water-sim'
 import { generateLayout } from './sim/gen/layout'
@@ -130,6 +131,9 @@ export class Game {
   private readonly onResize: () => void
   private readonly waterSurface: WaterSurface
   private readonly bodyMeshes: BodyMeshes
+  /** P17 — flyable aircraft render from their voxel grid (BodyMeshes pattern;
+   *  a wrecked plane moves into phys.bodies and the main bodyMeshes takes over) */
+  private readonly aircraftMeshes: BodyMeshes
   private readonly fx: FxSystem
   private readonly vehicleMeshes: VehicleMeshes
   private readonly birds = new Birds()
@@ -172,6 +176,7 @@ export class Game {
     this.waterSurface = new WaterSurface()
     this.scene.add(this.waterSurface.mesh)
     this.bodyMeshes = new BodyMeshes(this.scene, this.world.chunks.material)
+    this.aircraftMeshes = new BodyMeshes(this.scene, this.world.chunks.material) // P17
     // T64 — vehicle rendering (chassis via chunk materials, spinning wheels)
     this.vehicleMeshes = new VehicleMeshes(
       this.scene,
@@ -476,6 +481,7 @@ export class Game {
       this.world.update(dt, this.sim.tick) // remesh budget, debris, CSM, day cycle (V7/T58)
       this.bodyMeshes.update(this.phys.bodies)
       this.vehicleMeshes.update(this.phys.vehicles)
+      this.aircraftMeshes.update(this.phys.aircraft) // P17
       this.fx.update(dt, fxEvents, this.cam.camera)
       this.projectileMeshes.update(this.phys.projectiles, dt)
       this.birds.update(dt, this.world.dayFactor)
@@ -521,7 +527,7 @@ export class Game {
     const sim = new Sim(seed)
     registerEditOps(sim)
     const layout = generateLayout(seed)
-    const { waterFills, vehicleSpawns } = stampScene(sim.world, layout, placeholderProps())
+    const { waterFills, vehicleSpawns, aircraftSpawns } = stampScene(sim.world, layout, placeholderProps())
 
     const water = attachWaterSim(sim)
     // edits wake settled water (breached pool wall etc.)
@@ -541,6 +547,9 @@ export class Game {
     // T64 — parked cars are real vehicles, spawned pre-tick-0 in layout order
     // (deterministic ids via sim.allocEntityId — same on every lockstep peer)
     for (const v of vehicleSpawns) spawnVehicle(sim, phys, v.archetype, v.cx, v.cy, v.cz, v.yaw)
+    // P17 — the on-runway airport plane becomes a flyable aircraft (deterministic
+    // ids allocated after the vehicles — same on every lockstep peer)
+    for (const a of aircraftSpawns) spawnAircraft(sim, phys, a.cx, a.cy, a.cz, a.yaw)
     attachBuoyancy(sim, phys, water) // T40 — after BOTH physics + water (one-tick force latency, deterministic)
 
     // --- render ---------------------------------------------------------------

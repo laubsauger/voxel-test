@@ -94,9 +94,20 @@ export interface VehicleSpawnRequest {
   yaw: number
 }
 
+/** P17 — an airport plane converted to a flyable aircraft entity: returned as
+ * DATA for the integrator to spawnAircraft() with, never stamped as voxels. */
+export interface AircraftSpawnRequest {
+  /** footprint center, world meters; cy = ground surface under the gear */
+  cx: number
+  cy: number
+  cz: number
+  yaw: number
+}
+
 export interface StampResult {
   waterFills: WaterFillRequest[]
   vehicleSpawns: VehicleSpawnRequest[]
+  aircraftSpawns: AircraftSpawnRequest[]
 }
 
 const GRASS_DEPTH = 3
@@ -923,7 +934,7 @@ function stampPlane(store: ChunkStore, px: number, pz: number, rot: number, g: n
 }
 
 /** airport: concrete apron, a marked runway, a hangar + terminal, parked planes */
-function stampAirport(store: ChunkStore, a: Airport, g: number): void {
+function stampAirport(store: ChunkStore, a: Airport, g: number, aircraftSpawns: AircraftSpawnRequest[]): void {
   const ap = a.apron
   // apron: concrete slab surface across the whole zone (clear grass bumps)
   store.fillBox(ap.x0, g, ap.z0, ap.x1, g + 60, ap.z1, MAT_AIR)
@@ -950,8 +961,23 @@ function stampAirport(store: ChunkStore, a: Airport, g: number): void {
   store.fillBox(tm.x0 + 3, g, tm.z0 + 3, tm.x1 - 3, g + 66, tm.z1 - 3, MAT_AIR)
   store.fillBox(tm.x0, g + 8, tm.z0 + 4, tm.x0, g + 40, tm.z1 - 4, MAT_GLASS) // window wall (runway side)
   store.fillBox(tm.x0, g + 70, tm.z0, tm.x1, g + 72, tm.z1, MAT_CONCRETE) // roof
-  // parked planes
-  for (const p of a.planes) stampPlane(store, p.x, p.z, p.rot, g)
+  // P17 — parked planes: the FIRST (on the runway, ready for takeoff) becomes a
+  // flyable aircraft entity (returned as data, NOT stamped as voxels — same
+  // pattern as parked cars → vehicles). Any others stay static voxel props.
+  a.planes.forEach((p, idx) => {
+    if (idx === 0) {
+      // footprint center in world meters (fuselage 70 voxels long, wings
+      // centered on p.x); nose points down the runway (+z) → yaw = π for rot 0.
+      aircraftSpawns.push({
+        cx: (p.x + 0.5) * VOXEL_SIZE,
+        cy: g * VOXEL_SIZE,
+        cz: (p.z + 35) * VOXEL_SIZE,
+        yaw: Math.PI - p.rot * (Math.PI / 2),
+      })
+    } else {
+      stampPlane(store, p.x, p.z, p.rot, g)
+    }
+  })
   // apron edge lamps
 }
 
@@ -1208,7 +1234,8 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   // outside the district rects stay, so the districts still connect to the grid.
   for (const beach of layout.beaches) stampBeach(store, beach, layout.groundY)
   for (const d of layout.deserts) stampDesert(store, d, layout.groundY)
-  for (const a of layout.airports) stampAirport(store, a, layout.groundY)
+  const aircraftSpawns: AircraftSpawnRequest[] = []
+  for (const a of layout.airports) stampAirport(store, a, layout.groundY, aircraftSpawns)
   for (const h of layout.houses) stampHouse(store, layout, h)
   stampVilla(store, layout)
   for (const b of layout.rowBlocks) stampRowBlock(store, layout, b)
@@ -1279,5 +1306,5 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   for (const t of layout.trees) stampTree(store, t, layout.groundY)
   for (const s of layout.shrubs) stampShrub(store, s, layout.groundY)
 
-  return { waterFills, vehicleSpawns }
+  return { waterFills, vehicleSpawns, aircraftSpawns }
 }

@@ -98,6 +98,29 @@ export interface VehicleExitOp {
   kind: 'vehicle_exit'
 }
 
+/**
+ * P17 — spawn a flyable aircraft entity (gen/dev op). Position is the CENTER of
+ * the plane footprint in world meters (y = ground surface under the gear); yaw
+ * in radians about +Y (0 = nose faces -z, three.js YXZ).
+ */
+export interface AircraftSpawnOp {
+  kind: 'aircraft_spawn'
+  x: number
+  y: number
+  z: number
+  yaw: number
+}
+
+/** P17 — issuing player boards the nearest aircraft with a free seat (pilot) */
+export interface AircraftEnterOp {
+  kind: 'aircraft_enter'
+}
+
+/** P17 — issuing player exits their aircraft (voxel-clearance-checked placement) */
+export interface AircraftExitOp {
+  kind: 'aircraft_exit'
+}
+
 export type Op =
   | DigOp
   | PlaceOp
@@ -110,6 +133,9 @@ export type Op =
   | VehicleSpawnOp
   | VehicleEnterOp
   | VehicleExitOp
+  | AircraftSpawnOp
+  | AircraftEnterOp
+  | AircraftExitOp
 
 export interface Command {
   tick: number
