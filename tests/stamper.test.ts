@@ -6,7 +6,8 @@ import { ChunkStore, ChunkKind, CHUNK_COUNT, VOXEL_SIZE, WORLD_VX, WORLD_VZ } fr
 const CVX = WORLD_VX >> 1
 import { Fnv } from '../src/sim/hash'
 import { generateLayout, isCarKind, DOOR_W, STAIR_W, STAIR_TREAD, STAIR_STEPS, WALL_T, type House, type Layout, type Opening } from '../src/sim/gen/layout'
-import { stampScene } from '../src/sim/gen/stamper'
+import { stampScene, MAX_REAL_VEHICLES, CLUSTER_GAP } from '../src/sim/gen/stamper'
+import { PROP_DIMS } from '../src/sim/gen/layout'
 import { placeholderProps } from '../src/sim/gen/props'
 import {
   MAT_AIR,
@@ -183,35 +184,72 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     expect(store.getVoxel(frontX, g + 5, cMidZ), 'cabana open front').toBe(MAT_AIR)
   })
 
-  it('nearest car props become drivable vehicles, the rest static voxel cars (B32)', () => {
+  it('parked cars convert CLUSTER-COHERENTLY: adjacent cars share drivability (P13, B32)', () => {
     // WHY: parked cars must be enterable/drivable, but each live one is a Jolt
-    // vehicle stepped every tick — at the 4× world we cap the live set to a
-    // perf budget (48, nearest the centre) and stamp the remainder as static
-    // voxel scenery. So we expect min(cars, 48) spawns, the near ones leaving
-    // NO body voxels and the far ones DOING leave a stamped body.
+    // vehicle stepped every tick — we cap the live set to a perf budget
+    // (MAX_REAL_VEHICLES) and stamp the overflow as static voxel scenery. The
+    // BUG (P13) was ranking individual cars by distance, which split a parking
+    // lot at the budget boundary into half-drivable / half-static look-alikes —
+    // a "random-looking subset" the player can't predict. The contract now:
+    // whole clusters (cars within CLUSTER_GAP) convert all-or-nothing, so two
+    // ADJACENT parked cars are ALWAYS both drivable or both static.
     const cars = layout.props.filter((p) => isCarKind(p.kind))
     expect(cars.length).toBeGreaterThan(0)
-    const REAL = 48
-    expect(vehicleSpawns.length).toBe(Math.min(cars.length, REAL))
-    // rank cars the same way the stamper does (distance to world centre)
+    // capped to the perf budget, never over
+    expect(vehicleSpawns.length).toBeGreaterThan(0)
+    expect(vehicleSpawns.length).toBeLessThanOrEqual(MAX_REAL_VEHICLES)
+
+    // footprint centre (voxels) of a car prop, respecting rotation
+    const centre = (p: (typeof cars)[number]) => {
+      const [sx, sz] = PROP_DIMS[p.kind]
+      const [w, d] = p.rot % 2 === 0 ? [sx, sz] : [sz, sx]
+      return { cx: p.x + w / 2, cz: p.z + d / 2, w, d }
+    }
+    // a car is drivable iff a spawn request lands inside its footprint
+    const drivable = (p: (typeof cars)[number]) => {
+      const c = centre(p)
+      return vehicleSpawns.some(
+        (v) => Math.abs(v.cx / VOXEL_SIZE - c.cx) < 1 && Math.abs(v.cz / VOXEL_SIZE - c.cz) < 1,
+      )
+    }
+    const flags = cars.map(drivable)
+    // every spawn is accounted for by exactly one car (no phantom spawns)
+    expect(flags.filter(Boolean).length).toBe(vehicleSpawns.length)
+
+    // the nearest car to the centre is drivable (nearest cluster admitted first)
     const cx0 = WORLD_VX / 2
     const cz0 = WORLD_VZ / 2
-    const ranked = [...cars].sort(
-      (a, b) => (a.x - cx0) ** 2 + (a.z - cz0) ** 2 - ((b.x - cx0) ** 2 + (b.z - cz0) ** 2) || a.x - b.x || a.z - b.z,
-    )
-    // the nearest car is a real vehicle (no stamped body)
-    const near = ranked[0]
-    expect(store.getVoxel(near.x + 5, near.y + 5, near.z + 5), 'nearest car is not stamped').toBe(MAT_AIR)
-    const spawn = vehicleSpawns.find(
-      (v) => v.archetype === near.kind
-        && v.cx / VOXEL_SIZE > near.x && v.cx / VOXEL_SIZE < near.x + 44
-        && v.cz / VOXEL_SIZE > near.z && v.cz / VOXEL_SIZE < near.z + 44,
-    )
-    expect(spawn, 'nearest car has a spawn request in its footprint').toBeTruthy()
-    // if the world has more cars than the budget, the farthest is stamped solid
-    if (cars.length > REAL) {
-      const far = ranked[ranked.length - 1]
-      expect([MAT_METAL, MAT_ROOFTILE, MAT_PLASTER]).toContain(store.getVoxel(far.x + 5, far.y + 5, far.z + 5))
+    const centres = cars.map(centre)
+    let near = 0
+    for (let i = 1; i < cars.length; i++) {
+      if ((centres[i].cx - cx0) ** 2 + (centres[i].cz - cz0) ** 2 < (centres[near].cx - cx0) ** 2 + (centres[near].cz - cz0) ** 2) near = i
+    }
+    expect(flags[near], 'nearest car is drivable').toBe(true)
+    // a real vehicle leaves NO stamped body voxels in its footprint…
+    expect(store.getVoxel(cars[near].x + 5, cars[near].y + 5, cars[near].z + 5)).toBe(MAT_AIR)
+
+    // …and if there is overflow, the FARTHEST car is static (stamped solid)
+    if (cars.length > MAX_REAL_VEHICLES) {
+      let far = 0
+      for (let i = 1; i < cars.length; i++) {
+        if ((centres[i].cx - cx0) ** 2 + (centres[i].cz - cz0) ** 2 > (centres[far].cx - cx0) ** 2 + (centres[far].cz - cz0) ** 2) far = i
+      }
+      expect(flags[far], 'farthest car is static').toBe(false)
+      expect([MAT_METAL, MAT_ROOFTILE, MAT_PLASTER]).toContain(store.getVoxel(cars[far].x + 5, cars[far].y + 5, cars[far].z + 5))
+    }
+
+    // THE INVARIANT: no cluster is split — any two cars within CLUSTER_GAP of
+    // each other must share the same drivability. This is the "consistent, not
+    // a random subset" contract the fix guarantees.
+    const gap2 = CLUSTER_GAP * CLUSTER_GAP
+    for (let i = 0; i < cars.length; i++) {
+      for (let j = i + 1; j < cars.length; j++) {
+        const dx = centres[i].cx - centres[j].cx
+        const dz = centres[i].cz - centres[j].cz
+        if (dx * dx + dz * dz <= gap2) {
+          expect(flags[i], `adjacent cars ${i},${j} share drivability`).toBe(flags[j])
+        }
+      }
     }
   })
 

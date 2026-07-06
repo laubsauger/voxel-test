@@ -1235,9 +1235,49 @@ function handleCrash(
     }
   }
 
-  // chassis dent at the contact: uniform sheet-metal strength
+  // chassis dent: SNAP the dent center onto the chassis's own solid voxel
+  // nearest the world contact, then crumple a sheet-metal sphere there. The
+  // marched world contact sits on the WALL at the grid-center height (~sy/2);
+  // with the P15-raised cabins the front hood/nose is low and thin, so that
+  // wall point can float in the empty air above the low leading edge and a dent
+  // sphere placed on it would find no chassis to crush (the "taller front stops
+  // crumpling" coupling). Denting the nearest solid voxel instead guarantees
+  // the crush lands on the part of the car closest to impact, at any cabin
+  // height. Deterministic: fixed y→z→x scan of the entity's own grid (V2).
+  const [dlx, dly, dlz] = worldToLocal(v, hx, hy, hz)
+  let dentX = hx
+  let dentY = hy
+  let dentZ = hz
+  {
+    const { grid, sx, sy, sz } = v
+    let bestD2 = Infinity
+    let bvx = -1
+    let bvy = -1
+    let bvz = -1
+    for (let y = 0; y < sy; y++)
+      for (let z = 0; z < sz; z++)
+        for (let x = 0; x < sx; x++) {
+          if (grid[x + z * sx + y * sx * sz] === 0) continue
+          const ddx = (x + 0.5) * VOXEL_SIZE - dlx
+          const ddy = (y + 0.5) * VOXEL_SIZE - dly
+          const ddz = (z + 0.5) * VOXEL_SIZE - dlz
+          const d2 = ddx * ddx + ddy * ddy + ddz * ddz
+          if (d2 < bestD2) {
+            bestD2 = d2
+            bvx = x
+            bvy = y
+            bvz = z
+          }
+        }
+    if (bvx >= 0) {
+      const [rx, ry, rz] = quatRotate(v.qx, v.qy, v.qz, v.qw, (bvx + 0.5) * VOXEL_SIZE, (bvy + 0.5) * VOXEL_SIZE, (bvz + 0.5) * VOXEL_SIZE)
+      dentX = v.px + rx
+      dentY = v.py + ry
+      dentZ = v.pz + rz
+    }
+  }
   const dentR = Math.min(0.9, Math.max(0.35, dv * 0.08))
-  damageVehicleSphere(sim, phys, v, hx, hy, hz, dentR, dv * 0.6, DENT_STRENGTH)
+  damageVehicleSphere(sim, phys, v, dentX, dentY, dentZ, dentR, dv * 0.6, DENT_STRENGTH)
 
   // wheel damage: nearest wheel to the contact (local frame), if close
   if (phys.vehicles.has(v.id)) {
