@@ -21,9 +21,10 @@ import {
   type Scene,
   type WebGPURenderer,
 } from 'three/webgpu'
-import { float, mix, mrt, normalView, output, pass, vec3, vec4 } from 'three/tsl'
+import { float, mix, mrt, normalView, output, pass, renderOutput, vec3, vec4 } from 'three/tsl'
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { ao } from 'three/addons/tsl/display/GTAONode.js'
+import { fxaa } from 'three/addons/tsl/display/FXAANode.js'
 import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js'
 import { ChunkKind, CHUNK, CHUNK_COUNT, VOXEL_SIZE, WORLD_CX, WORLD_CZ, type ChunkStore } from '../world/chunks'
 import {
@@ -348,8 +349,15 @@ export class WorldRenderer {
       this.pipeline = new RenderPipeline(opts.renderer)
       // threshold 1.0: only true HDR sources bloom (sun disc, lamps,
       // specular hits) — keeps white plaster from glowing
-      this.pipeline.outputNode =
-        opts.bloom !== false ? lit.add(bloom(lit, 0.35, 0.35, 1.0)) : lit
+      const litHdr = opts.bloom !== false ? lit.add(bloom(lit, 0.35, 0.35, 1.0)) : lit
+      // P27 — final FXAA anti-alias pass. The scene renders WITHOUT MSAA (the
+      // post pipeline bypasses the renderer's antialias), so voxel/road edges
+      // and the thin tower spandrels aliased + shimmered (moiré). FXAA needs the
+      // LDR image, so tone-map manually via renderOutput here and turn OFF the
+      // pipeline's own output transform to avoid double tone-mapping. GPU-cheap
+      // and the frame is CPU-bound, so it's effectively free.
+      this.pipeline.outputColorTransform = false
+      this.pipeline.outputNode = fxaa(renderOutput(litHdr))
     } else {
       this.pipeline = null
     }
