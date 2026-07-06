@@ -172,7 +172,7 @@ P2|x|S|TOD gizmo restyle + marker on arc|bottom-left, small, subtle; sun/moon ri
 P3|x|S|fog never reaches world edge|FOG_FAR 720→330, FOG_MAX 0.38→0.92 — boundary dissolves into horizon, incl. flying up
 P4|x|S|airport planes clip hangar / run off apron|rot-0 in runway-side strips, guarded, 0 overlaps
 P5|x|S|trailers too short|body ~1.7→2.6 m
-P6|~|S|trailer-park roads too clean/fancy|added jittered dirt tracks INSIDE; bordering arterial still wide+clean → make shoddy/narrow there too
+P6|x|S|trailer-park roads too clean/fancy|added jittered dirt tracks INSIDE; bordering arterial still wide+clean → make shoddy/narrow there too
 P7|x|M|beach is ugly|road grid cuts through it; want dune terrain (value-noise sand height, analog to trailer-park terrain, beach biome), natural sand→water shoreline, no grid interruption
 P8|x|S|airport interrupted by road grid + z-fighting|except airport district from the road grid; kill coplanar apron/foundation z-fight
 P9|.|S|z-fighting on tower foundations|coplanar overlap outside highrises — depth offset / dedupe the slab
@@ -188,7 +188,7 @@ P18|.|L|palette chunk compression|bit-packed palette store for COLD chunks (memo
 P19|x|S|TNT (remote detonator) + rocket launcher missing from action hotbar|T73 authored but not wired to hotbar slots — add + fire path
 P20|x|M|airport rework|no trees (done), wider runway + small Cessna planes + one ON the runway ready for takeoff (done); still need: verify NO grid rows on rebuild, flyable (→P17)
 P21|x|M|farmhouse / hacienda on the outer nature rim|occasional large rural building type, distinct from suburb houses
-P22|.|L|outer-rim blocks 2× size|bigger plots + half the intersections on the nature rim → more open, distinct from the dense city grid (grid/road-gen change)
+P22|x|L|outer-rim blocks 2× size|bigger plots + half the intersections on the nature rim → more open, distinct from the dense city grid (grid/road-gen change)
 P23|x|S|highrise variety|all towers identical — add ≥1 more facade/massing style (setbacks, brick+glass mix, different mullion/crown)
 P24|x|S|input box less stylish than before|a text input lost styling (regression) — restore the nicer look
 P25|x|S|bomb/explosion damage too weak on hard surfaces|highrises + roads barely dent — scale destruction or add power vs hard materials
