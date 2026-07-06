@@ -185,7 +185,7 @@ P15|.|M|car vertical proportions compressed|raising the car grid broke crash cru
 P16|.|L|occlusion culling|remaining CPU object-count lever: cull region meshes / LOD cells fully behind others (open sightlines e.g. east arterial, beach)
 P17|x|L|flyable plane|aircraft flight controller — the parked airport planes become pilotable
 P18|.|L|palette chunk compression|bit-packed palette store for COLD chunks (memory), keep active chunks flat (CPU-bound safe), lossless + deterministic — unlocks world >5-6×
-P19|.|S|TNT (remote detonator) + rocket launcher missing from action hotbar|T73 authored but not wired to hotbar slots — add + fire path
+P19|x|S|TNT (remote detonator) + rocket launcher missing from action hotbar|T73 authored but not wired to hotbar slots — add + fire path
 P20|x|M|airport rework|no trees (done), wider runway + small Cessna planes + one ON the runway ready for takeoff (done); still need: verify NO grid rows on rebuild, flyable (→P17)
 P21|x|M|farmhouse / hacienda on the outer nature rim|occasional large rural building type, distinct from suburb houses
 P22|.|L|outer-rim blocks 2× size|bigger plots + half the intersections on the nature rim → more open, distinct from the dense city grid (grid/road-gen change)
