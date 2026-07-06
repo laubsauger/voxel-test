@@ -53,16 +53,17 @@ describe('physics determinism (T10, I.jolt, V2, V3)', () => {
     expect(b.simHashes).toEqual(a.simHashes)
   }, 30000)
 
-  it('world-static bodies exist for solid chunks and rebuild on edits', async () => {
+  it('colliders stream near anchors, and edits build them (B35)', async () => {
     const sim = makeSim(1)
     const phys = await createPhysics(sim)
-    // ground slab spans 2×2 chunks in x/z, 1 chunk in y → 4 static bodies
-    expect(phys.staticBodyCount).toBe(4)
-    sim.queue.push(log[0])
+    // B35 — colliders are no longer built for every solid chunk up front (that
+    // OOM'd Jolt past ~4× the world); they stream near sim anchors. With no
+    // player/vehicle/body anchor yet, nothing is built.
+    expect(phys.staticBodyCount).toBe(0)
+    sim.queue.push(log[0]) // dig — an edit rebuilds the touched chunk's collider
     sim.step()
     sim.step()
-    // dig realized a chunk to dense; body count unchanged, but remesh queue saw it
-    expect(phys.staticBodyCount).toBe(4)
+    expect(phys.staticBodyCount).toBeGreaterThan(0)
     expect(phys.drainRemesh().length).toBeGreaterThan(0)
     phys.dispose()
   }, 30000)

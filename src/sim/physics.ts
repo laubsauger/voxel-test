@@ -17,7 +17,9 @@ import {
   ChunkKind,
   VOXEL_SIZE,
   WORLD_CX,
+  WORLD_CY,
   WORLD_CZ,
+  chunkIndex,
   type ChunkStore,
 } from '../world/chunks'
 import { greedyBoxes, type Box } from './greedy-boxes'
@@ -118,6 +120,23 @@ export function materialFeel(mat: number): MaterialFeel {
 const FULL_CHUNK_BOX: Box[] = [{ x: 0, y: 0, z: 0, sx: CHUNK, sy: CHUNK, sz: CHUNK }]
 
 /**
+ * B35 — deterministic collider streaming. Static chunk colliders are built only
+ * near the sim ANCHORS (players + vehicles + dynamic island bodies) and evicted
+ * beyond a hysteresis margin. The anchor positions are authoritative sim state
+ * (lockstep-synced), so every peer computes the IDENTICAL target set and builds
+ * / evicts in the same sorted order each tick — bit-exact, no MP desync (V2/V3).
+ * This decouples the physics collider count (Jolt's WASM allocator was the world
+ * -size ceiling) from world size: cost scales with anchors × radius, not area.
+ * Horizontal (cylindrical) radius so tall towers within reach are fully solid.
+ */
+const COLLIDER_PLAYER_RADIUS = 64 // m — walk/dig/interaction bubble
+const COLLIDER_BODY_RADIUS = 30 // m — around each vehicle / debris island
+const COLLIDER_KEEP_MARGIN = 20 // m — evict only beyond radius+margin (hysteresis)
+/** per-tick build/evict caps (steady state) — the burst at load is unbudgeted */
+const COLLIDER_BUILD_BUDGET = 64
+const COLLIDER_EVICT_BUDGET = 64
+
+/**
  * Union voxel-space bounding box of a set of chunk indices, expanded by
  * `margin`. clampRegion (in connectivity) bounds the final search volume.
  */
@@ -204,8 +223,13 @@ export class PhysicsWorld {
   readonly physicsSystem: Jolt.PhysicsSystem
   readonly bodyInterface: Jolt.BodyInterface
 
-  /** chunk index → static body for that chunk's solid voxels */
+  /** chunk index → static body for that chunk's solid voxels (streamed, B35) */
   private readonly chunkBodies = new Map<number, Jolt.Body>()
+  /** B35 — until the first collider target set is fully built, the build is
+   *  unbudgeted so the spawn area is solid before the player lands */
+  private colliderBurst = true
+  /** scratch target set, reused each tick (no per-tick allocation) */
+  private readonly colliderTargets = new Set<number>()
   /** entity id → dynamic island body, insertion order = allocation order (deterministic) */
   readonly bodies = new Map<number, DynamicBody>()
 
@@ -321,15 +345,18 @@ export class PhysicsWorld {
    * No connectivity checks here — authored content is taken as-is.
    */
   initStatic(world: ChunkStore): void {
-    for (const ci of world.drainDirty()) {
-      this.rebuildChunkBody(world, ci)
-      this.remesh.add(ci)
-    }
+    // B35 — colliders stream on demand near the sim anchors (streamColliders in
+    // tick()); we no longer build one static body per world chunk up front (that
+    // OOM'd Jolt's WASM allocator past ~4× the arena). Just clear the world-gen
+    // dirty flood — the first tick's unbudgeted collider burst builds the spawn
+    // area before the player lands. Render meshes stream independently (B35).
+    world.drainDirty()
     this.physicsSystem.OptimizeBroadPhase()
   }
 
   /** Sim system body: structural updates, then the fixed Jolt step (V2: DT only). */
   tick(sim: Sim): void {
+    this.streamColliders(sim) // B35 — load/evict static colliders near anchors
     tickVehiclesPlow(sim, this) // T64 — carve weak materials BEFORE collider rebuild
     this.structuralPass(sim)
     tickVehiclesPreStep(this) // T64 — driver input → Jolt controller
@@ -555,6 +582,86 @@ export class PhysicsWorld {
     api.destroy(pos)
     api.destroy(rot)
     this.chunkBodies.set(ci, body)
+  }
+
+  /** remove + destroy a streamed chunk collider (B35) */
+  private destroyChunkBody(ci: number): void {
+    const b = this.chunkBodies.get(ci)
+    if (b === undefined) return
+    this.bodyInterface.RemoveBody(b.GetID())
+    this.bodyInterface.DestroyBody(b.GetID())
+    this.chunkBodies.delete(ci)
+  }
+
+  /**
+   * B35 — deterministic collider streaming pass (runs in the tick, V2). Builds
+   * static colliders for non-empty chunks within COLLIDER_*_RADIUS of any anchor
+   * (players, vehicles, island bodies) and evicts those beyond radius+margin.
+   * Every peer runs this on identical sim state → identical chunkBodies set,
+   * built/evicted in ascending-ci order (budgeted; the load burst is unbudgeted).
+   */
+  private streamColliders(sim: Sim): void {
+    const world = sim.world
+    const chunkM = CHUNK * VOXEL_SIZE
+    const targets = this.colliderTargets
+    targets.clear()
+    // rasterise each anchor's cylindrical bubble into the target set
+    const addBubble = (px: number, pz: number, rad: number): void => {
+      const r = Math.ceil(rad / chunkM)
+      const ccx = Math.floor(px / chunkM)
+      const ccz = Math.floor(pz / chunkM)
+      const rad2 = rad * rad
+      for (let cz = Math.max(0, ccz - r); cz <= Math.min(WORLD_CZ - 1, ccz + r); cz++) {
+        const dz = (cz + 0.5) * chunkM - pz
+        for (let cx = Math.max(0, ccx - r); cx <= Math.min(WORLD_CX - 1, ccx + r); cx++) {
+          const dx = (cx + 0.5) * chunkM - px
+          if (dx * dx + dz * dz > rad2) continue
+          for (let cy = 0; cy < WORLD_CY; cy++) {
+            const ci = chunkIndex(cx, cy, cz)
+            if (world.chunkAt(ci).kind !== ChunkKind.Empty) targets.add(ci)
+          }
+        }
+      }
+    }
+    for (const p of this.players.values()) addBubble(p.px, p.pz, COLLIDER_PLAYER_RADIUS)
+    for (const v of this.vehicles.values()) addBubble(v.px, v.pz, COLLIDER_BODY_RADIUS)
+    for (const b of this.bodies.values()) addBubble(b.px, b.pz, COLLIDER_BODY_RADIUS)
+
+    // build in-range chunks not yet built (ascending ci; unbudgeted at load)
+    const toBuild: number[] = []
+    for (const ci of targets) if (!this.chunkBodies.has(ci)) toBuild.push(ci)
+    toBuild.sort((a, b) => a - b)
+    const buildCap = this.colliderBurst ? toBuild.length : COLLIDER_BUILD_BUDGET
+    for (let i = 0; i < toBuild.length && i < buildCap; i++) this.rebuildChunkBody(world, toBuild[i])
+    if (this.colliderBurst && toBuild.length <= buildCap) this.colliderBurst = false
+
+    // evict built chunks now beyond radius+margin of every anchor (hysteresis)
+    const toEvict: number[] = []
+    for (const ci of this.chunkBodies.keys()) {
+      if (targets.has(ci)) continue
+      if (!this.chunkNearAnchor(ci, COLLIDER_KEEP_MARGIN)) toEvict.push(ci)
+    }
+    toEvict.sort((a, b) => a - b)
+    for (let i = 0; i < toEvict.length && i < COLLIDER_EVICT_BUDGET; i++) this.destroyChunkBody(toEvict[i])
+  }
+
+  /** true if chunk ci's centre is within (radius + extraMargin) of any anchor */
+  private chunkNearAnchor(ci: number, extraMargin: number): boolean {
+    const chunkM = CHUNK * VOXEL_SIZE
+    const cx = ci % WORLD_CX
+    const cz = ((ci / WORLD_CX) | 0) % WORLD_CZ
+    const wx = (cx + 0.5) * chunkM
+    const wz = (cz + 0.5) * chunkM
+    const test = (px: number, pz: number, rad: number): boolean => {
+      const dx = wx - px
+      const dz = wz - pz
+      const rr = rad + extraMargin
+      return dx * dx + dz * dz <= rr * rr
+    }
+    for (const p of this.players.values()) if (test(p.px, p.pz, COLLIDER_PLAYER_RADIUS)) return true
+    for (const v of this.vehicles.values()) if (test(v.px, v.pz, COLLIDER_BODY_RADIUS)) return true
+    for (const b of this.bodies.values()) if (test(b.px, b.pz, COLLIDER_BODY_RADIUS)) return true
+    return false
   }
 
   /**
