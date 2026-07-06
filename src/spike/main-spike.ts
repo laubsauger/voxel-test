@@ -1,27 +1,27 @@
 /**
- * Box3D spike — REAL destruction pipeline in the browser (T85). Drives an actual
- * Sim + ChunkStore + Box3DPhysicsWorld (createBox3DPhysics) with the game's real
- * edit/destruction ops. Explosions run through structuralPass →
- * connectivity.findUnsupportedIslands → extractIsland → convex-hull Box3D debris —
- * the exact same pipeline as tests/box3d-physics.test.ts, now rendered.
+ * Box3D spike — REAL destruction pipeline on the REAL suburb (T85 + perf probe).
+ * Stamps the game's procedural world (generateLayout + stampScene) and clips a
+ * region of it, then drives a real Sim + Box3DPhysicsWorld with real explode
+ * commands. Buildings are the game's actual voxel buildings, not hand-built bars.
  *
- * Render: static chunk meshes rebuilt from phys.drainRemesh() (the game's dirty
- * feed); dynamic island bodies meshed from their voxel grids and transformed each
- * frame from phys.bodies (V15 1:1). No Jolt, no net (V14/B30).
+ * Profiling HUD breaks the per-tick cost into structural / step / readback /
+ * reweld so the exact perf cost of repeated destruction is visible. [R] fires a
+ * rocket barrage (repro), [F] toggles reweld (perf A/B). No Jolt, no net.
  */
-import { Scene, WebGPURenderer, DirectionalLight, HemisphereLight, Color, Group, Vector3, Plane } from 'three/webgpu'
+import { Scene, WebGPURenderer, DirectionalLight, HemisphereLight, Color, Group, Vector3 } from 'three/webgpu'
 import { FlyCam } from '../render/flycam'
 import { clusterToGroup } from './houses'
 import { createBox3DPhysics, type Box3DPhysicsWorld } from './box3d-physics'
 import { Sim } from '../sim/loop'
 import { registerEditOps } from '../sim/edit-ops'
-import { CHUNK, VOXEL_SIZE, WORLD_CX, WORLD_CZ } from '../world/chunks'
-import { MAT_GRASS, MAT_BRICK, MAT_CONCRETE, MAT_GLASS, MAT_METAL } from '../sim/materials'
+import { generateLayout } from '../sim/gen/layout'
+import { stampScene } from '../sim/gen/stamper'
+import { placeholderProps } from '../sim/gen/props'
+import { CHUNK, VOXEL_SIZE, WORLD_CX, WORLD_CZ, chunkIndex } from '../world/chunks'
 
 const app = document.getElementById('app')!
 const hud = document.getElementById('hud')!
 const fatal = document.getElementById('fatal')!
-
 function die(msg: string): never {
   fatal.textContent = msg
   fatal.style.display = 'grid'
@@ -29,50 +29,21 @@ function die(msg: string): never {
 }
 if (!('gpu' in navigator)) die('WebGPU not available. Desktop Chrome required.')
 
+const SEED = 1337
 const PHYS_HZ = 60
+// active region (chunk-space AABB) clipped from the full stamped suburb — the
+// densest building cluster for seed 1337 sits around chunk (56,56).
+const REGION = { cx0: 52, cy0: 0, cz0: 52, cx1: 66, cy1: 7, cz1: 66 }
+const CX = (REGION.cx0 + REGION.cx1) / 2
+const CZ = (REGION.cz0 + REGION.cz1) / 2
+const CENTER_VX = Math.round(CX * CHUNK + CHUNK / 2)
+const CENTER_VZ = Math.round(CZ * CHUNK + CHUNK / 2)
 
 const HOTKEYS = [
   'MOUSE aim · CLICK explode-at-aim',
-  '[X] blow tower  [G] blow wall  [Z] big blast center',
-  '[B] toggle island bodies visible',
+  '[R] rocket barrage (repro)  [X] blast center  [F] reweld on/off',
+  '[B] toggle island bodies',
 ].join('\n')
-
-// --- small real world: ground + destructible buildings (voxel coords) --------
-const GROUND = { x0: 0, z0: 0, x1: 255, z1: 255, top: 3 }
-const TOWER = { x0: 40, z0: 40, x1: 58, z1: 58, y0: 4, y1: 64 } // concrete/glass highrise
-const WALL = { x0: 90, z0: 60, x1: 140, z1: 64, y0: 4, y1: 32 } // freestanding brick wall
-const HOUSE = { x0: 150, z0: 150, x1: 175, z1: 175, y0: 4, y1: 22 }
-
-function buildWorld(sim: Sim): void {
-  const w = sim.world
-  w.fillBox(GROUND.x0, 0, GROUND.z0, GROUND.x1, GROUND.top - 1, GROUND.z1, MAT_GRASS)
-  // tower: hollow concrete shell + glass band + floor slabs every 12
-  for (let y = TOWER.y0; y <= TOWER.y1; y++) {
-    const floor = (y - TOWER.y0) % 12 === 0 || y === TOWER.y1
-    for (let z = TOWER.z0; z <= TOWER.z1; z++)
-      for (let x = TOWER.x0; x <= TOWER.x1; x++) {
-        const wall = x <= TOWER.x0 + 1 || x >= TOWER.x1 - 1 || z <= TOWER.z0 + 1 || z >= TOWER.z1 - 1
-        if (floor) w.setVoxel(x, y, z, MAT_CONCRETE)
-        else if (wall) {
-          const band = (y - TOWER.y0) % 12 >= 3 && (y - TOWER.y0) % 12 <= 9
-          w.setVoxel(x, y, z, band ? MAT_GLASS : MAT_CONCRETE)
-        }
-      }
-  }
-  w.fillBox(WALL.x0, WALL.y0, WALL.z0, WALL.x1, WALL.y1, WALL.z1, MAT_BRICK)
-  // house: brick box shell
-  for (let y = HOUSE.y0; y <= HOUSE.y1; y++)
-    for (let z = HOUSE.z0; z <= HOUSE.z1; z++)
-      for (let x = HOUSE.x0; x <= HOUSE.x1; x++) {
-        const shell = x === HOUSE.x0 || x === HOUSE.x1 || z === HOUSE.z0 || z === HOUSE.z1 || y === HOUSE.y0 || y === HOUSE.y1
-        if (shell) w.setVoxel(x, y, z, MAT_BRICK)
-      }
-  // perimeter bumpers so debris stays near the action
-  w.fillBox(20, 3, 20, 200, 5, 21, MAT_METAL)
-  w.fillBox(20, 3, 199, 200, 5, 200, MAT_METAL)
-  w.fillBox(20, 3, 20, 21, 5, 200, MAT_METAL)
-  w.fillBox(199, 3, 20, 200, 5, 200, MAT_METAL)
-}
 
 function chunkGrid(sim: Sim, cx: number, cy: number, cz: number): { grid: Uint8Array; any: boolean } {
   const grid = new Uint8Array(CHUNK * CHUNK * CHUNK)
@@ -87,6 +58,24 @@ function chunkGrid(sim: Sim, cx: number, cy: number, cz: number): { grid: Uint8A
   return { grid, any }
 }
 
+/** scan the region for the tallest solid column (a building) → blast target */
+function findTallColumn(sim: Sim): { vx: number; vy: number; vz: number } {
+  let best = { vx: CENTER_VX, vy: 12, vz: CENTER_VZ, top: -1 }
+  const x0 = REGION.cx0 * CHUNK, x1 = REGION.cx1 * CHUNK + CHUNK - 1
+  const z0 = REGION.cz0 * CHUNK, z1 = REGION.cz1 * CHUNK + CHUNK - 1
+  const yTop = REGION.cy1 * CHUNK + CHUNK - 1
+  for (let vz = z0; vz <= z1; vz += 3)
+    for (let vx = x0; vx <= x1; vx += 3) {
+      for (let vy = yTop; vy >= 0; vy--) {
+        if (sim.world.getVoxel(vx, vy, vz) !== 0) {
+          if (vy > best.top) best = { vx, vy, vz, top: vy }
+          break
+        }
+      }
+    }
+  return { vx: best.vx, vy: best.vy, vz: best.vz }
+}
+
 async function main(): Promise<void> {
   const renderer = new WebGPURenderer({ antialias: true })
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
@@ -98,9 +87,8 @@ async function main(): Promise<void> {
   scene.background = new Color(0x8fb6e8)
 
   const cam = new FlyCam(renderer.domElement, innerWidth / innerHeight)
-  // FlyCam fixed forward ≈ (-0.65,-0.39,+0.65); sit on the ray from the building
-  // cluster centroid (~9,3,9 m) so tower/wall/house are framed on boot.
-  cam.camera.position.set(21, 11, -3)
+  // sit back+up from the region center on the FlyCam forward ray (~-0.65,-0.39,0.65)
+  cam.camera.position.set(CENTER_VX * VOXEL_SIZE + 16, 13, CENTER_VZ * VOXEL_SIZE - 16)
   const sun = new DirectionalLight(0xffffff, 2.4)
   sun.position.set(30, 50, 20)
   sun.castShadow = true
@@ -112,18 +100,21 @@ async function main(): Promise<void> {
     cam.camera.updateProjectionMatrix()
   })
 
-  // --- real sim + Box3D destruction backend ---------------------------------
-  const sim = new Sim(1337)
+  // --- real suburb, clipped to REGION ---------------------------------------
+  const sim = new Sim(SEED)
   registerEditOps(sim)
-  buildWorld(sim)
-  const phys: Box3DPhysicsWorld = await createBox3DPhysics(sim)
+  stampScene(sim.world, generateLayout(SEED), placeholderProps())
+  const phys: Box3DPhysicsWorld = await createBox3DPhysics(sim, REGION)
+  const target = findTallColumn(sim) // a real building column to blast
+  // frame the camera on the target building
+  cam.camera.position.set(target.vx * VOXEL_SIZE + 15, target.vy * VOXEL_SIZE * 0.6 + 6, target.vz * VOXEL_SIZE - 15)
 
-  // static chunk meshes, rebuilt from the dirty feed (phys.drainRemesh)
   const chunkGroups = new Map<number, Group>()
   function renderChunk(ci: number): void {
     const cx = ci % WORLD_CX
     const cz = ((ci / WORLD_CX) | 0) % WORLD_CZ
     const cy = (ci / (WORLD_CX * WORLD_CZ)) | 0
+    if (cx < REGION.cx0 || cx > REGION.cx1 || cy < REGION.cy0 || cy > REGION.cy1 || cz < REGION.cz0 || cz > REGION.cz1) return
     const old = chunkGroups.get(ci)
     if (old) {
       scene.remove(old)
@@ -142,12 +133,8 @@ async function main(): Promise<void> {
   }
   for (const ci of phys.drainRemesh()) renderChunk(ci)
 
-  // dynamic island bodies: mesh from voxel grid (local), transform each frame (V15)
   const bodyGroups = new Map<number, { group: Group; version: number }>()
   let showBodies = true
-  function bodyMesh(grid: Uint8Array, sx: number, sy: number, sz: number): Group {
-    return clusterToGroup({ grid, sx, sy, sz, origin: { x: 0, y: 0, z: 0 }, label: 'body' })
-  }
   function syncBodies(): void {
     for (const [id, rec] of bodyGroups) {
       if (!phys.bodies.has(id)) {
@@ -163,7 +150,7 @@ async function main(): Promise<void> {
           scene.remove(rec.group)
           rec.group.traverse((o) => (o as { geometry?: { dispose(): void } }).geometry?.dispose())
         }
-        const group = bodyMesh(b.grid, b.sx, b.sy, b.sz)
+        const group = clusterToGroup({ grid: b.grid, sx: b.sx, sy: b.sy, sz: b.sz, origin: { x: 0, y: 0, z: 0 }, label: 'body' })
         group.visible = showBodies
         scene.add(group)
         rec = { group, version: b.version }
@@ -174,36 +161,32 @@ async function main(): Promise<void> {
     }
   }
 
-  // --- destruction via REAL commands (voxel coords) --------------------------
   function explode(x: number, y: number, z: number, r: number, power: number): void {
     sim.queue.push({ tick: sim.tick, playerId: 1, seq: sim.tick, op: { kind: 'explode', x, y, z, r, power } })
   }
-  const c = (b: { x0: number; x1: number; z0: number; z1: number }, y: number) => ({
-    x: (b.x0 + b.x1) / 2, y, z: (b.z0 + b.z1) / 2,
-  })
+
+  // rocket barrage: several blasts marched up a building, ~10 ticks apart (repro)
+  let barrage: { n: number; nextTick: number } | null = null
+  function fireBarrage(): void { barrage = { n: 0, nextTick: sim.tick } }
 
   const fwd = new Vector3()
-  const plane = new Plane(new Vector3(0, 1, 0), -(TOWER.y0 + 6) * VOXEL_SIZE) // aim plane at building mid-height
-  const hitP = new Vector3()
   function explodeAtAim(): void {
     cam.camera.getWorldDirection(fwd)
     const o = cam.camera.position
-    const ray = { origin: o, direction: fwd }
-    // ray-plane intersect
-    const denom = fwd.y
-    if (Math.abs(denom) < 1e-4) return
-    const t = -(o.y + plane.constant) / denom
-    if (t < 0) return
-    hitP.copy(o).addScaledVector(fwd, t)
-    explode(Math.round(hitP.x / VOXEL_SIZE), Math.round(hitP.y / VOXEL_SIZE), Math.round(hitP.z / VOXEL_SIZE), 6, 7)
-    void ray
+    // march the ray until it enters a solid voxel (real target), cap 60 m
+    for (let d = 1; d < 60; d += 0.4) {
+      const vx = Math.round((o.x + fwd.x * d) / VOXEL_SIZE)
+      const vy = Math.round((o.y + fwd.y * d) / VOXEL_SIZE)
+      const vz = Math.round((o.z + fwd.z * d) / VOXEL_SIZE)
+      if (sim.world.getVoxel(vx, vy, vz) !== 0) { explode(vx, vy, vz, 8, 8); return }
+    }
   }
 
   addEventListener('keydown', (e) => {
     switch (e.code) {
-      case 'KeyX': { const p = c(TOWER, TOWER.y0 + 3); explode(p.x, p.y, p.z, 16, 10); break }
-      case 'KeyG': { const p = c(WALL, WALL.y0 + 6); explode(p.x, p.y, p.z, 12, 9); break }
-      case 'KeyZ': { const p = c(TOWER, TOWER.y0 + 20); explode(p.x, p.y, p.z, 26, 12); break }
+      case 'KeyR': fireBarrage(); break
+      case 'KeyX': explode(target.vx, target.vy - 4, target.vz, 12, 9); break
+      case 'KeyF': phys.reweldEnabled = !phys.reweldEnabled; break
       case 'KeyB':
         showBodies = !showBodies
         for (const rec of bodyGroups.values()) rec.group.visible = showBodies
@@ -214,8 +197,7 @@ async function main(): Promise<void> {
     if (document.pointerLockElement === renderer.domElement) explodeAtAim()
   })
 
-  // --- loop: fixed-step real sim, then render --------------------------------
-  let acc = 0, last = 0, ticks = 0
+  let acc = 0, last = 0, ticks = 0, renderMs = 0
   const stepDt = 1 / PHYS_HZ
   renderer.setAnimationLoop((now: number) => {
     const t = now / 1000
@@ -226,25 +208,38 @@ async function main(): Promise<void> {
     acc += frameDt
     let n = 0
     while (acc >= stepDt && n < 5) {
+      // drive the barrage: one blast every ~8 ticks, 6 total, marching up
+      if (barrage && sim.tick >= barrage.nextTick && barrage.n < 6) {
+        // march blasts DOWN the building (top→base) — the way rockets chew a tower down
+        explode(target.vx, Math.max(6, target.vy - barrage.n * 4), target.vz, 10, 9)
+        barrage.n++
+        barrage.nextTick = sim.tick + 8
+        if (barrage.n >= 6) barrage = null
+      }
       sim.step()
       acc -= stepDt
       ticks++
       n++
     }
+    const r0 = performance.now()
     for (const ci of phys.drainRemesh()) renderChunk(ci)
     syncBodies()
     renderer.render(scene, cam.camera)
+    renderMs = performance.now() - r0
 
+    const p = phys.prof
     hud.textContent =
-      `BOX3D SPIKE — REAL destruction pipeline (Sim + Box3DPhysicsWorld)\n${HOTKEYS}\n` +
-      `tick ${sim.tick}  island bodies ${phys.bodies.size}  static colliders ${phys.staticColliderCount}\n` +
-      `chunks ${chunkGroups.size}`
+      `BOX3D SPIKE — REAL suburb, REAL pipeline\n${HOTKEYS}\n` +
+      `tick ${sim.tick}  bodies ${p.bodies}  chunks ${chunkGroups.size}  reweld ${phys.reweldEnabled ? 'ON' : 'off'} (welded/t ${p.weldedThisTick})\n` +
+      `PHYS  structural ${p.structuralMs.toFixed(2)}  step ${p.stepMs.toFixed(2)}  readback ${p.readbackMs.toFixed(2)}  reweld ${p.reweldMs.toFixed(2)} ms\n` +
+      `RENDER ${renderMs.toFixed(2)} ms  (chunk remesh + ${bodyGroups.size} body meshes)`
   })
 
   ;(globalThis as unknown as { __spike: unknown }).__spike = {
     sim, phys, scene, cam: cam.camera,
-    explode, explodeTower: () => { const p = c(TOWER, TOWER.y0 + 3); explode(p.x, p.y, p.z, 16, 10) },
-    bodyCount: () => phys.bodies.size,
+    fireBarrage, explode,
+    prof: () => ({ ...phys.prof, renderMs, bodyMeshes: bodyGroups.size, chunks: chunkGroups.size }),
+    setReweld: (on: boolean) => { phys.reweldEnabled = on },
   }
 }
 

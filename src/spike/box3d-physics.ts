@@ -56,6 +56,20 @@ function chunkUnionRegion(chunkIndices: number[], margin: number) {
   return { x0: x0 - margin, y0: y0 - margin, z0: z0 - margin, x1: x1 + margin, y1: y1 + margin, z1: z1 + margin }
 }
 
+/** ticks a debris body must rest before it welds back to the static world */
+const REWELD_TICKS = 90 // ~1.5 s — "reweld sooner" (user); Jolt uses 210
+const REST_SPEED_SQ = 0.09 // (0.3 m/s)²
+
+export interface PhysProfile {
+  structuralMs: number
+  stepMs: number
+  readbackMs: number
+  reweldMs: number
+  bodies: number
+  awake: number
+  weldedThisTick: number
+}
+
 export class Box3DPhysicsWorld implements IPhysicsWorld {
   readonly bodies = new Map<number, DynamicBody>()
   readonly players = new Map<number, PlayerEntity>() // empty — B30 gap
@@ -63,6 +77,9 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
   private readonly chunkBodies = new Map<number, B3Body[]>()
   private readonly remesh = new Set<number>()
   private pendingConnectivity: number[] = []
+  /** reweld toggle (perf A/B) + last-tick profile */
+  reweldEnabled = true
+  readonly prof: PhysProfile = { structuralMs: 0, stepMs: 0, readbackMs: 0, reweldMs: 0, bodies: 0, awake: 0, weldedThisTick: 0 }
 
   private constructor(world: B3World) {
     this.world = world
@@ -72,23 +89,43 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     const b3 = await Box3D()
     const world = new b3.World({ gravity: { x: 0, y: GRAVITY_Y, z: 0 } })
     world.enableContinuous(true)
+    world.enableSleeping(true)
     return new Box3DPhysicsWorld(world)
   }
 
   // --- static chunk colliders ------------------------------------------------
 
-  initStatic(world: ChunkStore): void {
-    world.drainDirty() // clear world-gen dirty; we build every non-empty chunk below
-    for (let cy = 0; cy < WORLD_CY; cy++)
-      for (let cz = 0; cz < WORLD_CZ; cz++)
-        for (let cx = 0; cx < WORLD_CX; cx++) {
+  /**
+   * Build static colliders for non-empty chunks. `region` (chunk-space AABB,
+   * inclusive) bounds the active area so the spike can stamp the whole real
+   * suburb but only simulate/collide a slice of it (the game streams; the spike
+   * just clips). Omit region = whole world.
+   */
+  initStatic(world: ChunkStore, region?: { cx0: number; cy0: number; cz0: number; cx1: number; cy1: number; cz1: number }): void {
+    world.drainDirty() // clear world-gen dirty; we build the region's chunks below
+    const r = region ?? { cx0: 0, cy0: 0, cz0: 0, cx1: WORLD_CX - 1, cy1: WORLD_CY - 1, cz1: WORLD_CZ - 1 }
+    this.region = r
+    for (let cy = r.cy0; cy <= r.cy1; cy++)
+      for (let cz = r.cz0; cz <= r.cz1; cz++)
+        for (let cx = r.cx0; cx <= r.cx1; cx++) {
           const ci = chunkIndex(cx, cy, cz)
           if (world.chunkAt(ci).kind === ChunkKind.Empty) continue
           this.rebuildChunkBody(world, ci)
         }
   }
 
+  private region: { cx0: number; cy0: number; cz0: number; cx1: number; cy1: number; cz1: number } | null = null
+  private inRegion(ci: number): boolean {
+    if (!this.region) return true
+    const cx = ci % WORLD_CX
+    const cz = ((ci / WORLD_CX) | 0) % WORLD_CZ
+    const cy = (ci / (WORLD_CX * WORLD_CZ)) | 0
+    const r = this.region
+    return cx >= r.cx0 && cx <= r.cx1 && cy >= r.cy0 && cy <= r.cy1 && cz >= r.cz0 && cz <= r.cz1
+  }
+
   private rebuildChunkBody(world: ChunkStore, ci: number): void {
+    if (!this.inRegion(ci)) return // spike clips to its active region
     const old = this.chunkBodies.get(ci)
     if (old) {
       for (const b of old) b.destroy()
@@ -143,10 +180,55 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
   // --- per-tick driver -------------------------------------------------------
 
   tick(sim: Sim): void {
+    const t0 = performance.now()
     this.structuralPass(sim)
+    const t1 = performance.now()
     this.world.step(DT, SUB_STEPS)
+    const t2 = performance.now()
     this.readbackBodies()
+    const t3 = performance.now()
+    const welded = this.reweldEnabled ? this.reweldPass(sim) : 0
+    const t4 = performance.now()
     this.killPlanePass(sim)
+    const p = this.prof
+    p.structuralMs = t1 - t0
+    p.stepMs = t2 - t1
+    p.readbackMs = t3 - t2
+    p.reweldMs = t4 - t3
+    p.bodies = this.bodies.size
+    p.weldedThisTick = welded
+  }
+
+  /** settled debris (rested REWELD_TICKS) rasterises back to the static world +
+   *  despawns — bounds live body/mesh count so perf stays flat under repeated
+   *  destruction (the parity feature the Jolt backend has). */
+  private reweldPass(sim: Sim): number {
+    let ready: number[] | undefined
+    for (const b of this.bodies.values()) if (b.restTicks >= REWELD_TICKS) (ready ??= []).push(b.id)
+    if (!ready) return 0
+    ready.sort((a, b) => a - b)
+    for (const id of ready) {
+      const b = this.bodies.get(id)
+      if (b) this.reweldBody(sim, b)
+    }
+    return ready.length
+  }
+
+  private reweldBody(sim: Sim, b: DynamicBody): void {
+    const q = { x: b.qx, y: b.qy, z: b.qz, w: b.qw }
+    for (let ly = 0; ly < b.sy; ly++)
+      for (let lz = 0; lz < b.sz; lz++)
+        for (let lx = 0; lx < b.sx; lx++) {
+          const m = b.grid[lx + lz * b.sx + ly * b.sx * b.sz]
+          if (m === 0) continue
+          const local = { x: (lx + 0.5) * VOXEL_SIZE, y: (ly + 0.5) * VOXEL_SIZE, z: (lz + 0.5) * VOXEL_SIZE }
+          const w = rotate(q, local)
+          const vx = Math.floor((b.px + w.x) / VOXEL_SIZE)
+          const vy = Math.floor((b.py + w.y) / VOXEL_SIZE)
+          const vz = Math.floor((b.pz + w.z) / VOXEL_SIZE)
+          if (sim.world.getVoxel(vx, vy, vz) === 0) sim.world.setVoxel(vx, vy, vz, m)
+        }
+    this.despawnBody(b.id)
   }
 
   structuralPass(sim: Sim): void {
@@ -403,11 +485,14 @@ function rotate(q: { x: number; y: number; z: number; w: number }, v: { x: numbe
  * colliders. Mirror of createPhysics (physics.ts) minus the unportable
  * player/vehicle/aircraft/projectile subsystems (B30).
  */
-export async function createBox3DPhysics(sim: Sim): Promise<Box3DPhysicsWorld> {
+export async function createBox3DPhysics(
+  sim: Sim,
+  region?: { cx0: number; cy0: number; cz0: number; cx1: number; cy1: number; cz1: number },
+): Promise<Box3DPhysicsWorld> {
   const phys = await Box3DPhysicsWorld.create()
   registerDestructionOps(sim, phys)
   attachEditPhysics(sim, phys)
   sim.addSystem(() => phys.tick(sim))
-  phys.initStatic(sim.world)
+  phys.initStatic(sim.world, region)
   return phys
 }

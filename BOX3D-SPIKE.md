@@ -47,6 +47,50 @@ merging is decisive:
 produced ~10–17 debris bodies + a full chunk-collider rebuild at **0.2–0.3 ms
 step**. Perf is not the concern.
 
+## Perf under repeated destruction — where the cost actually is
+
+Profiled the real-suburb spike (`box3d-spike.html`) hammering a building with
+barrages of `explode`, per-tick phase breakdown (peak ms):
+
+| | structural (create bodies) | box3d step | readback | **render (chunk remesh)** | bodies |
+|---|---|---|---|---|---|
+| reweld OFF, 6 barrages | 1.4 | 0.5 | 0.2 | **6.2** | 50 |
+| reweld ON, hammering | 1.7 | 0.2 | 0.1 | 3.7 | 5 |
+
+**Box3D is NOT the bottleneck.** Body creation (chunk-collider rebuild + convex-hull
+islands) peaks ~1.4–1.7 ms; stepping is ~0.2–0.5 ms even at 50 accumulated bodies
+because box3d **sleeps** settled debris. This confirms "hundreds of thousands at
+full fps" — the solver cost is trivial here.
+
+**The dominant cost is the chunk MESH REBUILD (render, ~6 ms spikes)** — the spike
+rebuilds a full 32³ chunk BufferGeometry on the main thread for every dirtied
+chunk. That is engine-independent and is exactly the game's B23/B63 destruction
+stutter — which the game already fixes with a **remesh worker + per-frame budget**
+that the spike does not use.
+
+**Why the game (Jolt) drops on the 3rd/4th rocket:** two things the spike shows
+are cheap on Box3D but expensive on Jolt / unbounded in general:
+1. **Rigid-body creation.** Each hit rebuilds per-chunk static colliders + spawns
+   island bodies. On Jolt each chunk is a `StaticCompoundShape` whose `Create()` is
+   heavy; rebuilding several per hit, every hit, adds up. Box3D's one-body-per-box
+   creation is ~1.4 ms/heavy-tick.
+2. **Debris accumulation.** Without prompt reweld/sleep, live bodies + their meshes
+   grow every hit → per-frame readback/sync/object-count climb. Reweld bounds it:
+   50 → 5 bodies (see table).
+
+### Fixes (what to tweak)
+- **Reweld/freeze sooner** — settled debris rasterises back to static + despawns.
+  Implemented here (`REWELD_TICKS = 90` ≈ 1.5 s vs Jolt's 210); keeps body/mesh
+  count flat. Biggest lever for "perf drops after N hits."
+- **Enable sleeping** (box3d `enableSleeping`) so stepping cost is O(awake), not
+  O(total). Done.
+- **Don't rebuild whole-chunk collider shapes per hit** — rebuild only the dirtied
+  sub-region, or (Jolt) mutate the compound instead of `Create()` from scratch.
+- **Budgeted remesh on a worker**, not full-chunk BufferGeometry rebuilds on the
+  main thread (the game already does this; a real Box3D integration must keep it).
+- Box3D directly removes cost #1 (cheap body creation) and #2 stays a
+  reweld/sleep-tuning problem independent of engine.
+
 ## Full-swap port map (the real seam)
 
 Everything upstream of the Jolt `PhysicsWorld` is physics-agnostic. We extracted
@@ -61,7 +105,7 @@ pass.**
 `setBodyVelocity`, `applyRadialImpulse`, `impulseBodyAt`, `damageBodySphere(s)`
 (destroy+recreate hull, no live re-shape in box3d), `castRayBody`, `drainRemesh`.
 
-### The three blockers (B30)
+### The blockers (B30) — 2 hard, determinism cleared
 
 1. **Non-convex island bodies are inexpressible.** Jolt makes each debris chunk
    one multi-box *compound* body. box3d-wasm 0.2.0 `createBox` has **no
@@ -73,18 +117,26 @@ pass.**
 2. **CharacterVirtual (player) + VehicleConstraint/motorcycle are UNPORTABLE.**
    box3d 0.2.0 has no character controller and no wheeled-vehicle rig. Players
    and drivable vehicles need a full custom rebuild or must stay on Jolt.
-3. **Determinism.** f32 + a different body decomposition ⇒ Box3D **cannot share
-   `hashPhysics` with Jolt** and can't be MP-lockstep-compatible with the Jolt
-   build. It must be its own canonical, non-MP build.
+3. **Determinism — NOT a blocker (corrected).** Box3D is engineered for
+   determinism, and our backend is **replay-deterministic**: two identical runs
+   produce **bit-identical** body-state sequences incl. explosions
+   (`tests/box3d-determinism.test.ts`). So a **Box3D-canonical lockstep MP is
+   viable** (Box3D peer vs Box3D peer), exactly as with Jolt. The only true
+   limits: a Box3D peer can't sync with a *Jolt* peer (different engines →
+   different exact values, so no shared `hashPhysics`), and cross-*platform*
+   determinism (different CPU/wasm build) is unverified — the same open question
+   Jolt has. f32 is not the issue; operation order is, and ours is fixed
+   (deterministic Map/Set insertion order, seeded PRNG, no wall-clock).
 
 ## Recommendation
 
-- **For destruction/debris in single-player or a Box3D-canonical mode: viable
-  now.** The pipeline works, perf is good, integration is minimal (interface +
-  one backend class). Convex-hull debris is an acceptable fidelity trade.
-- **Do NOT rip Jolt out wholesale.** Players + vehicles + MP determinism keep us
-  on Jolt. A dual-backend (Jolt for players/vehicles/MP, Box3D for destruction)
-  is possible but adds two-world coupling cost.
+- **For destruction/debris: viable now**, and **MP-capable** as a Box3D-canonical
+  build (replay-deterministic). Pipeline works, perf is good, integration is
+  minimal (interface + one backend class). Convex-hull debris is the fidelity trade.
+- **Blocking a full swap: only players + vehicles** (no character/vehicle rig in
+  box3d 0.2.0). A dual-backend (Jolt for players/vehicles, Box3D for destruction)
+  works but adds two-world coupling; a Box3D-only future needs those two
+  controllers rebuilt.
 - **If chasing a Box3D-only future:** the gating work is (a) a kinematic capsule
   character controller, (b) a raycast-suspension vehicle, (c) accepting
   convex-hull (or authoring a box-union body abstraction if a future box3d
