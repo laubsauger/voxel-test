@@ -184,8 +184,8 @@ export class GameAudio {
       const surface = this.surfaceAt(player.px, player.py, player.pz)
       if (surface) {
         // push-off scuff. The dedicated jump-takeoff samples carry a sustained
-        // tonal artifact (ElevenLabs gen) that reads as a "ding" on every jump —
-        // reuse the clean surface footstep instead. Landing keeps its own thud.
+        // tonal gen artifact that reads as a "ding" on every jump — reuse the
+        // clean surface footstep instead. Landing keeps its own thud.
         this.engine.play(`footstep-run-${surface}`, {
           position: pos,
           refDistance: 1.5,

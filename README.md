@@ -8,6 +8,8 @@ WebGPU voxel demolition sandbox. Break the world, stress the physics, splash thr
 
 [Play BLOCKBURB](https://laubsauger.github.io/voxel-test/)
 
+![BLOCKBURB menu overlooking the voxel suburb](public/readme/blockburb-menu.png)
+
 ## Features
 
 - Fully editable voxel world
@@ -32,8 +34,6 @@ WebGPU voxel demolition sandbox. Break the world, stress the physics, splash thr
 - Voxel ambient occlusion
 - Physically lit WebGPU rendering
 - Large explorable world
-
-![BLOCKBURB menu overlooking the voxel suburb](public/readme/blockburb-menu.png)
 
 ## Run It
 
