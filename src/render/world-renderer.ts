@@ -332,8 +332,11 @@ export class WorldRenderer {
           scenePass.getTextureNode('normal'),
           opts.camera,
         )
-        aoPass.resolutionScale = 0.5 // half-res GTAO (restored — REGION 8 gave
-        // the fps headroom back, no need to quarter it and soften the AO).
+        // B37 — FULL-res GTAO (was 0.5). Half-res AO upscaled onto high-frequency
+        // voxel geometry was a prime source of the shimmering moiré at distance.
+        // The frame is CPU-bound (three.js object processing), so the GPU has
+        // ample headroom for the full-res AO pass — no fps cost on the target.
+        aoPass.resolutionScale = 1.0
         aoPass.radius.value = 0.55
         aoPass.thickness.value = 0.5
         aoPass.scale.value = 1.1

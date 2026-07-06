@@ -52,9 +52,13 @@ export const emissiveNightBoost = uniform(1)
 function chunkCommonNodes() {
   // 'mat' is constant across a quad; +0.5 then truncate = round-to-nearest
   const matId = attribute<'float'>('mat', 'float').add(0.5).toInt()
-  // AO level 0..3 → occlusion factor; keep a floor so pits stay readable
+  // AO level 0..3 → occlusion factor. B37 — softened HARD (floor 0.45→0.74):
+  // per-vertex AO baked onto large greedy-merged quads stretches a 1-voxel
+  // contact shadow across a whole wall/roof, reading as diagonal gradients and
+  // "bending". Full-res GTAO (screen-space, view-correct, no stretch) now owns
+  // the real occlusion; this stays only as a faint crease hint in tight pits.
   const ao = attribute<'float'>('ao', 'float').div(3)
-  const aoShade = mix(float(0.45), float(1.0), ao)
+  const aoShade = mix(float(0.74), float(1.0), ao)
 
   // B8: stable per-voxel cell — sample half a voxel behind the face so faces
   // on voxel boundaries land inside their owning voxel; +2e-3 voxel epsilon
