@@ -157,7 +157,19 @@ export function createChunkMaterial(textures?: ChunkTextures): MeshStandardNodeM
   const nY = vec3(tnY.x, sgn.y.mul(reconstructZ(tnY)), tnY.y)
   const nZ = vec3(tnZ.x, tnZ.y, sgn.z.mul(reconstructZ(tnZ)))
   const mappedNormal = nX.mul(w.x).add(nY.mul(w.y)).add(nZ.mul(w.z)).normalize()
-  material.normalNode = transformNormalToView(mix(normalWorld, mappedNormal, hasTex.mul(0.9)))
+  // BUG1 — scale the triplanar normal-map influence by the material's
+  // `variation` (the same manufactured-smooth↔organic knob that damps the
+  // per-voxel color salt). At a grazing sun the full-strength (0.9) mapped
+  // normal on a FLAT manufactured face — asphalt 0.4, concrete 0.3, plaster
+  // 0.2 — aliased into faint vertical "corduroy" striping (N·L ≈ 0 amplifies
+  // any per-texel normal wobble). Isolation (CDP, TOD 17, flat asphalt): the
+  // normal map was the dominant stripe source, not shadow acne or GTAO. Tying
+  // strength to variation flattens those surfaces (asphalt→0.36, concrete→0.27)
+  // while grass/dirt (1.0) and brick (0.7) keep near-full detail — their coarse
+  // albedo hides the residual. Ceiling stays the old 0.9 (variation 1 → 0.9).
+  const normalVariation = uniformArray<'float'>(MATERIALS.map((m) => m.variation), 'float')
+  const normalStrength = normalVariation.element(matId).mul(0.9)
+  material.normalNode = transformNormalToView(mix(normalWorld, mappedNormal, hasTex.mul(normalStrength)))
 
   // per-voxel ramp variation modulates the texture albedo subtly (voxel
   // charm, B8: flat per voxel): tint = ramp sample / ramp midpoint ≈ 1
