@@ -58,16 +58,30 @@ interface Band {
   speedMul: number
 }
 
-/** pool-scale ripple bands (10cm voxels, backyard pools 2–8m across) */
-const BAND_A: Band = { dirX: 0.94, dirZ: 0.32, wavelength: 1.7, amplitude: 0.055, speedMul: 1 }
-const BAND_B: Band = { dirX: -0.42, dirZ: 0.91, wavelength: 0.8, amplitude: 0.03, speedMul: 1 }
-/** short chop band, only where the sim recently moved water (waterFlow attr) */
-const BAND_CHOP: Band = { dirX: 0.6, dirZ: -0.8, wavelength: 0.35, amplitude: 0.085, speedMul: 1.6 }
+/**
+ * Pool-scale ripple bands (10cm voxels, backyard pools 2–8m across).
+ * P10: four low-amplitude octaves in DIFFERENT directions sum to an isotropic
+ * shimmer — a single strong band read as diagonal "venetian-blind" stripes.
+ * Wavelengths are long and amplitudes small so a resting pool is a calm,
+ * gently-reflective sheet, not a corrugated one.
+ */
+const CALM_BANDS: readonly Band[] = [
+  { dirX: 0.98, dirZ: 0.2, wavelength: 3.6, amplitude: 0.022, speedMul: 1 },
+  { dirX: -0.28, dirZ: 0.96, wavelength: 2.7, amplitude: 0.016, speedMul: 1 },
+  { dirX: 0.6, dirZ: -0.8, wavelength: 2.0, amplitude: 0.012, speedMul: 1 },
+  { dirX: -0.86, dirZ: -0.51, wavelength: 1.5, amplitude: 0.0085, speedMul: 1 },
+]
+/** short chop band, only where the sim recently moved water (waterFlow attr) —
+ *  P10: far gentler + longer than before so disturbance shimmers, not stripes */
+const BAND_CHOP: Band = { dirX: 0.6, dirZ: -0.8, wavelength: 0.9, amplitude: 0.02, speedMul: 1.4 }
 
 export function createWaterMaterial(opts: WaterMaterialOptions = {}): MeshPhysicalNodeMaterial {
-  const absorption = opts.absorption ?? [3.1, 0.85, 0.5]
-  const shallow = new Color(opts.shallowColor ?? 0x74c7dc)
-  const deep = new Color(opts.deepColor ?? 0x02222e)
+  // P10: lighter, less red-hungry absorption so deep water stays a readable
+  // teal instead of collapsing toward black; the deep floor is lifted well off
+  // near-black so wave troughs never read as dark gaps.
+  const absorption = opts.absorption ?? [1.7, 0.6, 0.4]
+  const shallow = new Color(opts.shallowColor ?? 0x86d0e4)
+  const deep = new Color(opts.deepColor ?? 0x0e4b5a)
   const sky = new Color(opts.skyColor ?? 0xa8c8e6)
 
   const mat = new MeshPhysicalNodeMaterial()
@@ -87,11 +101,14 @@ export function createWaterMaterial(opts: WaterMaterialOptions = {}): MeshPhysic
     return vec2(slope.mul(b.dirX), slope.mul(b.dirZ))
   }
 
-  const gA = gradient(BAND_A)
-  const gB = gradient(BAND_B)
-  const gC = gradient(BAND_CHOP).mul(flow)
-  const gx = gA.x.add(gB.x).add(gC.x)
-  const gz = gA.y.add(gB.y).add(gC.y)
+  // sum the calm octaves (isotropic), then add the flow-gated chop on top
+  const gA = gradient(CALM_BANDS[0])
+  const gB = gradient(CALM_BANDS[1])
+  const gC = gradient(CALM_BANDS[2])
+  const gD = gradient(CALM_BANDS[3])
+  const gChop = gradient(BAND_CHOP).mul(flow)
+  const gx = gA.x.add(gB.x).add(gC.x).add(gD.x).add(gChop.x)
+  const gz = gA.y.add(gB.y).add(gC.y).add(gD.y).add(gChop.y)
   const rippled = normalize(vec3(gx.negate(), 1, gz.negate()))
   // ripple only up-facing surface; side walls keep their face normal so the
   // closed skin (B20) stays visually watertight from the side
@@ -116,7 +133,16 @@ export function createWaterMaterial(opts: WaterMaterialOptions = {}): MeshPhysic
   mat.colorNode = mix(bodyColor, color(sky), fresnel.mul(0.8))
   // grazing angles read reflective/opaque; straight down into shallow water stays glassy
   const clarity = transmit.dot(vec3(0.333, 0.333, 0.334))
-  mat.opacityNode = clamp(mix(float(0.92), float(0.6), clarity).add(fresnel.mul(0.5)), 0, 0.97)
+  const bodyOpacity = mix(float(0.92), float(0.6), clarity).add(fresnel.mul(0.5))
+  // P11: the extractor emits a closed vertical skin at height steps (B20), but
+  // a THIN disturbed column has tiny `waterDepth` → high transmittance → the
+  // body-opacity above collapses toward 0.6 and, with transmission on, the
+  // near-vertical side faces render see-through — reading as missing sides /
+  // seams between neighbouring water columns of different heights. Force the
+  // vertical skin (low upness = side/bottom faces) toward opaque so the closed
+  // wall stays visible. Up-facing surface keeps its glassy body opacity.
+  const sideness = upness.oneMinus()
+  mat.opacityNode = clamp(mix(bodyOpacity, float(0.98), sideness.mul(0.9)), 0, 0.98)
   mat.transparent = true
   mat.transmission = 0.6 // refraction-ish see-through, tinted by colorNode
   mat.ior = 1.33
