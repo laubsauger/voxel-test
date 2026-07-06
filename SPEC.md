@@ -173,8 +173,8 @@ P3|x|S|fog never reaches world edge|FOG_FAR 720→330, FOG_MAX 0.38→0.92 — b
 P4|x|S|airport planes clip hangar / run off apron|rot-0 in runway-side strips, guarded, 0 overlaps
 P5|x|S|trailers too short|body ~1.7→2.6 m
 P6|~|S|trailer-park roads too clean/fancy|added jittered dirt tracks INSIDE; bordering arterial still wide+clean → make shoddy/narrow there too
-P7|.|M|beach is ugly|road grid cuts through it; want dune terrain (value-noise sand height, analog to trailer-park terrain, beach biome), natural sand→water shoreline, no grid interruption
-P8|.|S|airport interrupted by road grid + z-fighting|except airport district from the road grid; kill coplanar apron/foundation z-fight
+P7|x|M|beach is ugly|road grid cuts through it; want dune terrain (value-noise sand height, analog to trailer-park terrain, beach biome), natural sand→water shoreline, no grid interruption
+P8|x|S|airport interrupted by road grid + z-fighting|except airport district from the road grid; kill coplanar apron/foundation z-fight
 P9|.|S|z-fighting on tower foundations|coplanar overlap outside highrises — depth offset / dedupe the slab
 P10|.|M|water waves in pools ugly|too high-frequency, too dark, unnatural — lower freq, lighten, smoother surface
 P11|.|M|disturbed water side faces glitch|displaced water voxels at differing heights show broken lines / missing side faces (skin not closed on height steps) — B20 follow-up
