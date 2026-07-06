@@ -201,4 +201,4 @@ status: . todo. Everything else in §P is done (x). This is the live open list.
 id|status|size|item|notes
 P16|.|L|occlusion culling|LOW ROI: frame is CPU-bound on three.js ITERATING all objects to frustum-cull them; occlusion culling only cuts DRAWN objects, not that iteration. Marginal for our bottleneck. Deprioritized unless proven otherwise.
 P27|x|M|anti-aliasing (no AA currently)|renderer antialias is bypassed by the post pipeline → hard edge aliasing + moiré on high-freq voxel/road detail, and the RESIDUAL tower-facade flicker is sub-pixel edge aliasing of the metal spandrels. GPU has headroom (CPU-bound), so FXAA/SMAA/TAA post pass is affordable. Add a final AA node to the RenderPipeline.
-P28|.|S|verify P9 residuals live|tower foundation/ground z-fight should be gone (LOD-cell sink + recessed glass); confirm in-game across sun angles, close the loop.
+P28|x|S|verify P9 residuals live|tower foundation/ground z-fight should be gone (LOD-cell sink + recessed glass); confirm in-game across sun angles, close the loop.
