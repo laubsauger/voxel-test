@@ -30,7 +30,7 @@ import type { SimEvent } from './events'
 import { VOXEL_SIZE, type ChunkStore } from '../world/chunks'
 import { MAT_AIR, MAT_ASPHALT, MAT_DIRT, MAT_GRASS, MAT_METAL, MAT_WATER_SOLID, material } from './materials'
 import { greedyBoxes } from './greedy-boxes'
-import { destroySphere } from './destruction'
+import { destroySphere, runExplosion } from './destruction'
 import { placeholderProps } from './gen/props'
 import type { VoxelGrid } from './vox/remap'
 import type { DynamicBody, PhysicsWorld } from './physics'
@@ -75,6 +75,11 @@ const MAX_PITCH_ROLL = 1.2 // rad — beyond this the constraint rights the car
 export const CRASH_DV_SMALL = 4
 /** dv at/above which the crash reads as LARGE (audio + heavier voxel damage) */
 export const CRASH_DV_LARGE = 8
+/** dv at/above which a crash is CATASTROPHIC — the vehicle explodes like a bomb,
+ *  engine dies (wreck), occupants ejected (a full-speed slam into a wall) */
+export const CRASH_EXPLODE_DV = 20
+const VEHICLE_EXPLODE_RADIUS = 13
+const VEHICLE_EXPLODE_POWER = 9
 /** minimum pre-impact speed for any crash response (parking taps are free) */
 const CRASH_MIN_SPEED = 3
 /** ticks between crash responses per vehicle (hashed) */
@@ -1159,6 +1164,21 @@ function handleCrash(
   const dx = prevVx / prevSpeed
   const dy = prevVy / prevSpeed
   const dz = prevVz / prevSpeed
+
+  // catastrophic hit: the vehicle detonates like a bomb — occupants ejected,
+  // engine dies (wreck), a big blast tears the crash site open. Deterministic.
+  if (dv >= CRASH_EXPLODE_DV) {
+    for (const pid of v.occupants) {
+      if (pid === 0) continue
+      const p = phys.players.get(pid)
+      if (p) unseatPlayer(phys, p, v.px, v.py + v.sy * VOXEL_SIZE + 1.2, v.pz)
+    }
+    runExplosion(sim, phys, v.px / VOXEL_SIZE, v.py / VOXEL_SIZE, v.pz / VOXEL_SIZE, VEHICLE_EXPLODE_RADIUS, VEHICLE_EXPLODE_POWER)
+    sim.emit({ kind: 'vehicle_crash', vehicleId: v.id, x: v.px, y: v.py, z: v.pz, dv, large: 1 })
+    convertToWreck(sim, phys, v)
+    return
+  }
+
   // chassis center, world
   const [ox, oy, oz] = (() => {
     const [rx, ry, rz] = quatRotate(v.qx, v.qy, v.qz, v.qw, (v.sx * VOXEL_SIZE) / 2, (v.sy * VOXEL_SIZE) / 2, (v.sz * VOXEL_SIZE) / 2)

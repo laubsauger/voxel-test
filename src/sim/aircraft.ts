@@ -36,7 +36,7 @@ import { DT, type Sim } from './loop'
 import { VOXEL_SIZE } from '../world/chunks'
 import { MAT_GLASS, MAT_METAL, MAT_PLASTER, material } from './materials'
 import { greedyBoxes } from './greedy-boxes'
-import { destroySphere } from './destruction'
+import { destroySphere, runExplosion } from './destruction'
 import type { VoxelGrid } from './vox/remap'
 import type { DynamicBody, PhysicsWorld } from './physics'
 import {
@@ -84,6 +84,11 @@ export const ENTER_RANGE_AIR = 5.5
 const CRASH_DV = 6
 /** minimum pre-impact speed for any crash response (soft touchdowns are free) */
 const CRASH_MIN_SPEED = 5
+/** dv at/above which a crash is CATASTROPHIC — the plane explodes like a bomb,
+ *  engine dies, pilot ejected (flying into a building at speed) */
+const CRASH_EXPLODE_DV = 18
+const AIRCRAFT_EXPLODE_RADIUS = 15
+const AIRCRAFT_EXPLODE_POWER = 10
 /** ticks between crash responses per aircraft (hashed) */
 const CRASH_COOLDOWN_TICKS = 10
 /** planes are thin sheet metal/plaster: uniform strength for chassis removal */
@@ -621,6 +626,23 @@ function handleCrash(
   const dx = prevVx / prevSpeed
   const dy = prevVy / prevSpeed
   const dz = prevVz / prevSpeed
+
+  // catastrophic hit: the plane detonates like a bomb — pilot ejected clear of
+  // the blast, engine dies (aircraft removed), a big explosion tears the impact
+  // site open. Deterministic (all from tick state). This is the "fly into a
+  // building and it blows up" outcome.
+  if (dv >= CRASH_EXPLODE_DV) {
+    for (const pid of a.occupants) {
+      if (pid === 0) continue
+      const p = phys.players.get(pid)
+      if (p) unseatPlayer(phys, p, a.px, a.py + a.sy * VOXEL_SIZE + 1.5, a.pz)
+    }
+    runExplosion(sim, phys, a.px / VOXEL_SIZE, a.py / VOXEL_SIZE, a.pz / VOXEL_SIZE, AIRCRAFT_EXPLODE_RADIUS, AIRCRAFT_EXPLODE_POWER)
+    sim.emit({ kind: 'vehicle_crash', vehicleId: a.id, x: a.px, y: a.py, z: a.pz, dv, large: 1 })
+    despawnAircraft(sim, phys, a)
+    return
+  }
+
   // chassis center, world
   const [rx, ry, rz] = quatRotate(a.qx, a.qy, a.qz, a.qw, (a.sx * VOXEL_SIZE) / 2, (a.sy * VOXEL_SIZE) / 2, (a.sz * VOXEL_SIZE) / 2)
   const ox = a.px + rx
