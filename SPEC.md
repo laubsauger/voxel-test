@@ -178,16 +178,16 @@ P8|x|S|airport interrupted by road grid + z-fighting|except airport district fro
 P9|.|S|z-fighting on tower foundations|coplanar overlap outside highrises — depth offset / dedupe the slab
 P10|.|M|water waves in pools ugly|too high-frequency, too dark, unnatural — lower freq, lighten, smoother surface
 P11|.|M|disturbed water side faces glitch|displaced water voxels at differing heights show broken lines / missing side faces (skin not closed on height steps) — B20 follow-up
-P12|.|S|first-person camera inside vehicles|toggle FP/chase while seated (currently chase only)
+P12|x|S|first-person camera inside vehicles|toggle FP/chase while seated (currently chase only)
 P13|.|M|some cars cannot be driven|subset of parked cars fail the enter/drive path — find + fix
 P14|.|M|two-wheelers not in the world|bicycle/scooter are rideable archetypes (T76) but never placed as city props — models + scatter placement
 P15|.|M|car vertical proportions compressed|raising the car grid broke crash crumple (grid height ⇄ vehicle collision) — needs a seat/collision-aware pass, not a naive grid bump
 P16|.|L|occlusion culling|remaining CPU object-count lever: cull region meshes / LOD cells fully behind others (open sightlines e.g. east arterial, beach)
-P17|.|L|flyable plane|aircraft flight controller — the parked airport planes become pilotable
+P17|x|L|flyable plane|aircraft flight controller — the parked airport planes become pilotable
 P18|.|L|palette chunk compression|bit-packed palette store for COLD chunks (memory), keep active chunks flat (CPU-bound safe), lossless + deterministic — unlocks world >5-6×
 P19|.|S|TNT (remote detonator) + rocket launcher missing from action hotbar|T73 authored but not wired to hotbar slots — add + fire path
 P20|x|M|airport rework|no trees (done), wider runway + small Cessna planes + one ON the runway ready for takeoff (done); still need: verify NO grid rows on rebuild, flyable (→P17)
-P21|.|M|farmhouse / hacienda on the outer nature rim|occasional large rural building type, distinct from suburb houses
+P21|x|M|farmhouse / hacienda on the outer nature rim|occasional large rural building type, distinct from suburb houses
 P22|.|L|outer-rim blocks 2× size|bigger plots + half the intersections on the nature rim → more open, distinct from the dense city grid (grid/road-gen change)
-P23|.|S|highrise variety|all towers identical — add ≥1 more facade/massing style (setbacks, brick+glass mix, different mullion/crown)
-P24|.|S|input box less stylish than before|a text input lost styling (regression) — restore the nicer look
+P23|x|S|highrise variety|all towers identical — add ≥1 more facade/massing style (setbacks, brick+glass mix, different mullion/crown)
+P24|x|S|input box less stylish than before|a text input lost styling (regression) — restore the nicer look

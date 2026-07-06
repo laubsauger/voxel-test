@@ -635,23 +635,25 @@ function stampTower(store: ChunkStore, layout: Layout, t: Tower): void {
         store.fillBox(r.x1 - 1, gy0, z, r.x1, gy1, z, MAT_METAL)
       }
     } else {
-      // P23 style 1 — masonry facade: brick wall face this story, then punched
-      // glass windows between brick piers (corner columns 4 wide stay concrete).
-      // Reads as a solid brick building with window holes vs the glass skin.
-      const winBot = yb + 8
-      const winTop = yb + t.storyH - 6
-      const winW = 6
-      store.fillBox(r.x0 + 4, gy0, r.z0, r.x1 - 4, gy1, r.z0 + 1, MAT_BRICK)
-      store.fillBox(r.x0 + 4, gy0, r.z1 - 1, r.x1 - 4, gy1, r.z1, MAT_BRICK)
-      store.fillBox(r.x0, gy0, r.z0 + 4, r.x0 + 1, gy1, r.z1 - 4, MAT_BRICK)
-      store.fillBox(r.x1 - 1, gy0, r.z0 + 4, r.x1, gy1, r.z1 - 4, MAT_BRICK)
-      for (let x = r.x0 + 8; x + winW <= r.x1 - 8; x += t.mullion) {
-        store.fillBox(x, winBot, r.z0, x + winW - 1, winTop, r.z0 + 1, MAT_GLASS)
-        store.fillBox(x, winBot, r.z1 - 1, x + winW - 1, winTop, r.z1, MAT_GLASS)
+      // P23 style 1 — sleek HORIZONTAL-RIBBON tower: a continuous glass skin
+      // with a METAL SPANDREL band at each floor line (strong horizontal
+      // emphasis vs style 0's vertical mullions), corner columns in metal too.
+      // No brick — a clean modern-corporate look distinct from the glass grid.
+      store.fillBox(r.x0 + 3, gy0, r.z0, r.x1 - 3, gy1, r.z0 + 1, MAT_GLASS)
+      store.fillBox(r.x0 + 3, gy0, r.z1 - 1, r.x1 - 3, gy1, r.z1, MAT_GLASS)
+      store.fillBox(r.x0, gy0, r.z0 + 3, r.x0 + 1, gy1, r.z1 - 3, MAT_GLASS)
+      store.fillBox(r.x1 - 1, gy0, r.z0 + 3, r.x1, gy1, r.z1 - 3, MAT_GLASS)
+      // metal corner mullions (thin, run the full story) + metal spandrel band
+      // capping each floor → horizontal ribbon read
+      for (const yy of [gy1 - 1, gy1]) {
+        store.fillBox(r.x0, yy, r.z0, r.x1, yy, r.z0 + 1, MAT_METAL)
+        store.fillBox(r.x0, yy, r.z1 - 1, r.x1, yy, r.z1, MAT_METAL)
+        store.fillBox(r.x0, yy, r.z0, r.x0 + 1, yy, r.z1, MAT_METAL)
+        store.fillBox(r.x1 - 1, yy, r.z0, r.x1, yy, r.z1, MAT_METAL)
       }
-      for (let z = r.z0 + 8; z + winW <= r.z1 - 8; z += t.mullion) {
-        store.fillBox(r.x0, winBot, z, r.x0 + 1, winTop, z + winW - 1, MAT_GLASS)
-        store.fillBox(r.x1 - 1, winBot, z, r.x1, winTop, z + winW - 1, MAT_GLASS)
+      for (const cx of [r.x0, r.x1 - 1]) {
+        store.fillBox(cx, gy0, r.z0, cx + 1, gy1, r.z0 + 1, MAT_METAL)
+        store.fillBox(cx, gy0, r.z1 - 1, cx + 1, gy1, r.z1, MAT_METAL)
       }
     }
     // interior slab (floors above ground)
@@ -665,9 +667,11 @@ function stampTower(store: ChunkStore, layout: Layout, t: Tower): void {
   if (t.style === 0) {
     stampWalls(store, r, roofY + 2, roofY + 4, MAT_CONCRETE)
   } else {
-    // P23 style 1 — taller stepped brick crown (distinct silhouette)
-    stampWalls(store, r, roofY + 2, roofY + 7, MAT_BRICK)
-    stampWalls(store, { x0: r.x0 + 2, z0: r.z0 + 2, x1: r.x1 - 2, z1: r.z1 - 2 }, roofY + 8, roofY + 9, MAT_BRICK)
+    // P23 style 1 — taller stepped METAL crown + glass mechanical penthouse:
+    // a distinct sleek silhouette (a lit metal cap, not a brick parapet)
+    stampWalls(store, r, roofY + 2, roofY + 3, MAT_METAL)
+    stampWalls(store, { x0: r.x0 + 2, z0: r.z0 + 2, x1: r.x1 - 2, z1: r.z1 - 2 }, roofY + 4, roofY + 9, MAT_GLASS)
+    stampWalls(store, { x0: r.x0 + 2, z0: r.z0 + 2, x1: r.x1 - 2, z1: r.z1 - 2 }, roofY + 10, roofY + 11, MAT_METAL)
   }
   const w = r.x1 - r.x0 + 1
   const d = r.z1 - r.z0 + 1

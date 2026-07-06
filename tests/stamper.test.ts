@@ -325,20 +325,20 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     expect(store.getVoxel(t.stairs.x0 + 1, g + t.storyH, stairZ), 'stairwell opening').toBe(MAT_AIR)
   })
 
-  it('P23 tower style 1: masonry brick facade with punched glass + brick crown', () => {
-    // WHY: skyline variety — a style-1 tower must read as a brick building with
-    // window holes (not a glass curtain), so brick piers + glass windows + a
-    // brick crown must actually be stamped.
+  it('P23 tower style 1: horizontal-ribbon glass + metal spandrels + metal crown', () => {
+    // WHY: skyline variety — a style-1 tower reads as a sleek horizontal-ribbon
+    // tower (continuous glass with metal spandrel bands per floor), distinct from
+    // style 0's vertical glass grid. No brick.
     const t = layout.towers.find((x) => x.style === 1)!
     expect(t, 'a style-1 tower exists at seed 42').toBeTruthy()
     const r = t.rect
-    // brick pier before the first window (window run starts at offset 8)
-    expect(store.getVoxel(r.x0 + 6, g + 12, r.z0), 'brick pier').toBe(MAT_BRICK)
-    // a punched glass window (offset 8..13, y within the window band)
-    expect(store.getVoxel(r.x0 + 9, g + 15, r.z0), 'punched glass window').toBe(MAT_GLASS)
-    // stepped brick crown above the roof slab
+    // glass skin mid-story on the front face (band starts at y+5)
+    expect(store.getVoxel(r.x0 + 6, g + 7, r.z0), 'glass skin').toBe(MAT_GLASS)
+    // metal spandrel band capping the first story (top two rows)
+    expect(store.getVoxel(r.x0 + 6, g + t.storyH - 1, r.z0), 'metal spandrel band').toBe(MAT_METAL)
+    // metal crown above the roof slab (no brick)
     const roofY = g + t.floors * t.storyH
-    expect(store.getVoxel(r.x0, roofY + 3, r.z0), 'brick crown').toBe(MAT_BRICK)
+    expect(store.getVoxel(r.x0, roofY + 2, r.z0), 'metal crown').toBe(MAT_METAL)
   })
 
   it('P21 farmhouse: rural compound — house + big barn + grain silo stamped into the park', () => {
