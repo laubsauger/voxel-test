@@ -123,8 +123,8 @@ export class MpLobby {
       case 'host':
         this.title.textContent = 'Hosting'
         this.body.innerHTML = `
-          <div class="bb-mp-code-label">Room code — share it</div>
-          <div class="bb-mp-code" data-mp="code">${this.code || '······'}</div>
+          <div class="bb-mp-code-label" data-mp="code-label">Room code — click to copy</div>
+          <div class="bb-mp-code bb-mp-code-copy" data-mp="code" title="Click to copy">${this.code || '······'}</div>
           ${this.roster()}
           <div class="bb-mp-actions">
             <button class="bb-mp-btn bb-mp-primary" data-mp="start" ${this.players.length < 2 ? 'disabled' : ''}>Start Session</button>
@@ -140,6 +140,7 @@ export class MpLobby {
           <div class="bb-mp-error">${this.joinError}</div>
           <div class="bb-mp-actions">
             <button class="bb-mp-btn bb-mp-primary" data-mp="join">Join</button>
+            <button class="bb-mp-btn" data-mp="paste">Paste</button>
             <button class="bb-mp-btn" data-mp="leave">Back</button>
           </div>`
         break
@@ -161,11 +162,25 @@ export class MpLobby {
     }
     this.body.querySelector('[data-mp="start"]')?.addEventListener('click', this.hooks.onStart)
     this.body.querySelector('[data-mp="leave"]')?.addEventListener('click', this.hooks.onLeave)
+
+    // host: click the code to copy it (secure context — https Pages / localhost)
+    const codeEl = this.body.querySelector('[data-mp="code"]') as HTMLElement | null
+    if (codeEl && this.mode === 'host') {
+      codeEl.addEventListener('click', () => {
+        if (!this.code) return
+        void navigator.clipboard.writeText(this.code).then(
+          () => this.flashLabel('Copied!'),
+          () => this.flashLabel('Copy failed — select manually'),
+        )
+      })
+    }
+
     const input = this.body.querySelector('[data-mp="code-input"]') as HTMLInputElement | null
     if (input) {
-      input.addEventListener('input', () => (input.value = input.value.toUpperCase()))
+      const clean = (v: string) => v.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 6)
+      input.addEventListener('input', () => (input.value = clean(input.value)))
       const submit = () => {
-        const code = input.value.trim().toUpperCase()
+        const code = clean(input.value)
         if (code.length > 0) this.hooks.onJoinCode(code)
       }
       input.addEventListener('keydown', (e) => {
@@ -173,8 +188,33 @@ export class MpLobby {
         e.stopPropagation() // don't leak WASD etc. into game input
       })
       this.body.querySelector('[data-mp="join"]')?.addEventListener('click', submit)
+      // paste: pull the code from the clipboard into the input (the click is the
+      // user gesture clipboard.readText needs). Native Ctrl/Cmd+V still works too.
+      this.body.querySelector('[data-mp="paste"]')?.addEventListener('click', () => {
+        void navigator.clipboard.readText().then(
+          (text) => {
+            input.value = clean(text)
+            input.focus()
+          },
+          () => {
+            // set the error text directly — a full re-render would clear the input
+            const err = this.body.querySelector('.bb-mp-error')
+            if (err) err.textContent = 'Paste blocked — type the code or use Ctrl/Cmd+V'
+          },
+        )
+      })
       setTimeout(() => input.focus(), 0)
     }
+  }
+
+  /** briefly swap the host code label to a transient message (copy feedback) */
+  private flashLabel(msg: string): void {
+    const label = this.body.querySelector('[data-mp="code-label"]') as HTMLElement | null
+    if (!label) return
+    label.textContent = msg
+    setTimeout(() => {
+      if (this.mode === 'host') label.textContent = 'Room code — click to copy'
+    }, 1400)
   }
 }
 

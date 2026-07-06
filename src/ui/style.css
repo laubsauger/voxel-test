@@ -457,6 +457,13 @@
   margin-bottom: 20px;
   text-shadow: 0 0 18px var(--amber-glow);
 }
+.bb-mp-code-copy {
+  cursor: pointer;
+  user-select: all;
+  transition: border-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out);
+}
+.bb-mp-code-copy:hover { border-color: var(--amber); box-shadow: 0 0 18px var(--amber-glow); }
+.bb-mp-code-copy:active { transform: translateY(1px); }
 .bb-mp-input {
   font-family: var(--font-mono);
   font-size: 34px;

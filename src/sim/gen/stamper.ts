@@ -869,29 +869,28 @@ function stampDesert(store: ChunkStore, plot: DesertPlot, g: number): void {
 }
 
 /** a parked airliner: tube fuselage, swept wings, tail fin. ~24 m long. */
+/** P20 — small high-wing Cessna-style plane: ~7 m fuselage, ~9 m wingspan, fixed
+ * gear. Footprint along its axis: fuselage 70 vox from origin, wings ±45.
+ * rot 0/2 → fuselage +z, wings ±x; rot 1/3 → fuselage +x, wings ±z. */
 function stampPlane(store: ChunkStore, px: number, pz: number, rot: number, g: number): void {
-  // local frame: fuselage runs along +z (rot 0). We stamp along the axis and
-  // let rot 1/3 swap axes. Keep it blocky but readable from the air.
-  const b = g + 6 // fuselage floats on gear
+  const b = g + 3 // fuselage floats on the gear
   const along = (i: number, w: number, y0: number, y1: number, mat: number): void => {
-    // i = distance along fuselage axis; w = half-width; centered at (px,pz)
     if (rot % 2 === 0) store.fillBox(px - w, y0, pz + i, px + w, y1, pz + i, mat)
     else store.fillBox(px + i, y0, pz - w, px + i, y1, pz + w, mat)
   }
-  // fuselage tube (240 vox = 24 m)
-  for (let i = 0; i < 240; i++) {
-    const taper = i < 20 ? 2 + Math.floor(i / 5) : i > 220 ? 2 + Math.floor((240 - i) / 6) : 6
+  // fuselage tube (70 vox = 7 m), tapered nose + tail
+  for (let i = 0; i < 70; i++) {
+    const taper = i < 8 ? 2 + Math.floor(i / 2) : i > 58 ? 2 + Math.floor((70 - i) / 4) : 5
     along(i, taper, b, b + taper * 2, MAT_PLASTER)
   }
-  // wing box across the middle
-  const midpt = 110
-  for (let i = midpt - 6; i <= midpt + 6; i++) along(i, 70, b + 3, b + 5, MAT_METAL)
-  // tail fin (vertical) at the back
-  for (let i = 214; i <= 226; i++) along(i, 1, b + 8, b + 24, MAT_METAL)
-  // tailplanes
-  for (let i = 216; i <= 224; i++) along(i, 26, b + 6, b + 7, MAT_METAL)
-  // cockpit windows near the nose
-  along(14, 3, b + 6, b + 8, MAT_GLASS)
+  // high wing across the top of the cabin (single strut-braced plane), ~9 m span
+  for (let i = 18; i <= 26; i++) along(i, 45, b + 9, b + 10, MAT_METAL)
+  // vertical tail fin + horizontal stabiliser at the back
+  for (let i = 61; i <= 68; i++) along(i, 1, b + 5, b + 15, MAT_METAL)
+  for (let i = 62; i <= 67; i++) along(i, 15, b + 4, b + 5, MAT_METAL)
+  // spinner/prop at the nose + cockpit greenhouse
+  along(0, 2, b + 2, b + 6, MAT_METAL)
+  along(13, 3, b + 5, b + 8, MAT_GLASS)
 }
 
 /** airport: concrete apron, a marked runway, a hangar + terminal, parked planes */

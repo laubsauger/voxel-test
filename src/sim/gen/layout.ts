@@ -1001,21 +1001,19 @@ function makeAirports(districts: District[]): Airport[] {
     z1: Math.max(...blocks.map((b) => b.rect.z1)),
   }
   const midX = (apron.x0 + apron.x1) >> 1
-  const runway: Rect = { x0: midX - 15, z0: apron.z0 + 30, x1: midX + 15, z1: apron.z1 - 30 }
-  const hangar: Rect = { x0: apron.x0 + 12, z0: apron.z0 + 44, x1: midX - 22, z1: apron.z0 + 168 }
-  const terminal: Rect = { x0: midX + 22, z0: apron.z1 - 168, x1: apron.x1 - 12, z1: apron.z1 - 44 }
-  // B37 — planes are big (fuselage 240 vox along its axis from the origin, wings
-  // ±70 across). The apron is a tall narrow corridor split by the runway, so a
-  // plane only fits with the fuselage along +z (rot 0): footprint x[px-70..px+70]
-  // (wings), z[pz..pz+240]. Park one in each runway-side strip, clear of the
-  // hangar/terminal; guarded so an undersized airport just gets fewer.
-  const planes: { x: number; z: number; rot: 0 | 1 | 2 | 3 }[] = []
+  // P20 — wider runway (was ±15): a proper strip for the small planes
+  const runway: Rect = { x0: midX - 50, z0: apron.z0 + 30, x1: midX + 50, z1: apron.z1 - 30 }
+  const hangar: Rect = { x0: apron.x0 + 10, z0: apron.z0 + 44, x1: midX - 56, z1: apron.z0 + 150 }
+  const terminal: Rect = { x0: midX + 56, z0: apron.z1 - 150, x1: apron.x1 - 10, z1: apron.z1 - 44 }
+  // P20 — small Cessna planes (footprint rot 0: x[px-45..px+45] wings, z[pz..pz+70]
+  // fuselage). ONE parked perfectly on the runway centreline, ready for takeoff
+  // (nose down the runway, +z); one parked in a runway-side strip by the hangar.
+  const planes: { x: number; z: number; rot: 0 | 1 | 2 | 3 }[] = [
+    { x: midX, z: apron.z0 + 44, rot: 0 }, // on the runway, ready for takeoff
+  ]
   const leftCx = (apron.x0 + runway.x0) >> 1 // centre of the left apron strip
-  const rightCx = (runway.x1 + apron.x1) >> 1 // centre of the right apron strip
-  const p1 = { x: leftCx, z: hangar.z1 + 90, rot: 0 as const } // left, below the hangar
-  if (leftCx - 70 > apron.x0 && p1.z + 240 < terminal.z0 - 20) planes.push(p1)
-  const p2 = { x: rightCx, z: apron.z0 + 60, rot: 0 as const } // right, above the terminal
-  if (rightCx + 70 < apron.x1 && p2.z + 240 < terminal.z0 - 20) planes.push(p2)
+  const p1 = { x: leftCx, z: hangar.z1 + 60, rot: 0 as const } // parked left, below the hangar
+  if (leftCx - 45 > apron.x0 && p1.z + 70 < terminal.z0 - 20) planes.push(p1)
   return [{ apron, runway, hangar, terminal, planes }]
 }
 
@@ -1684,11 +1682,15 @@ export function generateLayout(seed: number): Layout {
   const keptLamps = lamps.filter((l) => !inDistrict(l.x, l.z))
   const keptBins = bins.filter((b) => !inDistrict(b.x, b.z))
   const keptFences = fences.filter((f) => !inDistrict((f.x0 + f.x1) >> 1, (f.z0 + f.z1) >> 1))
+  // P20 — no trees/shrubs on the airport (or beach/desert): they belong to the
+  // park/suburb greenery, not a runway apron or sand flat.
+  const keptTrees = trees.filter((t) => !inDistrict(t.x, t.z))
+  const keptShrubs = shrubs.filter((s) => !inDistrict(s.x, s.z))
 
   return {
     seed, groundY: GROUND_Y, roads, districts, lots, houses, pools, villa,
     rowBlocks, towers: com.towers, parking: com.parking, plazas: com.plazas,
     ponds: park.ponds, beaches, deserts, airports, parkPaths: park.parkPaths,
-    props: clearedProps, trees, shrubs, fences: keptFences, lamps: keptLamps, mailboxes, bins: keptBins,
+    props: clearedProps, trees: keptTrees, shrubs: keptShrubs, fences: keptFences, lamps: keptLamps, mailboxes, bins: keptBins,
   }
 }
