@@ -180,7 +180,7 @@ P10|x|M|water waves in pools ugly|too high-frequency, too dark, unnatural — lo
 P11|x|M|disturbed water side faces glitch|displaced water voxels at differing heights show broken lines / missing side faces (skin not closed on height steps) — B20 follow-up
 P12|x|S|first-person camera inside vehicles|toggle FP/chase while seated (currently chase only)
 P13|x|M|some cars cannot be driven|subset of parked cars fail the enter/drive path — find + fix
-P14|.|M|two-wheelers not in the world|bicycle/scooter are rideable archetypes (T76) but never placed as city props — models + scatter placement
+P14|x|M|two-wheelers not in the world|bicycle/scooter are rideable archetypes (T76) but never placed as city props — models + scatter placement
 P15|x|M|car vertical proportions compressed|raising the car grid broke crash crumple (grid height ⇄ vehicle collision) — needs a seat/collision-aware pass, not a naive grid bump
 P16|.|L|occlusion culling|remaining CPU object-count lever: cull region meshes / LOD cells fully behind others (open sightlines e.g. east arterial, beach)
 P17|x|L|flyable plane|aircraft flight controller — the parked airport planes become pilotable
