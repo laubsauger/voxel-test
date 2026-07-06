@@ -12,6 +12,9 @@
 export const VOXEL_SIZE = 0.1
 export const CHUNK = 32
 export const CHUNK_VOL = CHUNK * CHUNK * CHUNK
+// B32 — 4096² = ~410 m (4× the T50 area). Physics colliders are all-upfront and
+// Jolt-WASM-capped near this size; a larger world needs deterministic collider
+// streaming. Render meshes stream to view distance (B35), so render is bounded.
 export const WORLD_CX = 128
 export const WORLD_CY = 24
 export const WORLD_CZ = 128
