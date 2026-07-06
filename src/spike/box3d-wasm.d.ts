@@ -42,6 +42,7 @@ declare module 'box3d-wasm/standard' {
     isBullet(): boolean
     setLinearVelocity(v: B3Vec3): void
     getLinearVelocity(): B3Vec3
+    applyLinearImpulseToCenter(impulse: B3Vec3, wake?: boolean): void
     getShapeCount(): number
     getMass(): number
     destroy(): void
@@ -55,6 +56,7 @@ declare module 'box3d-wasm/standard' {
     enableSleeping(on: boolean): void
     getAwakeBodyCount(): number
     getProfile(): B3Profile
+    explode(def: { position: B3Vec3; radius: number; impulsePerLength: number; falloff?: number }): void
     destroy(): void
   }
   export interface B3Module {

@@ -22,10 +22,24 @@ export interface DynamicMeshRecord {
 
 const boxMat = new MeshStandardMaterial({ color: 0xd8843a, roughness: 0.7 })
 const sphereMat = new MeshStandardMaterial({ color: 0x4a90d8, roughness: 0.4, metalness: 0.1 })
+// shared material per color so structure bricks/blocks don't allocate per-body
+const matCache = new Map<number, MeshStandardMaterial>()
+function coloredMat(color: number): MeshStandardMaterial {
+  let m = matCache.get(color)
+  if (!m) {
+    m = new MeshStandardMaterial({ color, roughness: 0.85, metalness: 0 })
+    matCache.set(color, m)
+  }
+  return m
+}
 
 export interface SpawnOpts {
-  /** box half-extent / sphere radius (metres) */
+  /** box half-extent / sphere radius (metres) — uniform; ignored if `half` set */
   size?: number
+  /** non-cubic box half-extents (structure bricks/blocks) */
+  half?: { x: number; y: number; z: number }
+  /** override mesh color (structures); default = orange box / blue sphere */
+  color?: number
   /** continuous-collision bullet flag — tunneling probe (T83 q2) */
   bullet?: boolean
   /** initial downward speed (m/s) for the fast-mover tunneling test */
@@ -41,14 +55,16 @@ export function spawnDynamic(
 ): DynamicHandle {
   const size = opts.size ?? 0.5
   const bullet = opts.bullet ?? false
+  const half = opts.half ?? { x: size, y: size, z: size }
   const h =
     kind === 'box'
-      ? ctx.phys.spawnDynamicBox(pos, { x: size, y: size, z: size }, bullet)
+      ? ctx.phys.spawnDynamicBox(pos, half, bullet)
       : ctx.phys.spawnDynamicSphere(pos, size, bullet)
 
   const geo =
-    kind === 'box' ? new BoxGeometry(size * 2, size * 2, size * 2) : new SphereGeometry(size, 20, 14)
-  const mesh = new Mesh(geo, kind === 'box' ? boxMat : sphereMat)
+    kind === 'box' ? new BoxGeometry(half.x * 2, half.y * 2, half.z * 2) : new SphereGeometry(size, 20, 14)
+  const mat = opts.color !== undefined ? coloredMat(opts.color) : kind === 'box' ? boxMat : sphereMat
+  const mesh = new Mesh(geo, mat)
   mesh.castShadow = true
   ctx.scene.add(mesh)
   ctx.meshes.set(h.id, { mesh, kind })

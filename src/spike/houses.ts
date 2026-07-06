@@ -20,6 +20,7 @@ import {
   MAT_GLASS,
   MAT_GRASS,
   MAT_WOOD,
+  MAT_METAL,
   MAT_FLAG_TRANSPARENT,
 } from '../sim/materials'
 import { VOXEL_SIZE } from '../world/chunks'
@@ -141,37 +142,94 @@ export function clusterToGroup(c: VoxelCluster): Group {
   return g
 }
 
-/**
- * the T79 test level: a large ground slab + 5 voxel houses at fixed spots.
- * Deterministic layout (V14 says determinism not required, but fixed = repeatable
- * CDP captures). House sizes vary so T80's per-voxel vs greedy-box counts differ.
- */
-export function buildTestLevel(): VoxelCluster[] {
-  const clusters: VoxelCluster[] = []
+/** solid rectangular block of one material — freestanding wall / perimeter */
+function buildSolidBlock(w: number, h: number, d: number, mat: number): Uint8Array {
+  const grid = new Uint8Array(w * h * d)
+  grid.fill(mat)
+  return grid
+}
 
-  // ground: 60×60 voxels (6×6 m), 2 thick, centered at world origin
-  const GS = 60
+/**
+ * hollow tower shell (highrise): concrete perimeter walls `wall` voxels thick,
+ * a concrete floor slab every `storey` voxels, glass window band per storey.
+ * Hollow interior keeps the voxel count down and makes collapse dramatic.
+ */
+function buildTower(w: number, h: number, d: number, wall: number, storey: number): Uint8Array {
+  const grid = new Uint8Array(w * h * d)
+  const set = (x: number, y: number, z: number, m: number): void => {
+    grid[idx(x, y, z, w, d)] = m
+  }
+  for (let y = 0; y < h; y++) {
+    const floor = y % storey === 0 || y === h - 1
+    for (let z = 0; z < d; z++)
+      for (let x = 0; x < w; x++) {
+        const inWall = x < wall || x >= w - wall || z < wall || z >= d - wall
+        if (floor) set(x, y, z, MAT_CONCRETE)
+        else if (inWall) {
+          const band = y % storey >= 3 && y % storey <= storey - 3
+          const midX = x > wall + 1 && x < w - wall - 2
+          const midZ = z > wall + 1 && z < d - wall - 2
+          set(x, y, z, band && (midX || midZ) ? MAT_GLASS : MAT_CONCRETE)
+        }
+      }
+  }
+  return grid
+}
+
+/**
+ * the test level (T79 + T84). A large 24×24 m arena (ground + perimeter walls so
+ * debris stays contained), 5 static voxel houses clustered in one quadrant, and
+ * an open plaza holding the destructible freestanding brick wall + highrise tower.
+ * Fixed layout = repeatable CDP captures (determinism not required, V14).
+ */
+export function buildTestLevel(): { statics: VoxelCluster[]; destructibles: VoxelCluster[] } {
+  const statics: VoxelCluster[] = []
+  const destructibles: VoxelCluster[] = []
+
+  // arena ground: 240×240 voxels (24×24 m), 2 thick, centered at origin
+  const GS = 240
   const GT = 2
-  clusters.push({
+  const half = (GS * VOXEL_SIZE) / 2 // 12 m
+  statics.push({
     grid: buildGround(GS, GS, GT),
     sx: GS,
     sy: GT,
     sz: GS,
-    origin: { x: -(GS * VOXEL_SIZE) / 2, y: 0, z: -(GS * VOXEL_SIZE) / 2 },
+    origin: { x: -half, y: 0, z: -half },
     label: 'ground',
   })
-
   const groundTop = GT * VOXEL_SIZE
-  // 5 houses of varied footprint, placed on a rough ring
-  const specs: Array<{ w: number; h: number; d: number; x: number; z: number }> = [
-    { w: 20, h: 16, d: 20, x: -2.2, z: -2.2 },
-    { w: 16, h: 14, d: 24, x: 1.6, z: -2.0 },
-    { w: 24, h: 18, d: 16, x: -2.4, z: 1.8 },
-    { w: 18, h: 12, d: 18, x: 1.4, z: 1.6 },
-    { w: 14, h: 20, d: 14, x: -0.4, z: 0.0 },
+
+  // perimeter walls (concrete): 20 tall (2 m), 3 thick — bumpers so bodies don't
+  // fall off. A solid slab greedy-merges to ~1 collider each (cheap).
+  const WH = 20
+  const WT = 3
+  const perim: Array<{ w: number; d: number; x: number; z: number; label: string }> = [
+    { w: GS, d: WT, x: -half, z: -half, label: 'perim-n' },
+    { w: GS, d: WT, x: -half, z: half - WT * VOXEL_SIZE, label: 'perim-s' },
+    { w: WT, d: GS, x: -half, z: -half, label: 'perim-w' },
+    { w: WT, d: GS, x: half - WT * VOXEL_SIZE, z: -half, label: 'perim-e' },
   ]
-  specs.forEach((s, i) => {
-    clusters.push({
+  for (const p of perim)
+    statics.push({
+      grid: buildSolidBlock(p.w, WH, p.d, MAT_METAL),
+      sx: p.w,
+      sy: WH,
+      sz: p.d,
+      origin: { x: p.x, y: groundTop, z: p.z },
+      label: p.label,
+    })
+
+  // 5 houses clustered in the -X/-Z quadrant, leaving the +X plaza clear
+  const houses: Array<{ w: number; h: number; d: number; x: number; z: number }> = [
+    { w: 20, h: 16, d: 20, x: -8.5, z: -8.5 },
+    { w: 16, h: 14, d: 24, x: -5.6, z: -8.2 },
+    { w: 24, h: 18, d: 16, x: -8.8, z: -5.4 },
+    { w: 18, h: 12, d: 18, x: -5.2, z: -5.2 },
+    { w: 14, h: 20, d: 14, x: -7.0, z: -3.0 },
+  ]
+  houses.forEach((s, i) => {
+    statics.push({
       grid: buildHouse(s.w, s.h, s.d),
       sx: s.w,
       sy: s.h,
@@ -181,5 +239,25 @@ export function buildTestLevel(): VoxelCluster[] {
     })
   })
 
-  return clusters
+  // --- destructibles (T84), in the open +X plaza ------------------------------
+  // freestanding brick wall: 40 wide × 26 tall × 4 thick (4×2.6×0.4 m)
+  destructibles.push({
+    grid: buildSolidBlock(40, 26, 4, MAT_BRICK),
+    sx: 40,
+    sy: 26,
+    sz: 4,
+    origin: { x: 1.5, y: groundTop, z: -5.0 },
+    label: 'wall',
+  })
+  // highrise tower: hollow concrete shell 20×56×20, 2-thick walls, storey=12
+  destructibles.push({
+    grid: buildTower(20, 56, 20, 2, 12),
+    sx: 20,
+    sy: 56,
+    sz: 20,
+    origin: { x: 5.0, y: groundTop, z: 4.0 },
+    label: 'tower',
+  })
+
+  return { statics, destructibles }
 }

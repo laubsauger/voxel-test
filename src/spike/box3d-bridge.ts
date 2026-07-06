@@ -39,6 +39,8 @@ export interface DynamicHandle {
   readonly body: B3Body
   position(): Vec3
   rotation(): Quat
+  /** apply a linear impulse at the center of mass (debris knockback, T84) */
+  impulse(v: Vec3): void
 }
 
 export interface SpikeWorldOptions {
@@ -59,7 +61,10 @@ export const GRAVITY_Y = -9.81
 export class SpikeWorld {
   readonly world: B3World
   readonly dynamics: DynamicHandle[] = []
-  private staticCount = 0
+  /** live static bodies — tracked so destruction (T84) can remove them */
+  readonly statics = new Set<B3Body>()
+  /** static box extents, for the collider-grid debug view (T85) */
+  private readonly staticInfo = new Map<B3Body, { center: Vec3; half: Vec3 }>()
   private nextId = 0
   private readonly density: number
 
@@ -87,8 +92,22 @@ export class SpikeWorld {
   addStaticBox(center: Vec3, halfExtents: Vec3): B3Body {
     const body = this.world.createBody({ type: 'static', position: center })
     body.createBox({ halfExtents })
-    this.staticCount++
+    this.statics.add(body)
+    this.staticInfo.set(body, { center, half: halfExtents })
     return body
+  }
+
+  /** remove a static collider (T84 destruction: voxels blasted out of a structure) */
+  removeStaticBox(body: B3Body): void {
+    if (this.statics.delete(body)) {
+      this.staticInfo.delete(body)
+      body.destroy()
+    }
+  }
+
+  /** collider extents for the debug-grid view (T85) */
+  staticBoxes(): Array<{ center: Vec3; half: Vec3 }> {
+    return [...this.staticInfo.values()]
   }
 
   spawnDynamicBox(position: Vec3, halfExtents: Vec3, bullet = false): DynamicHandle {
@@ -103,6 +122,7 @@ export class SpikeWorld {
       body,
       position: () => body.getPosition(),
       rotation: () => body.getRotation(),
+      impulse: (v) => body.applyLinearImpulseToCenter(v, true),
     }
     this.dynamics.push(h)
     return h
@@ -120,6 +140,7 @@ export class SpikeWorld {
       body,
       position: () => body.getPosition(),
       rotation: () => body.getRotation(),
+      impulse: (v) => body.applyLinearImpulseToCenter(v, true),
     }
     this.dynamics.push(h)
     return h
@@ -130,12 +151,17 @@ export class SpikeWorld {
     for (const h of this.dynamics) h.body.setBullet(on)
   }
 
+  /** radial impulse shockwave — topples dynamic stacks (T84 collapse trigger) */
+  explode(position: Vec3, radius: number, impulsePerLength: number): void {
+    this.world.explode({ position, radius, impulsePerLength })
+  }
+
   step(dt: number, subSteps: number): void {
     this.world.step(dt, subSteps)
   }
 
   get staticColliderCount(): number {
-    return this.staticCount
+    return this.statics.size
   }
   get awakeCount(): number {
     return this.world.getAwakeBodyCount()
