@@ -9,7 +9,8 @@
  * Visibility matrix:
  *   fp    → body shown headless/armless (feet visible looking down), viewmodel shown
  *   tp    → full body, no viewmodel
- *   fly   → full body (spectator sees own body floating/standing), no viewmodel
+ *   fly   → body HIDDEN (free spectator cam takes off from the head pose, so a
+ *           visible body would wrap the camera and show its backfaces), no viewmodel
  *   orbit → full body, no viewmodel
  */
 import type { Object3D, Scene } from 'three/webgpu'
@@ -79,7 +80,10 @@ export class PlayerVisuals {
     // first-person viewmodel (its floating arms would hover over the wheel).
     const seated = seatYaw !== null && seatYaw !== undefined
     const fp = camMode === 'fp'
-    this.body.group.visible = true
+    // B37 — hide the body in fly: the spectator cam starts at the head pose, so
+    // a visible body wraps the camera and you stare at its backfaces until you
+    // fly clear. Third-person is the mode for watching your own character.
+    this.body.group.visible = camMode !== 'fly'
     this.body.setFirstPerson(fp && !seated)
     this.body.update(player, dt, seatYaw)
 

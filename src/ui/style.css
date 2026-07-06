@@ -48,6 +48,12 @@
   border: none;
   padding: 0;
   cursor: pointer;
+  /* B37 — kill the user-agent focus ring + mobile tap flash on click. Keyboard
+   * focus keeps its own custom indicator via the .bb-menu-item:focus-visible
+   * rule, so accessibility is unaffected — this only removes the mouse-click
+   * outline that looked like a stray browser link box. */
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* hazard stripe utility — the brand's construction-site DNA */
