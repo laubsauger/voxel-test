@@ -73,8 +73,11 @@ function chunkCommonNodes() {
   const salt = hash(cell.dot(vec3(127.1, 311.7, 74.7)))
 
   const variation = uniformArray<'float'>(MATERIALS.map((m) => m.variation), 'float')
-  // per-material amplitude: 0 → ramp midpoint (flat), 1 → full lo..hi swing
-  const rampT = mix(float(0.5), salt, variation.element(matId))
+  // per-material amplitude: 0 → ramp midpoint (flat), 1 → full lo..hi swing.
+  // B37 — damped to 0.4×: the full-strength per-voxel salt made a flat wall a
+  // grid of slightly-different voxels which, foreshortened at a grazing angle,
+  // read as vertical column striping ("a shadow edge on every voxel column").
+  const rampT = mix(float(0.5), salt, variation.element(matId).mul(0.4))
 
   const rampLo = uniformArray<'color'>(MATERIALS.map((m) => new Color(m.colorRamp[0])), 'color')
   const rampHi = uniformArray<'color'>(MATERIALS.map((m) => new Color(m.colorRamp[1])), 'color')
