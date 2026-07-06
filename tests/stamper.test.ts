@@ -278,7 +278,9 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
   })
 
   it('T50 tower: concrete frame, glass curtain, slabs, core stairs and open shaft', () => {
-    const t = layout.towers[0]
+    // P23 — glass-curtain checks target a style-0 tower (style 1 is masonry)
+    const t = layout.towers.find((x) => x.style === 0)!
+    expect(t, 'a style-0 tower exists at seed 42').toBeTruthy()
     const r = t.rect
     const wallTop = g + t.floors * t.storyH - 1
     // corner column concrete, curtain glass between mullions
@@ -320,6 +322,42 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     // slab above the stair run is carved open (you can actually ascend);
     // probe over tread 0 — the TOP tread is intentionally flush with the slab
     expect(store.getVoxel(t.stairs.x0 + 1, g + t.storyH, stairZ), 'stairwell opening').toBe(MAT_AIR)
+  })
+
+  it('P23 tower style 1: masonry brick facade with punched glass + brick crown', () => {
+    // WHY: skyline variety — a style-1 tower must read as a brick building with
+    // window holes (not a glass curtain), so brick piers + glass windows + a
+    // brick crown must actually be stamped.
+    const t = layout.towers.find((x) => x.style === 1)!
+    expect(t, 'a style-1 tower exists at seed 42').toBeTruthy()
+    const r = t.rect
+    // brick pier before the first window (window run starts at offset 8)
+    expect(store.getVoxel(r.x0 + 6, g + 12, r.z0), 'brick pier').toBe(MAT_BRICK)
+    // a punched glass window (offset 8..13, y within the window band)
+    expect(store.getVoxel(r.x0 + 9, g + 15, r.z0), 'punched glass window').toBe(MAT_GLASS)
+    // stepped brick crown above the roof slab
+    const roofY = g + t.floors * t.storyH
+    expect(store.getVoxel(r.x0, roofY + 3, r.z0), 'brick crown').toBe(MAT_BRICK)
+  })
+
+  it('P21 farmhouse: rural compound — house + big barn + grain silo stamped into the park', () => {
+    // WHY: the nature rim gets a distinctly rural set-piece — a masonry/plaster
+    // farmhouse, a tall wood barn, and a concrete grain silo with a metal dome.
+    const f = layout.farmhouses[0]
+    expect(f, 'seed 42 has a farmhouse').toBeTruthy()
+    const hMidZ = (f.house.z0 + f.house.z1) >> 1
+    expect(store.getVoxel((f.house.x0 + f.house.x1) >> 1, g, hMidZ), 'house floor slab').toBe(MAT_WOOD)
+    expect([MAT_PLASTER, MAT_BRICK], 'house walls').toContain(store.getVoxel(f.house.x0, g + 5, hMidZ))
+    // barn: wood walls, taller than the house body
+    const bMidZ = (f.barn.z0 + f.barn.z1) >> 1
+    expect(store.getVoxel(f.barn.x0, g + 5, bMidZ), 'barn wall').toBe(MAT_WOOD)
+    // probe the solid x+ wall (the x- wall carries the hayloft opening at z-center)
+    expect(store.getVoxel(f.barn.x1, g + 40, bMidZ), 'barn is tall').toBe(MAT_WOOD)
+    // silo: concrete column with a metal dome cap
+    if (f.silo) {
+      expect(store.getVoxel(f.silo.x, g, f.silo.z), 'silo base').toBe(MAT_CONCRETE)
+      expect(store.getVoxel(f.silo.x, g + 65, f.silo.z), 'silo dome').toBe(MAT_METAL)
+    }
   })
 
   it('T50 rowhouse: party walls, doors + stoops, windows, switchback stairs, stepped roofs', () => {

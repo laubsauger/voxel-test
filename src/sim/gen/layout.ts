@@ -231,6 +231,12 @@ export interface Tower {
   coreDoor: 'z-' | 'z+'
   /** vertical glass mullion spacing (voxels) */
   mullion: number
+  /**
+   * P23 — facade/massing style, seeded per tower for skyline variety:
+   *   0 = all-glass curtain wall + thin metal mullions + flat concrete parapet
+   *   1 = masonry (brick) facade with punched glass windows + stepped brick crown
+   */
+  style: 0 | 1
 }
 
 export interface ParkingLot {
@@ -278,6 +284,30 @@ export interface Airport {
   hangar: Rect
   terminal: Rect
   planes: { x: number; z: number; rot: 0 | 1 | 2 | 3 }[]
+}
+
+/**
+ * P21 — rural compound on the park/nature rim: a long low farmhouse (with a
+ * covered front porch), a big gable barn, and an optional grain silo. Bigger
+ * footprint and distinctly rural vs the suburb houses. Placed occasionally on
+ * park blocks, tucked in one quadrant clear of the path cross / plaza / pond.
+ */
+export interface Farmhouse {
+  id: number
+  /** main house footprint (long, low) */
+  house: Rect
+  floors: number
+  /** side of the house carrying the door + porch (faces the block interior) */
+  front: 'z-' | 'z+'
+  storyH: number
+  /** covered porch strip along the front */
+  porch: Rect
+  /** big gable barn behind the house (door faces the yard = same as front) */
+  barn: Rect
+  /** grain silo beside the barn (round column), null when it does not fit */
+  silo: { x: number; z: number; r: number } | null
+  wallMat: number
+  roofMat: number
 }
 
 /**
@@ -362,6 +392,7 @@ export interface Layout {
   beaches: Beach[]
   deserts: DesertPlot[]
   airports: Airport[]
+  farmhouses: Farmhouse[]
   parkPaths: Rect[]
   props: Prop[]
   trees: Tree[]
@@ -861,7 +892,7 @@ function makeTower(id: number, rect: Rect, floors: number, front: Side): Tower {
     ? { x0: cx0, z0: iz1 - STAIR_W + 1, x1: cx0 + TOWER_STAIR_RUN - 1, z1: iz1 }
     : { x0: cx0, z0: iz0, x1: cx0 + TOWER_STAIR_RUN - 1, z1: iz0 + STAIR_W - 1 }
   const shaft: Rect = { x0: cx0 + TOWER_STAIR_RUN + 4, z0: iz0, x1: cx0 + innerW - 1, z1: iz1 }
-  return { id, rect, floors, storyH: TOWER_STORY_H, front, core, stairs, shaft, coreDoor, mullion: 0 }
+  return { id, rect, floors, storyH: TOWER_STORY_H, front, core, stairs, shaft, coreDoor, mullion: 0, style: 0 }
 }
 
 interface CommercialOut {
@@ -879,6 +910,9 @@ function makeCommercial(seed: number, districts: District[]): CommercialOut {
   for (const d of districts) {
     if (d.kind !== 'commercial') continue
     const cp = new Prng((seed ^ 0x165667b1 ^ Math.imul(d.bi * 4 + d.bj + 1, GOLD)) >>> 0)
+    // P23 — tower facade style from its own derived stream so it never
+    // reshuffles the base town massing (roughly even 0/1 split)
+    const sp = new Prng((seed ^ 0x85ebca6b ^ Math.imul(d.bi * 4 + d.bj + 1, GOLD)) >>> 0)
     const front = commercialFront(d)
     const bw = d.rect.x1 - d.rect.x0 + 1
     const bd = d.rect.z1 - d.rect.z0 + 1
@@ -893,6 +927,7 @@ function makeCommercial(seed: number, districts: District[]): CommercialOut {
     const tx0 = d.rect.x0 + 16 + cp.nextInt(Math.max(1, bw - tw - 32))
     const t1 = makeTower(id++, { x0: tx0, z0: tz0, x1: tx0 + tw - 1, z1: tz0 + td - 1 }, floors, front)
     t1.mullion = mullion
+    t1.style = sp.nextInt(2) as 0 | 1
     out.towers.push(t1)
     // optional twin tower at the opposite x end of the front row
     const twin = cp.nextInt(10) < 4
@@ -909,6 +944,7 @@ function makeCommercial(seed: number, districts: District[]): CommercialOut {
         const z2 = frontZplus ? d.rect.z1 - 16 - d2 + 1 : d.rect.z0 + 16
         const t2 = makeTower(id++, { x0: x2, z0: z2, x1: x2 + w2 - 1, z1: z2 + d2 - 1 }, f2, front)
         t2.mullion = mullion
+        t2.style = sp.nextInt(2) as 0 | 1
         out.towers.push(t2)
       }
     }
@@ -950,6 +986,66 @@ interface ParkOut {
   props: Prop[]
   trees: Tree[]
   lamps: Lamp[]
+  farmhouses: Farmhouse[]
+}
+
+/**
+ * P21 — try to lay out a rural compound in one quadrant of a park block, clear
+ * of the central path cross / plaza / pond (passed in `keep`). Returns null
+ * when no quadrant is rolled to carry one (occasional) or it does not fit.
+ */
+function makeFarmhouse(id: number, d: District, cx: number, cz: number, keep: Rect[], fp: Prng): Farmhouse | null {
+  // ~22% of park blocks carry a compound (draw unconditionally for stream stability)
+  const place = fp.nextInt(100) < 22
+  const cornerX = fp.nextInt(2)
+  const cornerZ = fp.nextInt(2)
+  const hw = 88 + fp.nextInt(20) // 8.8–10.7 m long — bigger than suburb houses
+  const hd = 40 + fp.nextInt(10)
+  const floors = 1 + fp.nextInt(2)
+  const yard = 12 + fp.nextInt(8)
+  const bw = 52 + fp.nextInt(16)
+  const bd = 34 + fp.nextInt(8)
+  const wallMat = fp.nextInt(2) === 0 ? MAT_PLASTER : MAT_BRICK
+  if (!place) return null
+  const inset = 16
+  const margin = 16 // clearance from the central path cross / plaza
+  const QX0 = cornerX === 0 ? d.rect.x0 + inset : cx + margin
+  const QX1 = cornerX === 0 ? cx - margin : d.rect.x1 - inset
+  const QZ0 = cornerZ === 0 ? d.rect.z0 + inset : cz + margin
+  const QZ1 = cornerZ === 0 ? cz - margin : d.rect.z1 - inset
+  const qw = QX1 - QX0 + 1
+  const qd = QZ1 - QZ0 + 1
+  const porchD = 8
+  const siloR = 6
+  // must fit house + porch + yard + barn along z, and the widest part along x
+  if (qw < hw + 6 || qw < bw + 8 + 2 * siloR + 6) return null
+  if (qd < hd + porchD + yard + bd + 4) return null
+  const frontZplus = cornerZ === 0 // front faces the block interior (+z from this quadrant)
+  const front: 'z-' | 'z+' = frontZplus ? 'z+' : 'z-'
+  const hx0 = QX0 + ((qw - hw) >> 1)
+  const house: Rect = frontZplus
+    ? { x0: hx0, z0: QZ1 - porchD - hd + 1, x1: hx0 + hw - 1, z1: QZ1 - porchD }
+    : { x0: hx0, z0: QZ0 + porchD, x1: hx0 + hw - 1, z1: QZ0 + porchD + hd - 1 }
+  const porch: Rect = frontZplus
+    ? { x0: hx0 + 6, z0: house.z1 + 1, x1: hx0 + hw - 7, z1: house.z1 + porchD }
+    : { x0: hx0 + 6, z0: house.z0 - porchD, x1: hx0 + hw - 7, z1: house.z0 - 1 }
+  const barnGroupW = bw + 8 + 2 * siloR
+  const bx0 = QX0 + ((qw - barnGroupW) >> 1)
+  const barn: Rect = frontZplus
+    ? { x0: bx0, z0: house.z0 - yard - bd, x1: bx0 + bw - 1, z1: house.z0 - yard - 1 }
+    : { x0: bx0, z0: house.z1 + yard + 1, x1: bx0 + bw - 1, z1: house.z1 + yard + bd }
+  const sx = barn.x1 + 8 + siloR
+  const sz = (barn.z0 + barn.z1) >> 1
+  const silo = sx + siloR <= QX1 ? { x: sx, z: sz, r: siloR } : null
+  // reject if the compound bounding box clips a path/plaza/pond keep-out
+  const bb: Rect = {
+    x0: Math.min(house.x0, barn.x0),
+    z0: Math.min(house.z0, barn.z0, porch.z0),
+    x1: Math.max(house.x1, barn.x1, silo ? silo.x + silo.r : -Infinity),
+    z1: Math.max(house.z1, barn.z1, porch.z1),
+  }
+  if (keep.some((k) => rectsTouch(bb, k))) return null
+  return { id, house, floors, front, storyH: STORY_H, porch, barn, silo, wallMat, roofMat: MAT_ROOFTILE }
 }
 
 function makeBeaches(): Beach[] {
@@ -1021,8 +1117,9 @@ function makeAirports(districts: District[]): Airport[] {
 
 /** T50 — park blocks: path cross + plaza, ponds, tree clusters, benches */
 function makeParks(seed: number, districts: District[]): ParkOut {
-  const out: ParkOut = { ponds: [], parkPaths: [], props: [], trees: [], lamps: [] }
+  const out: ParkOut = { ponds: [], parkPaths: [], props: [], trees: [], lamps: [], farmhouses: [] }
   let parkIdx = 0
+  let farmId = 0
   for (const d of districts) {
     if (d.kind !== 'park') continue
     const pp = new Prng((seed ^ 0x2545f491 ^ Math.imul(d.bi * 4 + d.bj + 1, GOLD)) >>> 0)
@@ -1067,6 +1164,16 @@ function makeParks(seed: number, districts: District[]): ParkOut {
       ? [growRect({ x0: out.ponds[out.ponds.length - 1].box.x0, z0: out.ponds[out.ponds.length - 1].box.z0, x1: out.ponds[out.ponds.length - 1].box.x1, z1: out.ponds[out.ponds.length - 1].box.z1 }, 8)]
       : []
     const keep: Rect[] = [growRect(vPath, 5), growRect(hPath, 5), growRect(plaza, 5), ...(parkIdx === 0 || pondRoll < 50 ? pondKeep : [])]
+    // P21 — occasional rural compound (own derived stream so it never
+    // reshuffles ponds/trees); when placed, trees keep clear of its footprint
+    const fp = new Prng((seed ^ 0x1c9e179b ^ Math.imul(d.bi * 4 + d.bj + 1, GOLD)) >>> 0)
+    const farm = makeFarmhouse(farmId, d, cx, cz, keep, fp)
+    if (farm) {
+      out.farmhouses.push(farm)
+      farmId++
+      keep.push(growRect(farm.house, 4), growRect(farm.barn, 4), growRect(farm.porch, 2))
+      if (farm.silo) keep.push({ x0: farm.silo.x - farm.silo.r - 2, z0: farm.silo.z - farm.silo.r - 2, x1: farm.silo.x + farm.silo.r + 2, z1: farm.silo.z + farm.silo.r + 2 })
+    }
     // tree clusters
     const clusters = 4 + pp.nextInt(4)
     for (let c = 0; c < clusters; c++) {
@@ -1669,7 +1776,7 @@ export function generateLayout(seed: number): Layout {
   return {
     seed, groundY: GROUND_Y, roads, districts, lots, houses, pools, villa,
     rowBlocks, towers: com.towers, parking: com.parking, plazas: com.plazas,
-    ponds: park.ponds, beaches, deserts, airports, parkPaths: park.parkPaths,
+    ponds: park.ponds, beaches, deserts, airports, farmhouses: park.farmhouses, parkPaths: park.parkPaths,
     props: clearedProps, trees, shrubs, fences, lamps, mailboxes, bins,
   }
 }
