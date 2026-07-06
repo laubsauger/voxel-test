@@ -786,19 +786,20 @@ function stampTrailer(store: ChunkStore, t: Trailer, g: number): void {
   const z0 = t.z
   const x1 = x0 + w - 1
   const z1 = z0 + d - 1
-  // chassis skirt + hull (raised 2 vox off the sand on blocks)
+  // chassis skirt + hull (raised 2 vox off the sand on blocks). B37 — taller:
+  // body 2→27 (2.5 m walls) so a 1.65 m player clears the door + windows.
   store.fillBox(x0 + 1, g, z0 + 1, x1 - 1, g + 1, z1 - 1, MAT_METAL) // skirt
-  store.fillBox(x0, g + 2, z0, x1, g + 16, z1, bodyMat) // hull
+  store.fillBox(x0, g + 2, z0, x1, g + 27, z1, bodyMat) // hull
   // hollow interior + window band
-  store.fillBox(x0 + 1, g + 3, z0 + 1, x1 - 1, g + 15, z1 - 1, MAT_AIR)
+  store.fillBox(x0 + 1, g + 3, z0 + 1, x1 - 1, g + 26, z1 - 1, MAT_AIR)
   // window band around the sides at eye height
-  store.fillBox(x0, g + 9, z0 + 3, x0, g + 12, z1 - 3, MAT_GLASS)
-  store.fillBox(x1, g + 9, z0 + 3, x1, g + 12, z1 - 3, MAT_GLASS)
+  store.fillBox(x0, g + 12, z0 + 3, x0, g + 17, z1 - 3, MAT_GLASS)
+  store.fillBox(x1, g + 12, z0 + 3, x1, g + 17, z1 - 3, MAT_GLASS)
   // flat roof cap
-  store.fillBox(x0, g + 16, z0, x1, g + 17, z1, bodyMat)
+  store.fillBox(x0, g + 27, z0, x1, g + 28, z1, bodyMat)
   // door on the +x long face (short side for rot%2)
   const dcx = ((x0 + x1) >> 1)
-  store.fillBox(dcx - 3, g + 2, z1, dcx + 3, g + 13, z1, MAT_AIR)
+  store.fillBox(dcx - 3, g + 2, z1, dcx + 3, g + 22, z1, MAT_AIR)
   // two axle wheels tucked under the long sides
   for (const wz of [z0 + Math.floor(d * 0.25), z0 + Math.floor(d * 0.7)]) {
     store.fillBox(x0 - 1, g, wz, x0, g + 3, wz + 5, MAT_ASPHALT)
@@ -822,6 +823,28 @@ function stampDesert(store: ChunkStore, plot: DesertPlot, g: number): void {
       store.fillBox(x, g, z, x + 1, g + hgt - 1, z + 1, MAT_SAND)
     }
   }
+  // B37 — shoddy worn dirt tracks instead of tidy roads: a ragged, noise-
+  // jittered cross of packed-dirt paths through the park (wandering centreline,
+  // uneven width, bare dirt gouged into the sand) so it reads run-down.
+  const cx = (r.x0 + r.x1) >> 1
+  const cz = (r.z0 + r.z1) >> 1
+  const track = (fixed: number, along: 'x' | 'z'): void => {
+    const lo = along === 'x' ? r.x0 : r.z0
+    const hi = along === 'x' ? r.x1 : r.z1
+    for (let p = lo; p <= hi; p++) {
+      const centre = fixed + Math.floor((valueNoise(p, fixed, 34, plot.seed) - 0.5) * 12)
+      const halfW = 4 + Math.floor(valueNoise(p, fixed + 613, 17, plot.seed) * 4)
+      for (let o = -halfW; o <= halfW; o++) {
+        const x = along === 'x' ? p : centre + o
+        const z = along === 'x' ? centre + o : p
+        if (x < r.x0 || x > r.x1 || z < r.z0 || z > r.z1) continue
+        store.fillBox(x, g, z, x, g + 40, z, MAT_AIR) // gouge through any dune
+        store.fillBox(x, g - 1, z, x, g - 1, z, MAT_DIRT) // packed-dirt surface
+      }
+    }
+  }
+  track(cz, 'x')
+  track(cx, 'z')
   // trailers sit on flattened sand pads (clear the dune under each first)
   for (const t of plot.trailers) {
     const [w, d] = t.rot % 2 === 0 ? [28, 56] : [56, 28]
