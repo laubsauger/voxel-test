@@ -230,6 +230,9 @@ export class PhysicsWorld {
   private colliderBurst = true
   /** scratch target set, reused each tick (no per-tick allocation) */
   private readonly colliderTargets = new Set<number>()
+  /** B36 — signature of all anchor CHUNK positions; the bubble rasterise (the
+   *  #1 CPU cost) only re-runs when this changes (an anchor crossed a chunk) */
+  private lastAnchorSig = -0x7fffffff
   /** entity id → dynamic island body, insertion order = allocation order (deterministic) */
   readonly bodies = new Map<number, DynamicBody>()
 
@@ -603,6 +606,21 @@ export class PhysicsWorld {
   private streamColliders(sim: Sim): void {
     const world = sim.world
     const chunkM = CHUNK * VOXEL_SIZE
+    // B36 — throttle: the bubble rasterise + set-diff is the single biggest CPU
+    // cost, but the target set only changes when an anchor crosses a chunk
+    // boundary. Hash every anchor's chunk (cx,cz) and skip the whole pass when
+    // it's unchanged. Deterministic (pure sim state) → still MP bit-exact.
+    let sig = 0x811c9dc5
+    const stamp = (px: number, pz: number): void => {
+      sig = (Math.imul(sig, 16777619) ^ (Math.floor(px / chunkM) | 0)) | 0
+      sig = (Math.imul(sig, 16777619) ^ (Math.floor(pz / chunkM) | 0)) | 0
+    }
+    for (const p of this.players.values()) stamp(p.px, p.pz)
+    for (const v of this.vehicles.values()) stamp(v.px, v.pz)
+    for (const b of this.bodies.values()) stamp(b.px, b.pz)
+    if (sig === this.lastAnchorSig && !this.colliderBurst) return // nothing crossed a chunk
+    this.lastAnchorSig = sig
+
     const targets = this.colliderTargets
     targets.clear()
     // rasterise each anchor's cylindrical bubble into the target set
