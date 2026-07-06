@@ -317,7 +317,7 @@ export function spawnPlayer(sim: Sim, phys: PhysicsWorld, playerId: number): Pla
  * Deterministic: ascending playerId, fixed grid scan order (V2).
  */
 export function damagePlayersSphere(
-  phys: PhysicsWorld,
+  phys: { players: Map<number, PlayerEntity> },
   cx: number,
   cy: number,
   cz: number,

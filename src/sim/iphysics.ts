@@ -14,6 +14,7 @@
 import type { Sim } from './loop'
 import type { ChunkStore } from '../world/chunks'
 import type { Island, IslandVoxel } from './connectivity'
+import type { PlayerEntity } from './player'
 
 /** T12/T55 — a dynamic voxel-island body. `body` = backend handle (Jolt.Body | B3Body). */
 export interface DynamicBody {
@@ -65,6 +66,8 @@ export interface BodyRayHit {
  */
 export interface IPhysicsWorld {
   readonly bodies: Map<number, DynamicBody>
+  /** player entities the destruction blast carves (empty on backends w/o players) */
+  readonly players: Map<number, PlayerEntity>
   initStatic(world: ChunkStore): void
   tick(sim: Sim): void
   structuralPass(sim: Sim): void

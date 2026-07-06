@@ -35,17 +35,32 @@ declare module 'box3d-wasm/standard' {
   export interface B3Body {
     createBox(def: { halfExtents: B3Vec3 } & B3ShapeDef): B3Shape
     createSphere(def: { radius: number } & B3ShapeDef): B3Shape
+    /** convex hull of a point cloud (non-convex islands → convex approx, B30) */
+    createHull(def: { points: B3Vec3[] } & B3ShapeDef): B3Shape
     applyMassFromShapes(): void
     getPosition(): B3Vec3
     getRotation(): B3Quat
+    setTransform(def: { position: B3Vec3; rotation?: B3Quat }): void
     setBullet(on: boolean): void
     isBullet(): boolean
     setLinearVelocity(v: B3Vec3): void
     getLinearVelocity(): B3Vec3
+    setAngularVelocity(v: B3Vec3): void
+    getAngularVelocity(): B3Vec3
     applyLinearImpulseToCenter(impulse: B3Vec3, wake?: boolean): void
+    applyLinearImpulse(impulse: B3Vec3, point: B3Vec3, wake?: boolean): void
+    setUserData(v: number): void
+    getUserData(): number
     getShapeCount(): number
     getMass(): number
     destroy(): void
+  }
+  export interface B3RayHit {
+    hit: boolean
+    body?: B3Body
+    point?: B3Vec3
+    normal?: B3Vec3
+    fraction?: number
   }
   export interface B3World {
     createBody(def: { type: 'static' | 'dynamic'; position?: B3Vec3 }): B3Body
@@ -57,6 +72,7 @@ declare module 'box3d-wasm/standard' {
     getAwakeBodyCount(): number
     getProfile(): B3Profile
     explode(def: { position: B3Vec3; radius: number; impulsePerLength: number; falloff?: number }): void
+    castRayClosest(origin: B3Vec3, translation: B3Vec3): B3RayHit
     destroy(): void
   }
   export interface B3Module {

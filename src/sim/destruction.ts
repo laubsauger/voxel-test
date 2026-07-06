@@ -26,7 +26,7 @@ import type { Sim } from './loop'
 import { VOXEL_SIZE, WORLD_VX, WORLD_VZ } from '../world/chunks'
 import { material } from './materials'
 import { damagePlayersSphere } from './player'
-import type { PhysicsWorld } from './physics'
+import type { IPhysicsWorld } from './iphysics'
 
 /** impulse (kg·m/s) applied per unit of explode power at the blast center */
 export const IMPULSE_PER_POWER = 50
@@ -113,7 +113,7 @@ export function destroySphere(sim: Sim, cx: number, cy: number, cz: number, r: n
  */
 export function explodeSphere(
   sim: Sim,
-  phys: PhysicsWorld,
+  phys: IPhysicsWorld,
   cx: number,
   cy: number,
   cz: number,
@@ -213,7 +213,7 @@ export function explodeSphere(
  */
 function spawnEjecta(
   sim: Sim,
-  phys: PhysicsWorld,
+  phys: IPhysicsWorld,
   mid: RemovedVoxel[],
   cx: number,
   cy: number,
@@ -308,7 +308,7 @@ function spawnEjecta(
  */
 export function runExplosion(
   sim: Sim,
-  phys: PhysicsWorld,
+  phys: IPhysicsWorld,
   x: number,
   y: number,
   z: number,
@@ -333,7 +333,7 @@ export function runExplosion(
   return stats
 }
 
-export function registerDestructionOps(sim: Sim, phys: PhysicsWorld): void {
+export function registerDestructionOps(sim: Sim, phys: IPhysicsWorld): void {
   sim.onOp('explode', (s, cmd) => {
     const { x, y, z, r, power } = cmd.op
     runExplosion(s, phys, x, y, z, r, power)

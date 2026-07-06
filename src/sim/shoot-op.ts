@@ -15,7 +15,7 @@ import type { Sim } from './loop'
 import { VOXEL_SIZE } from '../world/chunks'
 import { destroySphere } from './destruction'
 import { damagePlayersSphere } from './player'
-import type { PhysicsWorld } from './physics'
+import type { IPhysicsWorld } from './iphysics'
 
 /** max hitscan range, voxels (= 120 m) */
 export const SHOOT_RANGE_VOX = 1200
@@ -120,7 +120,7 @@ export function ddaRaycast(
 }
 
 /** Register the 'shoot' handler. Call after createPhysics (needs structuralPass). */
-export function registerShootOp(sim: Sim, phys: PhysicsWorld): void {
+export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
   sim.onOp('shoot', (s, cmd) => {
     const { ox, oy, oz, dx, dy, dz } = cmd.op
     const hit = ddaRaycast(

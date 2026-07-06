@@ -1,6 +1,6 @@
 import type { Sim } from './loop'
 import { VOXEL_SIZE } from '../world/chunks'
-import type { PhysicsWorld } from './physics'
+import type { IPhysicsWorld } from './iphysics'
 
 /**
  * T5 — world edit ops. The only writers of voxel state (V1): dig and place
@@ -18,10 +18,10 @@ export const DIG_PUSH_IMPULSE = 60
 /** push reach relative to the dig radius */
 export const DIG_PUSH_RADIUS_SCALE = 2.5
 
-const physBySim = new WeakMap<Sim, PhysicsWorld>()
+const physBySim = new WeakMap<Sim, IPhysicsWorld>()
 
 /** called by createPhysics — enables the dig push (B17) */
-export function attachEditPhysics(sim: Sim, phys: PhysicsWorld): void {
+export function attachEditPhysics(sim: Sim, phys: IPhysicsWorld): void {
   physBySim.set(sim, phys)
 }
 
