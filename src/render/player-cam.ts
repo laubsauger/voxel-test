@@ -17,11 +17,14 @@ export const TP_BOOM_LENGTH = 3.5
 /** pull-back from the hit voxel — approximates a sphere cast of this radius */
 export const TP_COLLISION_MARGIN = 0.25
 
-// T64 — vehicle chase cam tuning
-export const CHASE_DISTANCE = 6.5
-export const CHASE_HEIGHT = 2.6
-/** spring stiffness (1/s) for the chase follow — higher = tighter */
-export const CHASE_STIFFNESS = 5
+// T64 — vehicle chase cam tuning. B37 — pulled further out + up and tightened:
+// at 6.5 m / stiffness 5 the idle cam sat on the roof and only revealed the
+// vehicle once you accelerated (spring lag). Now a rigider, further boom that
+// also SCALES with the vehicle size (the plane is much bigger than a car).
+export const CHASE_DISTANCE = 9
+export const CHASE_HEIGHT = 3.8
+/** spring stiffness (1/s) for the chase follow — higher = tighter/more static */
+export const CHASE_STIFFNESS = 9
 /** P12 — seated first-person eye above the parked capsule origin (py ≈ chassis
  * floor). Voxel cars are authored as SOLID blocks (glass cabin included), so the
  * seat is embedded in glass — a true in-cabin view just sees murk. Instead the
@@ -148,9 +151,12 @@ export class PlayerCam {
     const hx = fx / fl
     const hz = fz / fl
 
-    let tx = cx - hx * CHASE_DISTANCE
-    let ty = cy + CHASE_HEIGHT
-    let tz = cz - hz * CHASE_DISTANCE
+    // B37 — scale the boom by vehicle size so big craft (plane) sit further out
+    const sizeM = Math.max(v.sx, v.sz) * VOXEL_SIZE
+    const dist = CHASE_DISTANCE + sizeM * 0.55
+    let tx = cx - hx * dist
+    let ty = cy + CHASE_HEIGHT + sizeM * 0.18
+    let tz = cz - hz * dist
     // clearance: pull the boom in if a wall sits between car and camera
     const bx = tx - cx
     const by = ty - cy

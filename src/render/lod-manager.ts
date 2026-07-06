@@ -177,7 +177,11 @@ export class LodManager {
     // beyond the shadow range — pure main-pass geometry, one draw
     mesh.castShadow = false
     mesh.receiveShadow = false
-    mesh.position.set(vx0 * VOXEL_SIZE, 0, vz0 * VOXEL_SIZE)
+    // P9 — sink the coarse cell 0.25 m so where it OVERLAPS the full-detail
+    // meshes (the LOD_NEAR..render-distance band) the full ground wins the depth
+    // test instead of z-fighting the coplanar coarse ground. 0.25 m is far above
+    // z-buffer precision at 120 m+ yet visually imperceptible at that range.
+    mesh.position.set(vx0 * VOXEL_SIZE, -0.25, vz0 * VOXEL_SIZE)
     mesh.scale.setScalar(STRIDE * VOXEL_SIZE) // coarse grid units → metres
     this.parent.add(mesh)
     return mesh
