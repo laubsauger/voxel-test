@@ -161,3 +161,27 @@ B28|2026-07-02|user perf concern: calm scene must hold 120fps on dev machine (we
 B29|2026-07-02|fly mode exit teleports you back to where the body stayed — user wants body to follow flight + exit in place. Fix: F rides the noclip op (deterministic body flight, camera stays player FP) instead of the detached spectator cam; spectator remains for orbit only|coordinator at MP merge (game.ts owned)
 B8|2026-07-02|flat walls show per-voxel diagonal shading noise reading as broken AO (screenshot evidence) — per-voxel color hash interpolates across voxel + triangle diagonal seams; true AO must be uniform on coplanar faces, darken only real edges/corners|render-quality agent: flat-per-voxel variation sampling (voxel-center hash, no in-voxel gradient), verify AO uniformity on flat walls, GTAO radius > voxel size
 B5|2026-07-02|user smoke feedback: glass windows render opaque (known R-track v1 limitation, single opaque mesh pass)|T39
+
+## §P polish + backlog (B37/B38 session, 2026-07)
+
+Captured from live user review. status: x done · ~ partial · . todo. Sized S/M/L.
+
+id|status|size|item|notes
+P1|x|M|AO striping on walls/floors|per-voxel salt + half-res GTAO + stretched vertex-AO smeared coplanar faces. Fixed: full-res GTAO, vertex-AO floor 0.45→0.74, salt amp 0.4×. Verify shadow-side walls
+P2|x|S|TOD gizmo restyle + marker on arc|bottom-left, small, subtle; sun/moon rides the semicircle by transit time
+P3|x|S|fog never reaches world edge|FOG_FAR 720→330, FOG_MAX 0.38→0.92 — boundary dissolves into horizon, incl. flying up
+P4|x|S|airport planes clip hangar / run off apron|rot-0 in runway-side strips, guarded, 0 overlaps
+P5|x|S|trailers too short|body ~1.7→2.6 m
+P6|~|S|trailer-park roads too clean/fancy|added jittered dirt tracks INSIDE; bordering arterial still wide+clean → make shoddy/narrow there too
+P7|.|M|beach is ugly|road grid cuts through it; want dune terrain (value-noise sand height, analog to trailer-park terrain, beach biome), natural sand→water shoreline, no grid interruption
+P8|.|S|airport interrupted by road grid + z-fighting|except airport district from the road grid; kill coplanar apron/foundation z-fight
+P9|.|S|z-fighting on tower foundations|coplanar overlap outside highrises — depth offset / dedupe the slab
+P10|.|M|water waves in pools ugly|too high-frequency, too dark, unnatural — lower freq, lighten, smoother surface
+P11|.|M|disturbed water side faces glitch|displaced water voxels at differing heights show broken lines / missing side faces (skin not closed on height steps) — B20 follow-up
+P12|.|S|first-person camera inside vehicles|toggle FP/chase while seated (currently chase only)
+P13|.|M|some cars cannot be driven|subset of parked cars fail the enter/drive path — find + fix
+P14|.|M|two-wheelers not in the world|bicycle/scooter are rideable archetypes (T76) but never placed as city props — models + scatter placement
+P15|.|M|car vertical proportions compressed|raising the car grid broke crash crumple (grid height ⇄ vehicle collision) — needs a seat/collision-aware pass, not a naive grid bump
+P16|.|L|occlusion culling|remaining CPU object-count lever: cull region meshes / LOD cells fully behind others (open sightlines e.g. east arterial, beach)
+P17|.|L|flyable plane|aircraft flight controller — the parked airport planes become pilotable
+P18|.|L|palette chunk compression|bit-packed palette store for COLD chunks (memory), keep active chunks flat (CPU-bound safe), lossless + deterministic — unlocks world >5-6×
