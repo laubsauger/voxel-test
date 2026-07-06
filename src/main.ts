@@ -29,6 +29,7 @@ import { parseBootParams } from './ui/boot-params'
 import { SettingsStore } from './ui/settings-store'
 import { Preloader } from './ui/preloader'
 import { Hud } from './ui/hud'
+import { TodGizmo } from './ui/tod-gizmo'
 import { ToolController } from './ui/tools'
 import { MainMenu, PauseMenu } from './ui/menu'
 import { SettingsPanel } from './ui/settings-panel'
@@ -316,6 +317,11 @@ const tools = new ToolController(game, hud, (e) => {
 })
 hud.onSelect = () => void sfxPlay('ui-hotbar')
 hud.setLockHint(false)
+
+// B37 — in-game time-of-day gizmo (sun/moon arc + clock + scrub/pause controls)
+const todGizmo = new TodGizmo(() => game.world.sky, store)
+root.appendChild(todGizmo.el)
+game.addFrameHook(() => todGizmo.update())
 
 /**
  * T71 — bind all per-instance hooks to a (possibly new) Game. Called once at

@@ -124,6 +124,11 @@ export class WorldRenderer {
   get dayFactor(): number {
     return this.cycleState.dayF
   }
+  /** B37 — read-only cycle snapshot for the in-game time-of-day gizmo (sun/moon
+   *  direction, current hours, day/dusk/night weights). Live-updated each frame. */
+  get sky(): Readonly<CycleState> {
+    return this.cycleState
+  }
   private readonly cycleState: CycleState = createCycleState()
   /** displayed time follows the target exponentially (T65: a slider jump or
    * override toggle glides over ~0.3 s instead of popping CSM/exposure) */
