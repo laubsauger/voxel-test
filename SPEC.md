@@ -191,5 +191,5 @@ P21|x|M|farmhouse / hacienda on the outer nature rim|occasional large rural buil
 P22|.|L|outer-rim blocks 2× size|bigger plots + half the intersections on the nature rim → more open, distinct from the dense city grid (grid/road-gen change)
 P23|x|S|highrise variety|all towers identical — add ≥1 more facade/massing style (setbacks, brick+glass mix, different mullion/crown)
 P24|x|S|input box less stylish than before|a text input lost styling (regression) — restore the nicer look
-P25|.|S|bomb/explosion damage too weak on hard surfaces|highrises + roads barely dent — scale destruction or add power vs hard materials
-P26|.|S|pistol muzzle black lines + black square|tracer/muzzle-flash renders as black lines (trajectory to impact) + a semi-opaque black square at the muzzle — VFX material/blend bug
+P25|x|S|bomb/explosion damage too weak on hard surfaces|highrises + roads barely dent — scale destruction or add power vs hard materials
+P26|x|S|pistol muzzle black lines + black square|tracer/muzzle-flash renders as black lines (trajectory to impact) + a semi-opaque black square at the muzzle — VFX material/blend bug
