@@ -325,6 +325,7 @@ export function spawnAircraft(
     qw,
     body,
     version: 0,
+    restTicks: 0, // DynamicBody field (unused: aircraft don't re-weld)
     initialCount: count,
     seats: [pilotSeat()],
     occupants: [0],

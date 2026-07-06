@@ -83,6 +83,16 @@ export const MAX_BODY_ANGULAR_VELOCITY = 25
 export const BODY_ANGULAR_DAMPING = 0.25
 /** bodies whose origin falls below this (meters) are removed from sim + Jolt */
 export const KILL_PLANE_Y = -10
+/** B37 — RE-WELD: a debris island that has rested (speed² below this) for
+ *  REWELD_TICKS rasterises its voxels back into the STATIC world at its rest
+ *  transform and despawns. Islands used to stay dynamic forever (V12), piling up
+ *  bodies + render meshes and tanking the object-count-bound frame after heavy
+ *  destruction. Deterministic (hashed velocity + restTicks + transform). */
+const REST_SPEED_SQ = 0.09 // (0.3 m/s)²
+const REWELD_TICKS = 210 // ~3.5 s settled
+/** backstop cap: if debris somehow never rests (endless bounce), retire the
+ *  OLDEST once the count exceeds this — keeps the frame bounded regardless */
+const MAX_DEBRIS_BODIES = 400
 
 /** per-material surface response for island bodies (T40) */
 export interface MaterialFeel {
@@ -212,6 +222,8 @@ export interface DynamicBody {
   body: Jolt.Body
   /** bumped when grid content changes — render rebuild trigger */
   version: number
+  /** B37 — ticks the body has been at rest; ≥ REWELD_TICKS ⇒ re-weld to static */
+  restTicks: number
 }
 
 /** B17 — result of a ray cast against dynamic island bodies */
@@ -394,7 +406,9 @@ export class PhysicsWorld {
     tickProjectiles(sim, this) // T54 — bomb arcs/fuses; detonation spawns ejecta this tick
     tickRockets(sim, this) // P19 — rockets fly straight, detonate on first impact
     this.readbackBodies()
+    this.reweldPass(sim) // B37 — settled debris merges back to static world
     this.killPlanePass()
+    this.capDebris() // B37 — backstop if debris never settles
   }
 
   /**
@@ -410,6 +424,32 @@ export class PhysicsWorld {
     }
     if (!doomed) return
     doomed.sort((a, b) => a - b)
+    for (const id of doomed) {
+      const b = this.bodies.get(id)!
+      this.bodyInterface.RemoveBody(b.body.GetID())
+      this.bodyInterface.DestroyBody(b.body.GetID())
+      this.bodies.delete(id)
+      this.removedBodies++
+    }
+  }
+
+  /**
+   * B37 — cap accumulated debris. Islands stay dynamic after settling (V12: no
+   * re-weld), so repeated destruction piled up hundreds of resting bodies +
+   * render meshes forever and tanked the (object-count-bound) frame. When the
+   * count exceeds MAX_DEBRIS_BODIES, despawn the OLDEST (map insertion order =
+   * allocation order) until back under — deterministic (V2/V3, hashed via
+   * removedBodies + the shrinking body set). The oldest debris has sat longest,
+   * so it's the least-noticed to retire.
+   */
+  private capDebris(): void {
+    const excess = this.bodies.size - MAX_DEBRIS_BODIES
+    if (excess <= 0) return
+    const doomed: number[] = []
+    for (const id of this.bodies.keys()) {
+      doomed.push(id)
+      if (doomed.length >= excess) break
+    }
     for (const id of doomed) {
       const b = this.bodies.get(id)!
       this.bodyInterface.RemoveBody(b.body.GetID())
@@ -566,6 +606,7 @@ export class PhysicsWorld {
       qw: 1,
       body,
       version: 0,
+      restTicks: 0,
     }
     this.bodies.set(id, entity)
     return entity
@@ -771,7 +812,57 @@ export class PhysicsWorld {
       b.qy = q.GetY()
       b.qz = q.GetZ()
       b.qw = q.GetW()
+      // B37 — rest tracking for re-weld (deterministic: Jolt velocity is hashed)
+      const lv = b.body.GetLinearVelocity()
+      const sp2 = lv.GetX() * lv.GetX() + lv.GetY() * lv.GetY() + lv.GetZ() * lv.GetZ()
+      b.restTicks = sp2 < REST_SPEED_SQ ? b.restTicks + 1 : 0
     }
+  }
+
+  /**
+   * B37 — re-weld settled debris back into the STATIC world. Any island that has
+   * rested REWELD_TICKS rasterises its grid into voxels at its rest transform
+   * (the SAME transform the render uses — grid-corner origin at px, rotated by
+   * the body quaternion) and despawns. Deterministic: pure function of hashed
+   * body state; fixed ascending-id order. Runs in the tick (V2).
+   */
+  private reweldPass(sim: Sim): void {
+    let ready: number[] | undefined
+    for (const b of this.bodies.values()) {
+      if (b.restTicks >= REWELD_TICKS) (ready ??= []).push(b.id)
+    }
+    if (!ready) return
+    ready.sort((a, b) => a - b)
+    for (const id of ready) {
+      const b = this.bodies.get(id)
+      if (b) this.reweldBody(sim, b)
+    }
+  }
+
+  /** rasterise a body's voxels into the static world at its current transform */
+  private reweldBody(sim: Sim, b: DynamicBody): void {
+    const vs = VOXEL_SIZE
+    const { qx, qy, qz, qw } = b
+    for (let ly = 0; ly < b.sy; ly++) {
+      for (let lz = 0; lz < b.sz; lz++) {
+        for (let lx = 0; lx < b.sx; lx++) {
+          const mat = b.grid[lx + lz * b.sx + ly * b.sx * b.sz]
+          if (mat === 0) continue
+          // rotate the local voxel centre by the body quaternion, offset by px
+          const x = (lx + 0.5) * vs, y = (ly + 0.5) * vs, z = (lz + 0.5) * vs
+          const tx = qy * z - qz * y, ty = qz * x - qx * z, tz = qx * y - qy * x // q.xyz × v
+          const rx = x + 2 * (qw * tx + (qy * tz - qz * ty))
+          const ry = y + 2 * (qw * ty + (qz * tx - qx * tz))
+          const rz = z + 2 * (qw * tz + (qx * ty - qy * tx))
+          const cx = Math.floor((b.px + rx) / vs)
+          const cy = Math.floor((b.py + ry) / vs)
+          const cz = Math.floor((b.pz + rz) / vs)
+          if (cy < 0) continue
+          sim.world.setVoxel(cx, cy, cz, mat)
+        }
+      }
+    }
+    this.despawnBody(b)
   }
 
   // ---------------------------------------------------------------------------
@@ -1020,6 +1111,7 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.f64(b.mass)
     h.u32(b.mat)
     h.u32(b.sx).u32(b.sy).u32(b.sz)
+    h.u32(b.restTicks) // B37 — re-weld timer is sim state (V3)
     h.bytes(b.grid)
   }
   // T54 — projectiles are sim state (V3)

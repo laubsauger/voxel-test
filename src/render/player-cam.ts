@@ -155,11 +155,12 @@ export class PlayerCam {
     const hx = fx / fl
     const hz = fz / fl
 
-    // B37 — scale the boom by vehicle size so big craft (plane) sit further out
+    // B37 — scale the boom modestly by vehicle size so big craft sit a bit
+    // further out (but not way back — 0.35, tuned so the plane stays readable)
     const sizeM = Math.max(v.sx, v.sz) * VOXEL_SIZE
-    const dist = CHASE_DISTANCE + sizeM * 0.55
+    const dist = CHASE_DISTANCE + sizeM * 0.35
     let tx = cx - hx * dist
-    let ty = cy + CHASE_HEIGHT + sizeM * 0.18
+    let ty = cy + CHASE_HEIGHT + sizeM * 0.12
     let tz = cz - hz * dist
     // clearance: pull the boom in if a wall sits between car and camera
     const bx = tx - cx

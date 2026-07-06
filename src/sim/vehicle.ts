@@ -717,6 +717,7 @@ export function spawnVehicle(
     qw,
     body,
     version: 0,
+    restTicks: 0, // DynamicBody field (unused: vehicles don't re-weld)
     archetype,
     initialCount: count,
     seats: spec.seats,

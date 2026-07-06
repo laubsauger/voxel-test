@@ -490,7 +490,7 @@ export class Game {
       // per frame to reclaim heap. Memory-only, off the sim tick — logical
       // voxels and the determinism hash are unaffected, so the schedule is free
       // of desync concerns. Skips dirty (pending-remesh) chunks to avoid churn.
-      this.sim.world.compactStep(8, 40000)
+      this.sim.world.compactStep(6, 9000) // B37 — lighter scan (was 8/40000 → ~3.6% CPU); still drains the cold set over a few seconds
       this.world.update(dt, this.sim.tick) // remesh budget, debris, CSM, day cycle (V7/T58)
       this.bodyMeshes.update(this.phys.bodies)
       this.vehicleMeshes.update(this.phys.vehicles)
