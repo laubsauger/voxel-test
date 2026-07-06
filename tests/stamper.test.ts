@@ -332,9 +332,15 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     const t = layout.towers.find((x) => x.style === 1)!
     expect(t, 'a style-1 tower exists at seed 42').toBeTruthy()
     const r = t.rect
-    // glass skin mid-story on the front face (band starts at y+5)
-    expect(store.getVoxel(r.x0 + 6, g + 7, r.z0), 'glass skin').toBe(MAT_GLASS)
-    // metal spandrel band capping the first story (top two rows)
+    // BUG2 — glass skin mid-story is RECESSED one voxel behind the frame plane:
+    // the outer row (z0) is cleared to air so the transparent glass front no
+    // longer sits coplanar with the opaque metal/concrete frame (that coplanar
+    // pair flickered a black bar along every floor line). Glass lives on the
+    // inner row (z0+1); the frame stays proud at z0.
+    expect(store.getVoxel(r.x0 + 6, g + 7, r.z0), 'glass recess (outer row clear)').toBe(MAT_AIR)
+    expect(store.getVoxel(r.x0 + 6, g + 7, r.z0 + 1), 'recessed glass skin').toBe(MAT_GLASS)
+    // metal spandrel band capping the first story (top two rows) — stays a full
+    // 2-deep proud frame at z0, so it reads as the ribbon lip in front of the glass
     expect(store.getVoxel(r.x0 + 6, g + t.storyH - 1, r.z0), 'metal spandrel band').toBe(MAT_METAL)
     // metal crown above the roof slab (no brick)
     const roofY = g + t.floors * t.storyH

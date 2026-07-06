@@ -639,10 +639,24 @@ function stampTower(store: ChunkStore, layout: Layout, t: Tower): void {
       // with a METAL SPANDREL band at each floor line (strong horizontal
       // emphasis vs style 0's vertical mullions), corner columns in metal too.
       // No brick — a clean modern-corporate look distinct from the glass grid.
-      store.fillBox(r.x0 + 3, gy0, r.z0, r.x1 - 3, gy1, r.z0 + 1, MAT_GLASS)
-      store.fillBox(r.x0 + 3, gy0, r.z1 - 1, r.x1 - 3, gy1, r.z1, MAT_GLASS)
-      store.fillBox(r.x0, gy0, r.z0 + 3, r.x0 + 1, gy1, r.z1 - 3, MAT_GLASS)
-      store.fillBox(r.x1 - 1, gy0, r.z0 + 3, r.x1, gy1, r.z1 - 3, MAT_GLASS)
+      // BUG2 — RECESS the glass one voxel behind the frame plane. The glass band
+      // used to fill the full 2-deep skin (outer row = z0), so its transparent
+      // front face (glass writes no depth) sat COPLANAR with the opaque metal
+      // spandrel / concrete frame front faces at z0. At many view angles the
+      // transparent sort flipped against that coplanar opaque frame + the near
+      // interior slab and flickered a black bar along every floor line. Clearing
+      // the outer row to air and keeping glass only on the inner row (z0+1) moves
+      // the glass front to z0+1 — the opaque frame is now a clean 1-voxel proud
+      // lip in front (reads as recessed ribbon glazing). The glass BACK plane is
+      // unchanged (still z0+2), so the interior-slab clearance is untouched.
+      store.fillBox(r.x0 + 3, gy0, r.z0, r.x1 - 3, gy1, r.z0, MAT_AIR)
+      store.fillBox(r.x0 + 3, gy0, r.z0 + 1, r.x1 - 3, gy1, r.z0 + 1, MAT_GLASS)
+      store.fillBox(r.x0 + 3, gy0, r.z1, r.x1 - 3, gy1, r.z1, MAT_AIR)
+      store.fillBox(r.x0 + 3, gy0, r.z1 - 1, r.x1 - 3, gy1, r.z1 - 1, MAT_GLASS)
+      store.fillBox(r.x0, gy0, r.z0 + 3, r.x0, gy1, r.z1 - 3, MAT_AIR)
+      store.fillBox(r.x0 + 1, gy0, r.z0 + 3, r.x0 + 1, gy1, r.z1 - 3, MAT_GLASS)
+      store.fillBox(r.x1, gy0, r.z0 + 3, r.x1, gy1, r.z1 - 3, MAT_AIR)
+      store.fillBox(r.x1 - 1, gy0, r.z0 + 3, r.x1 - 1, gy1, r.z1 - 3, MAT_GLASS)
       // metal corner mullions (thin, run the full story) + metal spandrel band
       // capping each floor → horizontal ribbon read
       for (const yy of [gy1 - 1, gy1]) {
