@@ -12,12 +12,12 @@
 export const VOXEL_SIZE = 0.1
 export const CHUNK = 32
 export const CHUNK_VOL = CHUNK * CHUNK * CHUNK
-// B32 — 4096² = ~410 m (4× the T50 area). Physics colliders are all-upfront and
-// Jolt-WASM-capped near this size; a larger world needs deterministic collider
-// streaming. Render meshes stream to view distance (B35), so render is bounded.
-export const WORLD_CX = 128
+// B35 — 160 (5120² = ~512 m). Physics colliders + render meshes both STREAM to
+// the sim anchors / camera (bounded cost), so the size ceiling is now the
+// uncompressed dense-chunk store memory (~1.2 GB here); bigger needs palette compression.
+export const WORLD_CX = 160
 export const WORLD_CY = 24
-export const WORLD_CZ = 128
+export const WORLD_CZ = 160
 export const WORLD_VX = WORLD_CX * CHUNK
 export const WORLD_VY = WORLD_CY * CHUNK
 export const WORLD_VZ = WORLD_CZ * CHUNK

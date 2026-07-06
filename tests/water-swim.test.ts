@@ -8,6 +8,11 @@ import { MAX_LEVEL } from '../src/sim/water/rules'
 import { FLOAT_DEPTH, INPUT_CROUCH, INPUT_FWD } from '../src/sim/player'
 import type { Command } from '../src/sim/commands'
 import type { SplashEvent } from '../src/sim/player'
+import { WORLD_VX } from '../src/world/chunks'
+
+// B32 — pool/geometry built around the world-center spawn column. Derived from
+// world size so a future resize never breaks the re-basing.
+const CVX = WORLD_VX >> 1 // voxel center (= spawn z column; player x = CVX+10 vox)
 
 // T60 — player swimming. The character must FLOAT in deep water (capsule
 // buoyancy holds the head above the waterline), sink when crouching, and
@@ -18,27 +23,27 @@ beforeAll(async () => {
 }, 30000)
 
 /**
- * Deep pool directly under the spawn column (B32 spawn 205.8m → voxel 2058).
+ * Deep pool directly under the spawn column (B32 spawn = world center, player x = CVX+10 vox).
  * Without the pillar the player spawns at the pool FLOOR (inside the water);
  * with it they spawn on a diving post above the surface (splash test).
  */
 async function makeSwimSim(divingPillar = false) {
   const sim = new Sim(9)
   registerEditOps(sim)
-  // ground shell around the pool, floor for the neighborhood — B32 +1024 vox
-  sim.world.fillBox(2016, 0, 2016, 2096, 7, 2096, 3)
-  // pool basin: interior x/z 2036..2076, water y 8..37 (3m deep — deep water) — B32 +1024 vox
-  sim.world.fillBox(2032, 8, 2032, 2080, 38, 2080, 3)
-  sim.world.fillBox(2036, 8, 2036, 2076, 38, 2076, 0)
+  // ground shell around the pool, floor for the neighborhood — B32 world center
+  sim.world.fillBox(CVX - 32, 0, CVX - 32, CVX + 48, 7, CVX + 48, 3)
+  // pool basin: interior x/z CVX-12..CVX+28, water y 8..37 (3m deep — deep water) — B32 world center
+  sim.world.fillBox(CVX - 16, 8, CVX - 16, CVX + 32, 38, CVX + 32, 3)
+  sim.world.fillBox(CVX - 12, 8, CVX - 12, CVX + 28, 38, CVX + 28, 0)
   if (divingPillar) {
-    // 3×3 post under the spawn column, top above the waterline — B32 +1024 vox
-    sim.world.fillBox(2057, 8, 2047, 2059, 45, 2049, 3)
+    // 3×3 post under the spawn column, top above the waterline — B32 world center
+    sim.world.fillBox(CVX + 9, 8, CVX - 1, CVX + 11, 45, CVX + 1, 3)
   }
   const water = attachWaterSim(sim)
   sim.world.onVoxelChanged = (x, y, z) => water.notifyVoxelChanged(x, y, z)
-  for (let y = 8; y <= 37; y++) // B32 +1024 vox
-    for (let z = 2036; z <= 2076; z++)
-      for (let x = 2036; x <= 2076; x++) water.addWater(x, y, z, MAX_LEVEL)
+  for (let y = 8; y <= 37; y++) // B32 world center
+    for (let z = CVX - 12; z <= CVX + 28; z++)
+      for (let x = CVX - 12; x <= CVX + 28; x++) water.addWater(x, y, z, MAX_LEVEL)
   const phys = await createPhysics(sim)
   attachBuoyancy(sim, phys, water)
   return { sim, phys, water }

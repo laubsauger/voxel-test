@@ -4,6 +4,7 @@ import { registerEditOps } from '../src/sim/edit-ops'
 import { createPhysics, hashPhysics, loadJolt } from '../src/sim/physics'
 import { INPUT_FWD, INPUT_JUMP } from '../src/sim/player'
 import type { Command } from '../src/sim/commands'
+import { WORLD_VX, VOXEL_SIZE } from '../src/world/chunks'
 
 // T21 — character controller determinism: two sims fed the same move
 // commands must land on bit-identical player positions, or lockstep co-op
@@ -13,9 +14,11 @@ beforeAll(async () => {
   await loadJolt()
 }, 30000)
 
-// B32 — spawn is the world center (WORLD_VX>>1 voxel = 204.8 m at the 4× size),
-// so the test ground/geometry is built around that column, not the old 102.4 m.
-const CVX = 2048 // WORLD_VX>>1
+// B32 — spawn is the world center (WORLD_VX>>1 voxel), so the test
+// ground/geometry is built around that column. Derived from world size so a
+// future resize never breaks the re-basing.
+const CVX = WORLD_VX >> 1 // voxel center
+const CM = (WORLD_VX >> 1) * VOXEL_SIZE // metre center = spawn z, and playerId 1 spawn x = CM + 1
 async function makeSim() {
   const sim = new Sim(9)
   registerEditOps(sim)
@@ -60,8 +63,8 @@ describe('player character controller (T21, I.jolt, V1, V2)', () => {
     for (const c of moveCmds(60, INPUT_FWD, 0)) sim.queue.push(c)
     for (let t = 0; t <= 60; t++) sim.step()
     const p = phys.players.get(1)!
-    expect(p.pz).toBeLessThan(204.8 - 1) // walked at least 1m in -z from spawn z
-    expect(Math.abs(p.px - 205.8)).toBeLessThan(0.01) // playerId 1 spawns at x=204.8+1, no drift
+    expect(p.pz).toBeLessThan(CM - 1) // walked at least 1m in -z from spawn z
+    expect(Math.abs(p.px - (CM + 1))).toBeLessThan(0.01) // playerId 1 spawns at x=CM+1, no drift
     expect(p.py).toBeCloseTo(0.8, 1) // standing on ground (slab top at y=0.8m)
     phys.dispose()
   }, 30000)

@@ -6,6 +6,14 @@ import { createPhysics, hashPhysics, loadJolt } from '../src/sim/physics'
 import { INPUT_FWD, INPUT_JUMP, INPUT_LEFT } from '../src/sim/player'
 import { breakWheel, vehicleSpawnClear, WHEEL_BREAK_HITS, WRECK_FRACTION } from '../src/sim/vehicle'
 import type { Command, Op } from '../src/sim/commands'
+import { WORLD_VX, VOXEL_SIZE } from '../src/world/chunks'
+
+// B32 — vehicle spawns, obstacle walls/fences/tunnels, and metre assertions are
+// all built around the world-center spawn column. Derived from world size so a
+// future resize never breaks the re-basing. CVX voxel === CM metre (CM = CVX*0.1),
+// so voxel obstacles and metre spawn positions stay in lockstep.
+const CVX = WORLD_VX >> 1 // voxel center
+const CM = (WORLD_VX >> 1) * VOXEL_SIZE // metre center = spawn x/z
 
 // T64 — drivable vehicles: spawn/enter/drive/exit determinism (V1/V2/V3/V8),
 // crash voxel damage (world + chassis), wheel loss, wreck conversion, seat
@@ -21,8 +29,8 @@ beforeAll(async () => {
 function makeSim(seed: number): Sim {
   const sim = new Sim(seed)
   registerEditOps(sim)
-  // 12.8 m tall ground top at y=0.8 m under the spawn area (voxel 992..1119)
-  sim.world.fillBox(1856, 0, 1408, 2239, 7, 2143, 3)
+  // ground top at y=0.8 m spanning the spawn area and all obstacle bands
+  sim.world.fillBox(CVX - 192, 0, CVX - 640, CVX + 191, 7, CVX + 95, 3)
   return sim
 }
 
@@ -35,7 +43,7 @@ describe('vehicle spawn (T64.1, V8)', () => {
   it('spawns a sedan that settles on its wheels and stays upright', async () => {
     const sim = makeSim(11)
     const phys = await createPhysics(sim)
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 204.8, y: GROUND_Y, z: 207.4, yaw: 0 }))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: CM, y: GROUND_Y, z: CM + 2.6, yaw: 0 }))
     for (let i = 0; i < 90; i++) sim.step()
 
     expect(phys.vehicles.size).toBe(1)
@@ -56,12 +64,12 @@ describe('vehicle spawn (T64.1, V8)', () => {
   it('vehicleSpawnClear rejects footprints intersecting walls (B24)', async () => {
     const sim = makeSim(12)
     // wall crossing the candidate footprint
-    sim.world.fillBox(2039, 8, 2064, 2059, 20, 2066, 5)
-    expect(vehicleSpawnClear(sim.world, 'sedan0', 204.8, GROUND_Y, 206.5, 0)).toBe(false)
+    sim.world.fillBox(CVX - 9, 8, CVX + 16, CVX + 11, 20, CVX + 18, 5)
+    expect(vehicleSpawnClear(sim.world, 'sedan0', CM, GROUND_Y, CM + 1.7, 0)).toBe(false)
     // open ground is fine
-    expect(vehicleSpawnClear(sim.world, 'sedan0', 204.8, GROUND_Y, 212.4, 0)).toBe(true)
+    expect(vehicleSpawnClear(sim.world, 'sedan0', CM, GROUND_Y, CM + 7.6, 0)).toBe(true)
     // mid-air (no ground under the wheels) is not a valid spawn
-    expect(vehicleSpawnClear(sim.world, 'sedan0', 204.8, GROUND_Y + 5, 212.4, 0)).toBe(false)
+    expect(vehicleSpawnClear(sim.world, 'sedan0', CM, GROUND_Y + 5, CM + 7.6, 0)).toBe(false)
   })
 })
 
@@ -70,7 +78,7 @@ describe('enter / drive / exit (T64.2, V1)', () => {
     const sim = makeSim(21)
     const phys = await createPhysics(sim)
     sim.queue.push(cmd(0, { kind: 'spawn' }))
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 204.8, y: GROUND_Y, z: 207.4, yaw: 0 }, 1, 1))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: CM, y: GROUND_Y, z: CM + 2.6, yaw: 0 }, 1, 1))
     for (let i = 0; i < 30; i++) sim.step() // let both settle
 
     const p = phys.players.get(1)!
@@ -127,11 +135,11 @@ describe('enter / drive / exit (T64.2, V1)', () => {
     const phys = await createPhysics(sim)
     sim.queue.push(cmd(0, { kind: 'spawn' }))
     // car with its LEFT (driver, -x) side hugging a wall
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 204.8, y: GROUND_Y, z: 207.4, yaw: 0 }, 1, 1))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: CM, y: GROUND_Y, z: CM + 2.6, yaw: 0 }, 1, 1))
     for (let i = 0; i < 20; i++) sim.step()
     const v = [...phys.vehicles.values()][0]
-    // wall along the driver side, meters x ≈ 100.4..100.9 (voxels 1004..1009)
-    sim.world.fillBox(2028, 8, 2044, 2033, 30, 2144, 4)
+    // wall along the driver side (-x), at voxels CVX-20..CVX-15
+    sim.world.fillBox(CVX - 20, 8, CVX - 4, CVX - 15, 30, CVX + 96, 4)
     sim.queue.push(cmd(sim.tick, { kind: 'vehicle_enter' }))
     sim.step()
     const p = phys.players.get(1)!
@@ -140,7 +148,7 @@ describe('enter / drive / exit (T64.2, V1)', () => {
     sim.step()
     expect(p.seatedVehicle).toBe(0)
     // placed on the passenger (+x) side, NOT inside the wall band
-    expect(p.px).toBeGreaterThan(203.4)
+    expect(p.px).toBeGreaterThan(CM - 1.4)
     phys.dispose()
   }, 30000)
 })
@@ -150,16 +158,16 @@ describe('crash damage (T64.3)', () => {
     const sim = makeSim(31)
     const phys = await createPhysics(sim)
     sim.queue.push(cmd(0, { kind: 'spawn' }))
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan1', x: 204.8, y: GROUND_Y, z: 208.4, yaw: 0 }, 1, 1))
-    // brick wall across the car's path at z voxels 980..982
-    sim.world.fillBox(2024, 8, 2004, 2072, 24, 2006, 5)
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan1', x: CM, y: GROUND_Y, z: CM + 3.6, yaw: 0 }, 1, 1))
+    // brick wall across the car's path at z voxels CVX-44..CVX-42
+    sim.world.fillBox(CVX - 24, 8, CVX - 44, CVX + 24, 24, CVX - 42, 5)
     for (let i = 0; i < 20; i++) sim.step()
     const v = [...phys.vehicles.values()][0]
     const wallVoxels = () => {
       let n = 0
       for (let y = 8; y <= 24; y++)
-        for (let z = 2004; z <= 2006; z++)
-          for (let x = 2024; x <= 2072; x++) if (sim.world.getVoxel(x, y, z) !== 0) n++
+        for (let z = CVX - 44; z <= CVX - 42; z++)
+          for (let x = CVX - 24; x <= CVX + 24; x++) if (sim.world.getVoxel(x, y, z) !== 0) n++
       return n
     }
     const wall0 = wallVoxels()
@@ -187,7 +195,7 @@ describe('crash damage (T64.3)', () => {
   it('wheel loss degrades handling and spawns debris', async () => {
     const sim = makeSim(32)
     const phys = await createPhysics(sim)
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 204.8, y: GROUND_Y, z: 207.4, yaw: 0 }))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: CM, y: GROUND_Y, z: CM + 2.6, yaw: 0 }))
     for (let i = 0; i < 30; i++) sim.step()
     const v = [...phys.vehicles.values()][0]
     const bodies0 = phys.bodies.size
@@ -207,14 +215,14 @@ describe('crash damage (T64.3)', () => {
     const sim = makeSim(33)
     const phys = await createPhysics(sim)
     // plaster-bodied sedan: soft chassis, one bomb guts it
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan2', x: 204.8, y: GROUND_Y, z: 207.4, yaw: 0 }))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan2', x: CM, y: GROUND_Y, z: CM + 2.6, yaw: 0 }))
     for (let i = 0; i < 30; i++) sim.step()
     const v = [...phys.vehicles.values()][0]
     const id = v.id
     // bomb right at the cabin (voxel coords). B31 — r 14→18: the sedan cabin
     // was raised (taller car, ~20% more voxels), so one bomb needs a wider
     // blast to still gut the soft plaster body past the wreck fraction.
-    sim.queue.push(cmd(sim.tick, { kind: 'explode', x: 2048, y: 14, z: 2074, r: 18, power: 5 }))
+    sim.queue.push(cmd(sim.tick, { kind: 'explode', x: CVX, y: 14, z: CVX + 26, r: 18, power: 5 }))
     sim.step()
     for (let i = 0; i < 20; i++) sim.step()
 
@@ -241,9 +249,9 @@ describe('momentum-scaled mutual damage: through fences, stopped by walls (T64.3
     const sim = makeSim(41)
     const phys = await createPhysics(sim)
     sim.queue.push(cmd(0, { kind: 'spawn' }))
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 204.8, y: GROUND_Y, z: 208.4, yaw: 0 }, 1, 1))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: CM, y: GROUND_Y, z: CM + 3.6, yaw: 0 }, 1, 1))
     // picket fence across the path: 1 voxel thick, 1.2 m tall, wood
-    sim.world.fillBox(2024, 8, 2024, 2072, 19, 2024, 6)
+    sim.world.fillBox(CVX - 24, 8, CVX - 24, CVX + 24, 19, CVX - 24, 6)
     for (let i = 0; i < 20; i++) sim.step()
     const v = [...phys.vehicles.values()][0]
     sim.queue.push(cmd(sim.tick, { kind: 'vehicle_enter' }))
@@ -252,14 +260,14 @@ describe('momentum-scaled mutual damage: through fences, stopped by walls (T64.3
       sim.queue.push(cmd(sim.tick, { kind: 'move', input: INPUT_FWD, yaw: 0, pitch: 0 }, 1, 100 + i))
       sim.step()
     }
-    // car came out the OTHER side of the fence (fence plane z = 100.0 m)
-    expect(v.pz + (v.sz * 0.1) / 2).toBeLessThan(201.9)
+    // car came out the OTHER side of the fence (fence plane at voxel CVX-24)
+    expect(v.pz + (v.sz * 0.1) / 2).toBeLessThan(CM - 2.9)
     // car barely dented
     expect(v.count).toBeGreaterThanOrEqual(v.initialCount * 0.95)
     // the fence section in the car's corridor is gone
     let corridor = 0
     for (let y = 8; y <= 19; y++)
-      for (let x = 2038; x <= 2057; x++) if (sim.world.getVoxel(x, y, 2024) !== 0) corridor++
+      for (let x = CVX - 10; x <= CVX + 9; x++) if (sim.world.getVoxel(x, y, CVX - 24) !== 0) corridor++
     // was 20 wide × 12 tall = 240 voxels; the ground-level base row (20) may
     // survive (below the lowest plow ray — the car hops it like a curb)
     expect(corridor).toBeLessThan(240 * 0.25)
@@ -270,14 +278,14 @@ describe('momentum-scaled mutual damage: through fences, stopped by walls (T64.3
     const sim = makeSim(42)
     const phys = await createPhysics(sim)
     sim.queue.push(cmd(0, { kind: 'spawn' }))
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 204.8, y: GROUND_Y, z: 208.4, yaw: 0 }, 1, 1))
-    // thick brick wall (5 voxels) across the path at z = 99.0..99.4 m
-    sim.world.fillBox(2024, 8, 2014, 2072, 26, 2018, 5)
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: CM, y: GROUND_Y, z: CM + 3.6, yaw: 0 }, 1, 1))
+    // thick brick wall (5 voxels) across the path at voxels CVX-34..CVX-30
+    sim.world.fillBox(CVX - 24, 8, CVX - 34, CVX + 24, 26, CVX - 30, 5)
     const wallVoxels = () => {
       let n = 0
       for (let y = 8; y <= 26; y++)
-        for (let z = 2014; z <= 2018; z++)
-          for (let x = 2024; x <= 2072; x++) if (sim.world.getVoxel(x, y, z) !== 0) n++
+        for (let z = CVX - 34; z <= CVX - 30; z++)
+          for (let x = CVX - 24; x <= CVX + 24; x++) if (sim.world.getVoxel(x, y, z) !== 0) n++
       return n
     }
     const wall0 = wallVoxels()
@@ -289,8 +297,8 @@ describe('momentum-scaled mutual damage: through fences, stopped by walls (T64.3
       sim.queue.push(cmd(sim.tick, { kind: 'move', input: INPUT_FWD, yaw: 0, pitch: 0 }, 1, 100 + i))
       sim.step()
     }
-    // the car did NOT punch through (wall back face at z = 99.0 m)
-    expect(v.pz).toBeGreaterThan(201.2)
+    // the car did NOT punch through (wall back face at voxel CVX-30)
+    expect(v.pz).toBeGreaterThan(CM - 3.6)
     // hard stop (throttle still pinned, wall wins)
     expect(Math.hypot(v.vx, v.vy, v.vz)).toBeLessThan(2)
     // wall took a bite but stands: partial breach only
@@ -307,11 +315,11 @@ describe('momentum-scaled mutual damage: through fences, stopped by walls (T64.3
     const sim = makeSim(43)
     const phys = await createPhysics(sim)
     sim.queue.push(cmd(0, { kind: 'spawn' }))
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: 204.8, y: GROUND_Y, z: 208.4, yaw: 0 }, 1, 1))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: CM, y: GROUND_Y, z: CM + 3.6, yaw: 0 }, 1, 1))
     // wooden pillar in the car's path carrying a brick slab overhead (2.0 m up
     // — the car passes under the slab, plows the pillar, the slab must fall)
-    sim.world.fillBox(2046, 8, 2022, 2049, 27, 2024, 6) // pillar (wood)
-    sim.world.fillBox(2038, 28, 2018, 2057, 30, 2028, 5) // slab (brick), pillar-only support
+    sim.world.fillBox(CVX - 2, 8, CVX - 26, CVX + 1, 27, CVX - 24, 6) // pillar (wood)
+    sim.world.fillBox(CVX - 10, 28, CVX - 30, CVX + 9, 30, CVX - 20, 5) // slab (brick), pillar-only support
     for (let i = 0; i < 20; i++) sim.step()
     const bodies0 = phys.bodies.size
     sim.queue.push(cmd(sim.tick, { kind: 'vehicle_enter' }))
@@ -340,7 +348,7 @@ describe('T76 two-wheelers: bicycle + delivery scooter (MotorcycleController)', 
       const sim = makeSim(51)
       const phys = await createPhysics(sim)
       sim.queue.push(cmd(0, { kind: 'spawn' }))
-      sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: arch, x: 204.8, y: GROUND_Y, z: 206.4, yaw: 0 }, 1, 1))
+      sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: arch, x: CM, y: GROUND_Y, z: CM + 1.6, yaw: 0 }, 1, 1))
       for (let i = 0; i < 60; i++) sim.step()
       const v = [...phys.vehicles.values()][0]
       expect(v.wheels).toHaveLength(2)
@@ -368,7 +376,7 @@ describe('T76 two-wheelers: bicycle + delivery scooter (MotorcycleController)', 
       const sim = makeSim(52)
       const phys = await createPhysics(sim)
       sim.queue.push(cmd(0, { kind: 'spawn' }))
-      sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'scooter', x: 204.8, y: GROUND_Y, z: 206.4, yaw: 0.2 }, 1, 1))
+      sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'scooter', x: CM, y: GROUND_Y, z: CM + 1.6, yaw: 0.2 }, 1, 1))
       sim.queue.push(cmd(15, { kind: 'vehicle_enter' }, 1, 2))
       for (let t = 16; t < 150; t++) {
         const steer = t % 50 < 25 ? INPUT_LEFT : 0
@@ -391,12 +399,12 @@ describe('T76 two-wheelers: bicycle + delivery scooter (MotorcycleController)', 
 describe('determinism (V2/V3): full vehicle lifecycle, two-run hash equality', () => {
   async function run(seed: number, ticks: number) {
     const sim = makeSim(seed)
-    // fence (plowed through) then wall (hard crash) for the damage legs (B32 +1024)
-    sim.world.fillBox(2024, 8, 2024, 2072, 18, 2024, 6)
-    sim.world.fillBox(2024, 8, 2008, 2072, 20, 2010, 5)
+    // fence (plowed through) then wall (hard crash) for the damage legs (B32 world center)
+    sim.world.fillBox(CVX - 24, 8, CVX - 24, CVX + 24, 18, CVX - 24, 6)
+    sim.world.fillBox(CVX - 24, 8, CVX - 40, CVX + 24, 20, CVX - 38, 5)
     const phys = await createPhysics(sim)
     sim.queue.push(cmd(0, { kind: 'spawn' }))
-    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'pickup1', x: 204.8, y: GROUND_Y, z: 208.4, yaw: 0.3 }, 1, 1))
+    sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'pickup1', x: CM, y: GROUND_Y, z: CM + 3.6, yaw: 0.3 }, 1, 1))
     sim.queue.push(cmd(20, { kind: 'vehicle_enter' }, 1, 2))
     // scripted drive: forward + a steering wiggle + handbrake, then a bomb, exit
     for (let t = 21; t < 160; t++) {
@@ -404,7 +412,7 @@ describe('determinism (V2/V3): full vehicle lifecycle, two-run hash equality', (
       const hb = t > 140 ? INPUT_JUMP : 0
       sim.queue.push(cmd(t, { kind: 'move', input: INPUT_FWD | steer | hb, yaw: 0, pitch: 0 }, 1, 100 + t))
     }
-    sim.queue.push(cmd(170, { kind: 'explode', x: 2048, y: 12, z: 2054, r: 10, power: 4 }, 1, 400))
+    sim.queue.push(cmd(170, { kind: 'explode', x: CVX, y: 12, z: CVX + 6, r: 10, power: 4 }, 1, 400))
     sim.queue.push(cmd(190, { kind: 'vehicle_exit' }, 1, 401))
     const hashes: number[] = []
     for (let i = 0; i < ticks; i++) {

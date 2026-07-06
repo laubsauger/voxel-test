@@ -3,6 +3,12 @@ import { Sim } from '../src/sim/loop'
 import { registerEditOps } from '../src/sim/edit-ops'
 import { createPhysics, hashPhysics, loadJolt, type PhysicsWorld } from '../src/sim/physics'
 import { INPUT_BACK, INPUT_FWD, INPUT_JUMP } from '../src/sim/player'
+import { WORLD_VX, VOXEL_SIZE } from '../src/world/chunks'
+
+// B32 — geometry is built around the world-center spawn column. Derived from
+// world size so a future resize never breaks the re-basing.
+const CVX = WORLD_VX >> 1 // voxel center
+const CM = (WORLD_VX >> 1) * VOXEL_SIZE // metre center = spawn z
 
 // T47 — noclip dev mode: command-toggled fly with no collision, fully inside
 // the deterministic tick (works in lockstep). Toggle off resumes the normal
@@ -15,9 +21,9 @@ beforeAll(async () => {
 async function makeSim(): Promise<{ sim: Sim; phys: PhysicsWorld }> {
   const sim = new Sim(9)
   registerEditOps(sim)
-  sim.world.fillBox(1936, 0, 1936, 2176, 7, 2176, 3) // ground, top y=0.8m — B32 +1024 vox
-  // solid wall across the walking path: z 201.6..202.0m, floor to 3.1m — B32 +1024 vox
-  sim.world.fillBox(2036, 8, 2016, 2080, 30, 2020, 4)
+  sim.world.fillBox(CVX - 112, 0, CVX - 112, CVX + 128, 7, CVX + 128, 3) // ground, top y=0.8m — B32 world center
+  // solid wall across the walking path: z at CM-3.2..CM-2.8m, floor to 3.1m — B32 world center
+  sim.world.fillBox(CVX - 12, 8, CVX - 32, CVX + 32, 30, CVX - 28, 4)
   const phys = await createPhysics(sim)
   return { sim, phys }
 }
@@ -37,7 +43,7 @@ describe('noclip (T47, I.cmd, V1, V2)', () => {
     let t = pushMoves(sim, 1, 120, INPUT_FWD)
     while (sim.tick < t) sim.step()
     const p = phys.players.get(1)!
-    expect(p.pz).toBeGreaterThan(202.2) // never crossed the wall — B32 +102.4 m
+    expect(p.pz).toBeGreaterThan(CM - 2.6) // never crossed the wall
     expect(p.noclip).toBe(false)
 
     // 2) toggle noclip, fly forward through the wall (10 m/s × 1s = 10m)
@@ -45,7 +51,7 @@ describe('noclip (T47, I.cmd, V1, V2)', () => {
     t = pushMoves(sim, t, 60, INPUT_FWD)
     while (sim.tick < t) sim.step()
     expect(p.noclip).toBe(true)
-    expect(p.pz).toBeLessThan(201.5) // through the wall — B32 +102.4 m
+    expect(p.pz).toBeLessThan(CM - 3.3) // through the wall
     const flownY = p.py
     expect(flownY).toBeCloseTo(0.81, 1) // level flight, no gravity in noclip
 
@@ -54,7 +60,7 @@ describe('noclip (T47, I.cmd, V1, V2)', () => {
     t = pushMoves(sim, t, 120, INPUT_BACK) // walk back toward the wall
     while (sim.tick < t) sim.step()
     expect(p.noclip).toBe(false)
-    expect(p.pz).toBeLessThan(201.5) // wall blocks from this side too (201.6 − 0.3) — B32 +102.4 m
+    expect(p.pz).toBeLessThan(CM - 3.3) // wall blocks from this side too (CM-3.2 − 0.3)
     expect(p.py).toBeCloseTo(0.8, 1) // standing on the ground again
     phys.dispose()
   }, 30000)

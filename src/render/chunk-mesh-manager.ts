@@ -98,8 +98,8 @@ const REGION_CY = Math.ceil(WORLD_CY / REGION)
  * ChunkStore regardless (physics colliders are unaffected, V6); only the render
  * meshes stream. Distance is horizontal (cylindrical) like Minecraft render
  * distance, so tall towers within reach load top-to-bottom. */
-const RENDER_DISTANCE = 300 // meters — full-detail mesh radius
-const EVICT_DISTANCE = 360 // meters — dispose meshes beyond this (> render)
+const RENDER_DISTANCE = 240 // meters — full-detail mesh radius
+const EVICT_DISTANCE = 290 // meters — dispose meshes beyond this (> render)
 const REGION_M = REGION * CHUNK * VOXEL_SIZE // region edge in world meters
 
 /**

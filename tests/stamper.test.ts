@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { ChunkStore, ChunkKind, CHUNK_COUNT, VOXEL_SIZE, WORLD_VX, WORLD_VZ } from '../src/world/chunks'
+
+// B32 — central arterial crossing sits at the world center (SPAWN_VX/VZ).
+// Derived from world size so a future resize never breaks the re-basing.
+const CVX = WORLD_VX >> 1
 import { Fnv } from '../src/sim/hash'
 import { generateLayout, isCarKind, DOOR_W, STAIR_W, STAIR_TREAD, STAIR_STEPS, WALL_T, type House, type Layout, type Opening } from '../src/sim/gen/layout'
 import { stampScene } from '../src/sim/gen/stamper'
@@ -412,18 +416,20 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
     const art = layout.roads.find((r) => r.axis === 'x' && r.kind === 'arterial')!
     let solidA = 0
     let solidB = 0
-    // B32 — scan a 200-voxel span clear of any cross-road (z-roads at 800/1216;
-    // 900..1100 is open asphalt) so the double line reads as continuously solid
-    for (let x = 900; x < 1100; x++) {
+    // B32 — scan a 200-voxel span clear of any cross-road so the double line
+    // reads as continuously solid. The center line clears a margin around each
+    // junction box; the first block right of the crossing (CVX+80..CVX+280) is
+    // fully painted asphalt between the center crossing and the next z-road.
+    for (let x = CVX + 80; x < CVX + 280; x++) {
       if (store.getVoxel(x, g - 1, art.center - 2) === MAT_PAINT) solidA++
       if (store.getVoxel(x, g - 1, art.center + 1) === MAT_PAINT) solidB++
     }
     expect(solidA).toBe(200) // solid, not dashed
     expect(solidB).toBe(200)
     // crosswalk band on the east approach of the central crossing (B32: SPAWN)
-    const ex = 2048 + 52 // arterial extent at the central crossing
+    const ex = CVX + 52 // arterial extent at the central crossing
     let zebra = 0
-    for (let z = 2048 - 38; z <= 2048 + 38; z++) {
+    for (let z = CVX - 38; z <= CVX + 38; z++) {
       for (let x = ex + 2; x <= ex + 9; x++) {
         if (store.getVoxel(x, g - 1, z) === MAT_PAINT) zebra++
       }

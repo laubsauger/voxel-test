@@ -57,15 +57,15 @@ describe('town layout generator (T19/T50, V2)', () => {
     // the centered downtown core, the ring is nature/park + desert + airport,
     // plus the south-edge coast strip.
     const l = generateLayout(7)
-    expect(l.districts.length).toBe(65) // 8×8 blocks + 1 beach strip
+    expect(l.districts.length).toBe(101) // 10×10 blocks + 1 beach strip (B35: 5× world)
     const byKind = new Map<string, number>()
     for (const d of l.districts) byKind.set(d.kind, (byKind.get(d.kind) ?? 0) + 1)
-    // downtown core (unchanged from the T50 4×4 plan)
+    // downtown core (unchanged from the T50 4×4 plan — centered regardless of size)
     expect(byKind.get('suburb')).toBe(5)
     expect(byKind.get('rowhouse')).toBe(4)
     expect(byKind.get('commercial')).toBe(4)
-    // ring: 3 core parks + 41 nature-ring parks
-    expect(byKind.get('park')).toBe(44)
+    // ring: 3 core parks + 77 nature-ring parks (grows with the world surface)
+    expect(byKind.get('park')).toBe(80)
     expect(byKind.get('desert')).toBe(4)
     expect(byKind.get('airport')).toBe(3)
     expect(byKind.get('beach')).toBe(1)
