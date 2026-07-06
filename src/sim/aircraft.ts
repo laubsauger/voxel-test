@@ -525,7 +525,10 @@ export function tickAircraftPreStep(phys: PhysicsWorld): void {
     // body-frame angular rates: pitch about right, yaw about up, roll about back
     const wPitch = pitchInput * PITCH_RATE
     const wYaw = -turnInput * YAW_RATE
-    const wRoll = -ry * ROLL_LEVEL_GAIN + turnInput * BANK_RATE
+    // B37 — bank sign flipped: a coordinated LEFT turn banks LEFT (left wing
+    // down). The old `+turnInput` rolled the plane the wrong way (into an
+    // uncoordinated outward bank) — read as inverted steering.
+    const wRoll = -ry * ROLL_LEVEL_GAIN - turnInput * BANK_RATE
     const [awx, awy, awz] = quatRotate(a.qx, a.qy, a.qz, a.qw, wPitch, wYaw, wRoll)
 
     const nv = new api.Vec3(nvx, nvy, nvz)

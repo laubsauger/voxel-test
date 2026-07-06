@@ -656,9 +656,13 @@ function stampTower(store: ChunkStore, layout: Layout, t: Tower): void {
         store.fillBox(cx, gy0, r.z1 - 1, cx + 1, gy1, r.z1, MAT_METAL)
       }
     }
-    // interior slab (floors above ground)
+    // interior slab (floors above ground). B37 — inset 2 vox BEHIND the facade
+    // (was flush at WALL_T): the slab edge reached the 2-deep glass skin at every
+    // level, so the concrete poked into the window and the transparent glass
+    // sort flickered a black bar. Held clear, the floor sits behind the glass.
     if (f > 0) {
-      store.fillBox(r.x0 + WALL_T, yb - 1, r.z0 + WALL_T, r.x1 - WALL_T, yb, r.z1 - WALL_T, MAT_CONCRETE)
+      const si = WALL_T + 2
+      store.fillBox(r.x0 + si, yb - 1, r.z0 + si, r.x1 - si, yb, r.z1 - si, MAT_CONCRETE)
     }
   }
 

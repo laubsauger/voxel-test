@@ -83,7 +83,11 @@ export class PlayerCam {
   private chaseSnap = true
 
   constructor(aspect: number, dom?: HTMLElement) {
-    this.camera = new PerspectiveCamera(75, aspect, 0.05, 1200) // B32 — 4× world
+    // B37 — near 0.05→0.11: the FP camera sits at a fixed eye height while the
+    // body animates, so on backward-walk the leaning torso/neck poked inside the
+    // old near plane (looked like the head glitching through). 0.11 clips the
+    // intruding body without reaching the FP viewmodel (further out). B32 — 4× world.
+    this.camera = new PerspectiveCamera(75, aspect, 0.11, 1200)
     if (dom) {
       document.addEventListener('keydown', (e) => {
         if (e.code === 'KeyV') this.toggle()

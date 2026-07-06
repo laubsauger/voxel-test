@@ -220,10 +220,26 @@ function stopVehicleLoops(): void {
 const vehicleAudioHook = (): void => {
   const pl = game.phys.players.get(game.localPlayerId)
   const v = pl && pl.seatedVehicle !== 0 ? game.phys.vehicles.get(pl.seatedVehicle) : undefined
-  if (!v || !audio.unlocked || !audio.loaded) {
+  const ac = pl && pl.seatedAircraft !== 0 ? game.phys.aircraft.get(pl.seatedAircraft) : undefined
+  if ((!v && !ac) || !audio.unlocked || !audio.loaded) {
     if (vloops.engine || vloops.skid) stopVehicleLoops()
     return
   }
+  // P17 — plane prop engine: a steady drone pitched by throttle + airspeed
+  if (ac) {
+    if (vloops.arch !== 'plane' && (vloops.engine || vloops.skid)) stopVehicleLoops()
+    vloops.arch = 'plane'
+    if (!vloops.engine) {
+      void audio.play('engine-rev-loop', { volume: 0.0001 }).then((h) => { if (h) vloops.engine = h as unknown as LoopHandle })
+    } else {
+      const spd = Math.hypot(ac.vx, ac.vy, ac.vz)
+      const t = Math.min(1, ac.throttle * 0.7 + spd / 60)
+      vloops.engine.gain.gain.value = 0.3 + 0.5 * t
+      if (vloops.engine.source.playbackRate) vloops.engine.source.playbackRate.value = 1.15 + 0.7 * t
+    }
+    return
+  }
+  if (!v) return // (narrowing: past the aircraft branch, a seated vehicle exists)
   const speed = Math.hypot(v.vx, v.vy, v.vz)
   const arch = v.archetype
   if (vloops.arch !== arch && (vloops.engine || vloops.skid)) stopVehicleLoops()
@@ -255,6 +271,7 @@ const promptHook = (): void => {
   const p = game.phys.players.get(game.localPlayerId)
   if (!p) return hud.setPrompt(null)
   if (p.seatedVehicle !== 0) return hud.setPrompt({ hotkey: 'Enter', action: 'Exit vehicle' })
+  if (p.seatedAircraft !== 0) return hud.setPrompt({ hotkey: 'Enter', action: 'Exit plane' })
   let near = false
   let arch = ''
   for (const v of game.phys.vehicles.values()) {
@@ -267,10 +284,23 @@ const promptHook = (): void => {
       break
     }
   }
+  // P17 — aircraft are big; a roomier reach so you can board from a wingtip
+  let nearPlane = false
+  for (const a of game.phys.aircraft.values()) {
+    const dx = a.px - p.px
+    const dy = a.py - p.py
+    const dz = a.pz - p.pz
+    if (dx * dx + dy * dy + dz * dz < 64) {
+      nearPlane = true
+      break
+    }
+  }
   hud.setPrompt(
-    near
-      ? { hotkey: 'Enter', action: arch === 'bicycle' ? 'Ride bike' : arch === 'scooter' ? 'Ride scooter' : 'Drive' }
-      : null,
+    nearPlane
+      ? { hotkey: 'Enter', action: 'Fly' }
+      : near
+        ? { hotkey: 'Enter', action: arch === 'bicycle' ? 'Ride bike' : arch === 'scooter' ? 'Ride scooter' : 'Drive' }
+        : null,
   )
 }
 
