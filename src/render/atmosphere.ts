@@ -316,10 +316,15 @@ const FOG_BASE_Y = 5
 /** height falloff scale (m): fog thins with altitude */
 const FOG_HEIGHT_SCALE = 22
 /** distance range (m) for the aerial tint ramp */
-const FOG_NEAR = 40
-const FOG_FAR = 720 // B32 — pushed out for the 4× world (410 m/side)
-/** max fog blend — subtle aerial perspective, never soup */
-const FOG_MAX = 0.38
+const FOG_NEAR = 55
+// B37 — pulled WAY in (was 720). The finite curated world ends ~256 m from
+// centre and geometry only streams to ~340 m (LOD), so with far fog the hard
+// world EDGE was plainly visible, especially flying up. Now aerial haze ramps to
+// (near) full by the LOD horizon, dissolving the boundary into the sky.
+const FOG_FAR = 330
+/** max fog blend at the far edge — high so the world boundary reads as horizon
+ *  haze, not a wall; the near→far smoothstep keeps the foreground crisp */
+const FOG_MAX = 0.92
 
 /** star field cell grid (cells across the unit sphere) */
 const STAR_GRID = 44

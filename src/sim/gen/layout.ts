@@ -1004,10 +1004,18 @@ function makeAirports(districts: District[]): Airport[] {
   const runway: Rect = { x0: midX - 15, z0: apron.z0 + 30, x1: midX + 15, z1: apron.z1 - 30 }
   const hangar: Rect = { x0: apron.x0 + 12, z0: apron.z0 + 44, x1: midX - 22, z1: apron.z0 + 168 }
   const terminal: Rect = { x0: midX + 22, z0: apron.z1 - 168, x1: apron.x1 - 12, z1: apron.z1 - 44 }
-  const planes = [
-    { x: apron.x0 + 24, z: apron.z0 + 220, rot: 1 as const },
-    { x: apron.x1 - 60, z: apron.z1 - 240, rot: 3 as const },
-  ]
+  // B37 — planes are big (fuselage 240 vox along its axis from the origin, wings
+  // ±70 across). The apron is a tall narrow corridor split by the runway, so a
+  // plane only fits with the fuselage along +z (rot 0): footprint x[px-70..px+70]
+  // (wings), z[pz..pz+240]. Park one in each runway-side strip, clear of the
+  // hangar/terminal; guarded so an undersized airport just gets fewer.
+  const planes: { x: number; z: number; rot: 0 | 1 | 2 | 3 }[] = []
+  const leftCx = (apron.x0 + runway.x0) >> 1 // centre of the left apron strip
+  const rightCx = (runway.x1 + apron.x1) >> 1 // centre of the right apron strip
+  const p1 = { x: leftCx, z: hangar.z1 + 90, rot: 0 as const } // left, below the hangar
+  if (leftCx - 70 > apron.x0 && p1.z + 240 < terminal.z0 - 20) planes.push(p1)
+  const p2 = { x: rightCx, z: apron.z0 + 60, rot: 0 as const } // right, above the terminal
+  if (rightCx + 70 < apron.x1 && p2.z + 240 < terminal.z0 - 20) planes.push(p2)
   return [{ apron, runway, hangar, terminal, planes }]
 }
 

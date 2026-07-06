@@ -84,23 +84,27 @@ export class TodGizmo {
     })
   }
 
-  /** per-frame: ride the marker along the arc at the sun/moon's real elevation */
+  /** per-frame: ride the marker ALONG the semicircle arc by the transit time */
   update(): void {
     const s = this.sky()
     const hours = ((s.hours % 24) + 24) % 24
     this.clock.textContent = clockText(hours)
-    // horizontal sweep by hour (0h left → 24h right); vertical by real elevation.
-    const up = s.sunDir.y >= 0 ? s.sunDir : s.moonDir // whichever body is above the horizon
-    const cx = 10 + (hours / 24) * 100
-    const cy = 52 - Math.max(0, up.y) * 46 // y up = higher on the arc
+    // The arc path is a semicircle: centre (60,52), r=50, left end (10,52)=rise,
+    // top (60,2)=transit, right (110,52)=set. Parametrise by the CURRENT body's
+    // transit so the marker sits exactly on the dashed arc: day sun 06→18h,
+    // night moon 18→06h, both sweeping left→right.
+    const isSun = s.sunDir.y >= 0
+    const t = isSun ? (hours - 6) / 12 : ((((hours - 18) % 24) + 24) % 24) / 12
+    const ang = Math.PI * (1 - Math.max(0, Math.min(1, t))) // 180° → 0°
+    const cx = 60 + 50 * Math.cos(ang)
+    const cy = 52 - 50 * Math.sin(ang)
     for (const c of [this.marker, this.glow]) {
       c.setAttribute('cx', cx.toFixed(1))
       c.setAttribute('cy', cy.toFixed(1))
     }
-    const isSun = s.sunDir.y >= 0
     this.marker.classList.toggle('bb-tod-sun', isSun)
     this.marker.classList.toggle('bb-tod-moon', !isSun)
-    this.glow.style.opacity = String(0.25 + 0.35 * Math.max(0, up.y))
+    this.glow.style.opacity = String(0.2 + 0.4 * Math.sin(ang)) // brightest at transit
     // reflect pause state on the button
     this.playBtn.textContent = this.store.get('dev.cycleSpeed') > 0 ? '⏸' : '▶'
     const override = this.store.get('dev.timeOfDay') >= 0
