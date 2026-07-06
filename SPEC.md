@@ -193,3 +193,12 @@ P23|x|S|highrise variety|all towers identical — add ≥1 more facade/massing s
 P24|x|S|input box less stylish than before|a text input lost styling (regression) — restore the nicer look
 P25|x|S|bomb/explosion damage too weak on hard surfaces|highrises + roads barely dent — scale destruction or add power vs hard materials
 P26|x|S|pistol muzzle black lines + black square|tracer/muzzle-flash renders as black lines (trajectory to impact) + a semi-opaque black square at the muzzle — VFX material/blend bug
+
+## §P open (post-B37, remaining)
+
+status: . todo. Everything else in §P is done (x). This is the live open list.
+
+id|status|size|item|notes
+P16|.|L|occlusion culling|LOW ROI: frame is CPU-bound on three.js ITERATING all objects to frustum-cull them; occlusion culling only cuts DRAWN objects, not that iteration. Marginal for our bottleneck. Deprioritized unless proven otherwise.
+P27|.|M|anti-aliasing (no AA currently)|renderer antialias is bypassed by the post pipeline → hard edge aliasing + moiré on high-freq voxel/road detail, and the RESIDUAL tower-facade flicker is sub-pixel edge aliasing of the metal spandrels. GPU has headroom (CPU-bound), so FXAA/SMAA/TAA post pass is affordable. Add a final AA node to the RenderPipeline.
+P28|.|S|verify P9 residuals live|tower foundation/ground z-fight should be gone (LOD-cell sink + recessed glass); confirm in-game across sun angles, close the loop.
