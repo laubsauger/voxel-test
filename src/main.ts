@@ -98,7 +98,6 @@ let scheduledCount = 0
 /** guarded play: silent before unlock/manifest (nicety), loud on real failures */
 function sfxPlay(name: string, opts?: PlayOptions): Promise<unknown> | null {
   if (!audio.loaded || !audio.unlocked) return null
-  console.log(`[sfxprobe] ${name} flying=${game?.flying} seated=${game?.phys.players.get(game.localPlayerId)?.seatedVehicle}`)
   const p = audio.play(name, opts)
   p.then((h) => {
     if (h) scheduledCount++

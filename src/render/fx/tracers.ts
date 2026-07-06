@@ -57,9 +57,21 @@ export class TracerPool {
 
   update(dt: number): void {
     for (const s of this.slots) {
-      if (s.ttl <= 0) continue // already faded to 0 (stays visible, renders nothing)
+      if (s.ttl <= 0) continue // already collapsed to zero length (renders nothing)
       s.ttl -= dt
-      s.fade.value = s.ttl > 0 ? s.ttl / TRACER_LIFE : 0
+      if (s.ttl > 0) {
+        s.fade.value = s.ttl / TRACER_LIFE
+      } else {
+        // P26 — fade hit 0. Additive blending does NOT reliably hide a
+        // color-0 line in WebGPU, so a black segment was lingering along the
+        // shot path. Collapse the segment to a point (both endpoints equal) so
+        // it truly renders nothing — no .visible flip (avoids the pipeline
+        // recompile hitch the pool was designed around).
+        s.fade.value = 0
+        const pos = s.line.geometry.getAttribute('position') as BufferAttribute
+        pos.setXYZ(1, pos.getX(0), pos.getY(0), pos.getZ(0))
+        pos.needsUpdate = true
+      }
     }
   }
 }

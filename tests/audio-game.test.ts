@@ -167,14 +167,16 @@ describe('GameAudio footsteps', () => {
     expect(fake.names().filter((n) => n.startsWith('footstep-'))).toHaveLength(0)
   })
 
-  it('plays takeoff on leaving ground upward and landing on touchdown, hard/soft by surface', () => {
+  it('plays a surface push-off scuff on takeoff and a landing thud on touchdown', () => {
+    // takeoff reuses the clean surface footstep (the jump-takeoff samples carried
+    // a tonal artifact that dinged on every jump); landing keeps its own thud.
     const fake = new FakePlayer()
     const ga = new GameAudio(fake, flatWorld(4)) // concrete = hard
     ga.update(1 / 60, walker({ vx: 0 })) // grounded baseline
     ga.update(1 / 60, walker({ vx: 0, grounded: false, vy: 6 })) // jump!
     for (let i = 0; i < 30; i++) ga.update(1 / 60, walker({ vx: 0, grounded: false, vy: -2 }))
     ga.update(1 / 60, walker({ vx: 0, grounded: true })) // land
-    expect(fake.names()).toEqual(['jump-takeoff-hard', 'jump-land-hard'])
+    expect(fake.names()).toEqual(['footstep-run-concrete', 'jump-land-hard'])
   })
 
   it('falling off a ledge (no upward velocity) plays no takeoff but still lands', () => {

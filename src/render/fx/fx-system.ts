@@ -98,7 +98,10 @@ export class FxSystem {
     mMat.depthWrite = false
     mMat.blending = AdditiveBlending
     this.muzzle = new Sprite(mMat)
-    this.muzzle.scale.setScalar(0.16)
+    // P26 — scale 0 when idle so a fade-to-black sprite can't linger as a black
+    // square (additive blending doesn't reliably hide gain-0 in WebGPU). Stays
+    // in the render list at size 0 → pipeline stays warm (no .visible recompile).
+    this.muzzle.scale.setScalar(0)
     // B33 — stay permanently visible (muzzleGain drives opacity/color to 0 when
     // idle, so it renders nothing). A .visible=false→true flip on the first
     // shot defers this SpriteNodeMaterial's pipeline compile to that frame — a
@@ -140,6 +143,7 @@ export class FxSystem {
         // invisible without a .visible flip; keep it visible to hold the warm
         // pipeline (see constructor).
         this.muzzleLight.intensity = 0 // stays visible/counted; just goes dark
+        this.muzzle.scale.setScalar(0) // P26 — collapse so no black square lingers
       }
     }
   }
@@ -284,6 +288,7 @@ export class FxSystem {
         this.muzzleLight.position.copy(this.muzzle.position)
         // muzzle stays permanently visible (B33); muzzleTtl ramps muzzleGain up
         this.muzzleTtl = 0.055
+        this.muzzle.scale.setScalar(0.16) // P26 — pop to size for the flash
       }
     }
 

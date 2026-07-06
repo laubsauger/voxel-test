@@ -183,8 +183,15 @@ export class GameAudio {
     if (this.prevGrounded && !player.grounded && player.vy > JUMP_VY_THRESHOLD) {
       const surface = this.surfaceAt(player.px, player.py, player.pz)
       if (surface) {
-        this.engine.play(SOFT_SURFACES.has(surface) ? 'jump-takeoff-soft' : 'jump-takeoff-hard', {
+        // push-off scuff. The dedicated jump-takeoff samples carry a sustained
+        // tonal artifact (ElevenLabs gen) that reads as a "ding" on every jump —
+        // reuse the clean surface footstep instead. Landing keeps its own thud.
+        this.engine.play(`footstep-run-${surface}`, {
           position: pos,
+          refDistance: 1.5,
+          maxDistance: 30,
+          volume: 0.7 * (0.9 + Math.random() * 0.1),
+          playbackRate: 0.9 + Math.random() * 0.12,
         })
       }
     } else if (!this.prevGrounded && player.grounded) {
