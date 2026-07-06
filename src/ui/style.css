@@ -463,17 +463,27 @@
   font-weight: 600;
   letter-spacing: 0.35em;
   color: var(--amber-hot);
+  caret-color: var(--amber);
   padding: 12px 16px 12px 22px;
   border: 1px solid var(--stroke);
-  background: rgba(0, 0, 0, 0.35);
+  background: linear-gradient(var(--glass-heavy), var(--glass-heavy)), rgba(0, 0, 0, 0.35);
   text-align: center;
+  text-shadow: 0 0 18px var(--amber-glow);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 0 22px rgba(0, 0, 0, 0.45);
   outline: none;
   width: 100%;
   text-transform: uppercase;
   transition: border-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out);
 }
-.bb-mp-input:focus { border-color: var(--amber); box-shadow: 0 0 18px var(--amber-glow); }
-.bb-mp-input::placeholder { color: var(--ink-faint); text-shadow: none; }
+.bb-mp-input:focus {
+  border-color: var(--amber);
+  box-shadow: 0 0 20px var(--amber-glow), inset 0 0 16px rgba(255, 176, 60, 0.1);
+}
+.bb-mp-input::placeholder {
+  color: var(--ink-faint);
+  text-shadow: none;
+  letter-spacing: 0.28em;
+}
 .bb-mp-error {
   min-height: 20px;
   margin: 8px 0 4px;

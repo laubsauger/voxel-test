@@ -85,6 +85,10 @@ export class PlayerVisuals {
     // fly clear. Third-person is the mode for watching your own character.
     this.body.group.visible = camMode !== 'fly'
     this.body.setFirstPerson(fp && !seated)
+    // P12 — seated + fp = in-vehicle first person: hide only the head (arms stay
+    // on the wheel). setFirstPerson(false) above already made the head visible
+    // for the seated pose, so this override runs after it.
+    this.body.setSeatedHeadHidden(seated && fp)
     this.body.update(player, dt, seatYaw)
 
     this.viewmodel.group.visible = fp && !seated
