@@ -34,6 +34,8 @@ import { material, VOXEL_VOLUME } from './materials'
 import { registerDestructionOps } from './destruction'
 import { registerPlayerOps, updatePlayers, type PlayerEntity, type SplashEvent } from './player'
 import { registerProjectileOps, tickProjectiles, type Projectile } from './projectiles'
+import { registerRocketOps, tickRockets, type Rocket } from './rockets'
+import { registerTntOps, type Charge } from './tnt'
 import { attachEditPhysics } from './edit-ops'
 import type { WaterSim } from './water/water-sim'
 import {
@@ -256,6 +258,12 @@ export class PhysicsWorld {
   /** T54 bomb projectiles keyed by entity id (V8) — see projectiles.ts */
   readonly projectiles = new Map<number, Projectile>()
 
+  /** P19 rocket-launcher projectiles keyed by entity id (V8) — see rockets.ts */
+  readonly rockets = new Map<number, Rocket>()
+
+  /** P19 placed TNT charges keyed by entity id (V8) — see tnt.ts */
+  readonly charges = new Map<number, Charge>()
+
   /**
    * T60 — water field reference for player swimming. Set by attachBuoyancy()
    * (buoyancy-coupling.ts) — the one wiring point that already sees both
@@ -384,6 +392,7 @@ export class PhysicsWorld {
     tickAircraftPostStep(sim, this) // P17 — readback, crash damage, seat sync
     updatePlayers(this, sim) // character controllers, fixed order (T21)
     tickProjectiles(sim, this) // T54 — bomb arcs/fuses; detonation spawns ejecta this tick
+    tickRockets(sim, this) // P19 — rockets fly straight, detonate on first impact
     this.readbackBodies()
     this.killPlanePass()
   }
@@ -985,6 +994,8 @@ export class PhysicsWorld {
     }
     this.bodies.clear()
     this.projectiles.clear()
+    this.rockets.clear()
+    this.charges.clear()
     api.destroy(this.gravity)
     api.destroy(this.joltInterface)
     api.destroy(this.settings)
@@ -1021,6 +1032,24 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.f64(p.vx).f64(p.vy).f64(p.vz)
     h.u32(p.fuse)
     h.u8(p.resting ? 1 : 0)
+  }
+  // P19 — rockets in flight are sim state (V3)
+  h.u32(phys.rockets.size)
+  const rocketIds = [...phys.rockets.keys()].sort((a, b) => a - b)
+  for (const id of rocketIds) {
+    const r = phys.rockets.get(id)!
+    h.u32(id)
+    h.f64(r.x).f64(r.y).f64(r.z)
+    h.f64(r.vx).f64(r.vy).f64(r.vz)
+    h.u32(r.ttl)
+  }
+  // P19 — placed TNT charges are sim state (V3)
+  h.u32(phys.charges.size)
+  const chargeIds = [...phys.charges.keys()].sort((a, b) => a - b)
+  for (const id of chargeIds) {
+    const c = phys.charges.get(id)!
+    h.u32(id)
+    h.f64(c.x).f64(c.y).f64(c.z)
   }
   h.u32(phys.players.size)
   const pids = [...phys.players.keys()].sort((a, b) => a - b)
@@ -1063,6 +1092,8 @@ export async function createPhysics(sim: Sim): Promise<PhysicsWorld> {
   registerDestructionOps(sim, phys)
   registerPlayerOps(sim, phys)
   registerProjectileOps(sim, phys) // T54 — 'throw' op; integration runs in phys.tick
+  registerRocketOps(sim, phys) // P19 — 'rocket' op; tickRockets runs in phys.tick
+  registerTntOps(sim, phys) // P19 — 'tnt_place' / 'tnt_detonate' ops (remote, no tick)
   registerVehicleOps(sim, phys) // T64 — vehicle_spawn/enter/exit ops
   registerAircraftOps(sim, phys) // P17 — aircraft_spawn/enter/exit ops
   phys.simRef = sim // T64 — blast → vehicle damage path needs the sim

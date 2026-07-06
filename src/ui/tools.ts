@@ -21,6 +21,9 @@ export type ToolFireEvent =
   | { kind: 'dig' | 'place'; x: number; y: number; z: number; mat: number }
   | { kind: 'shoot'; hit: { x: number; y: number; z: number; mat: number } | null }
   | { kind: 'explode'; x: number; y: number; z: number; power: number }
+  | { kind: 'rocket'; x: number; y: number; z: number } // P19 — launch position (muzzle)
+  | { kind: 'tnt_place'; x: number; y: number; z: number } // P19 — charge drop point
+  | { kind: 'tnt_detonate' } // P19 — remote trigger pressed
 
 const hitMeters = (hit: ToolHit) => ({ x: hit.mx, y: hit.my, z: hit.mz, mat: hit.mat })
 
@@ -34,6 +37,10 @@ export const BOMB_RANGE = 80
 export const BOMB_THROW_SPEED = 14
 /** T54 — extra upward velocity for a satisfying lob arc, m/s */
 export const BOMB_THROW_LOFT = 2.5
+/** P19 — rocket aim range for hitmarker feedback, meters */
+export const ROCKET_RANGE = 120
+/** P19 — TNT placement reach, meters */
+export const TNT_PLACE_RANGE = 12
 
 interface ToolSpec {
   cooldownMs: number
@@ -44,6 +51,8 @@ const SPECS: Record<string, ToolSpec> = {
   build: { cooldownMs: 220 },
   gun: { cooldownMs: 160 },
   bomb: { cooldownMs: 900 },
+  rocket: { cooldownMs: 750 },
+  tnt: { cooldownMs: 260 },
 }
 
 export class ToolController {
@@ -57,8 +66,14 @@ export class ToolController {
   ) {
     document.addEventListener('keydown', (e) => {
       if (this.game.state !== 'play') return
-      const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code)
-      if (n >= 0) hud.select(n)
+      // P19 — hotbar Digit1..Digit6 (dig/build/gun/bomb/rocket/tnt)
+      const m = /^Digit([1-6])$/.exec(e.code)
+      if (m) {
+        hud.select(Number(m[1]) - 1)
+        return
+      }
+      // P19 — dedicated remote-detonate key for the TNT tool
+      if (e.code === 'KeyG' && this.locked() && hud.tool.id === 'tnt') this.detonateTnt()
     })
     document.addEventListener(
       'wheel',
@@ -77,6 +92,14 @@ export class ToolController {
     })
     document.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.held = false
+    })
+    // P19 — right-click is the TNT remote detonator (all placed charges at once)
+    document.addEventListener('contextmenu', (e) => {
+      if (this.game.state === 'play' && this.locked()) e.preventDefault()
+    })
+    document.addEventListener('mousedown', (e) => {
+      if (e.button !== 2 || this.game.state !== 'play' || !this.locked()) return
+      if (this.hud.tool.id === 'tnt') this.detonateTnt()
     })
     addEventListener('blur', () => (this.held = false))
     document.addEventListener('pointerlockchange', () => {
@@ -172,6 +195,41 @@ export class ToolController {
         })
         break
       }
+      case 'rocket': {
+        // P19: fire a fast straight rocket — the sim flies it and detonates the
+        // T55 explosion on the first voxel/body impact. Detonation FX ride the
+        // sim explosion events; onFire only carries the launch (muzzle) point.
+        push({ kind: 'rocket', ox: o.x, oy: o.y, oz: o.z, dx: d.x, dy: d.y, dz: d.z })
+        const rHit = raycastWorld(game.sim.world, o.x, o.y, o.z, d.x, d.y, d.z, ROCKET_RANGE)
+        if (rHit) hud.hitmarker()
+        this.onFire?.({ kind: 'rocket', x: o.x, y: o.y, z: o.z })
+        break
+      }
+      case 'tnt': {
+        // P19: PLACE a charge on the aimed surface (place several, then remote
+        // detonate). Right-click / G triggers detonateTnt() — not this path.
+        const hit = raycastWorld(game.sim.world, o.x, o.y, o.z, d.x, d.y, d.z, TNT_PLACE_RANGE)
+        if (!hit) return
+        // rest the charge on the struck face (empty voxel just outside it)
+        const cx = (hit.px + 0.5) * VOXEL_SIZE
+        const cy = (hit.py + 0.5) * VOXEL_SIZE
+        const cz = (hit.pz + 0.5) * VOXEL_SIZE
+        push({ kind: 'tnt_place', x: cx, y: cy, z: cz })
+        hud.hitmarker()
+        this.onFire?.({ kind: 'tnt_place', x: cx, y: cy, z: cz })
+        break
+      }
     }
+  }
+
+  /** P19 — remote detonator: blow every placed TNT charge at once (deterministic sim op) */
+  private detonateTnt(): void {
+    const now = performance.now()
+    // share the tnt cooldown so a right-click can't spam the queue
+    if (now - this.lastFire < SPECS.tnt.cooldownMs) return
+    this.lastFire = now
+    this.game.pushOp({ kind: 'tnt_detonate' })
+    this.hud.pulseCrosshair()
+    this.onFire?.({ kind: 'tnt_detonate' })
   }
 }

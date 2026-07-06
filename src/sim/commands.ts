@@ -74,6 +74,35 @@ export interface ThrowOp {
 }
 
 /**
+ * P19 — fire a rocket: a fast straight projectile from the camera aim that
+ * detonates a T55 explosion on the first world-voxel or dynamic-body impact.
+ */
+export interface RocketOp {
+  kind: 'rocket'
+  /** launch position, world meters */
+  ox: number
+  oy: number
+  oz: number
+  /** aim direction, normalized */
+  dx: number
+  dy: number
+  dz: number
+}
+
+/** P19 — place a remote-detonated TNT charge entity at the aim point (world meters) */
+export interface TntPlaceOp {
+  kind: 'tnt_place'
+  x: number
+  y: number
+  z: number
+}
+
+/** P19 — remote detonator: blow ALL placed charges at once (chained explosions) */
+export interface TntDetonateOp {
+  kind: 'tnt_detonate'
+}
+
+/**
  * T64 — spawn a drivable vehicle entity (dev/scene op). Position is the
  * CENTER of the car footprint in world meters (y = ground surface under the
  * wheels); yaw in radians about +Y (0 = car front faces -z, three.js YXZ).
@@ -130,6 +159,9 @@ export type Op =
   | SpawnOp
   | NoclipOp
   | ThrowOp
+  | RocketOp
+  | TntPlaceOp
+  | TntDetonateOp
   | VehicleSpawnOp
   | VehicleEnterOp
   | VehicleExitOp

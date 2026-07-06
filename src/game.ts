@@ -25,6 +25,8 @@ import { Flashlight } from './render/flashlight'
 import { UnderwaterOverlay } from './render/water/underwater'
 import { FxSystem } from './render/fx/fx-system'
 import { ProjectileMeshes } from './render/projectile-meshes'
+import { RocketMeshes } from './render/rocket-meshes'
+import { TntMeshes } from './render/tnt-meshes'
 import { FixedStepDriver, Sim } from './sim/loop'
 import type { Op } from './sim/commands'
 import type { LockstepDriver, LockstepNode } from './net/lockstep'
@@ -140,6 +142,9 @@ export class Game {
   readonly flashlight: Flashlight
   private readonly underwater = new UnderwaterOverlay()
   private readonly projectileMeshes: ProjectileMeshes
+  /** P19 — rocket-launcher projectile + placed-TNT-charge visuals (V6 reads) */
+  private readonly rocketMeshes: RocketMeshes
+  private readonly tntMeshes: TntMeshes
   /** sim event tap for audio (main.ts) — called with the frame's drained events */
   onSimEvents: ((events: ReturnType<Sim['drainEvents']>) => void) | null = null
   private readonly spectator: SpectatorCam
@@ -188,6 +193,9 @@ export class Game {
     this.scene.add(this.fx.group)
     // T54 — bomb projectile visuals (reads phys.projectiles, trails via fx)
     this.projectileMeshes = new ProjectileMeshes(this.scene, this.fx)
+    // P19 — rocket projectile + placed TNT charge visuals (read-only, V6)
+    this.rocketMeshes = new RocketMeshes(this.scene, this.fx)
+    this.tntMeshes = new TntMeshes(this.scene, this.fx)
     // T74 birds + T75 flashlight + T60 underwater tint (all render-only, V6)
     this.scene.add(this.birds.group)
     this.flashlight = new Flashlight(this.cam.camera)
@@ -484,6 +492,8 @@ export class Game {
       this.aircraftMeshes.update(this.phys.aircraft) // P17
       this.fx.update(dt, fxEvents, this.cam.camera)
       this.projectileMeshes.update(this.phys.projectiles, dt)
+      this.rocketMeshes.update(this.phys.rockets, dt) // P19
+      this.tntMeshes.update(this.phys.charges, dt) // P19
       this.birds.update(dt, this.world.dayFactor)
       this.flashlight.update(dt)
       this.underwater.update(this.cam.camera.position, this.water)

@@ -158,6 +158,51 @@ export class FxSystem {
     )
   }
 
+  /**
+   * P19 — hot exhaust puff + spark behind a flying rocket (called by
+   * RocketMeshes each cadence tick). Bright additive smoke so it reads as a
+   * jet plume, plus a small ember.
+   */
+  rocketTrail(x: number, y: number, z: number): void {
+    const g = rand(0.5, 0.75)
+    this.smoke.emit(
+      x + rand(-0.04, 0.04), y + rand(-0.04, 0.04), z + rand(-0.04, 0.04),
+      rand(-0.15, 0.15), rand(-0.05, 0.2), rand(-0.15, 0.15),
+      rand(0.35, 0.6), rand(0.12, 0.22), g, g * 0.85, g * 0.7, 0.6,
+    )
+    this.sparks.emit(
+      x, y, z,
+      rand(-0.6, 0.6), rand(-0.3, 0.6), rand(-0.6, 0.6),
+      rand(0.1, 0.25), rand(0.012, 0.02), 9, 4.6, 1.5, 1,
+    )
+  }
+
+  /**
+   * P19 — backblast when a rocket launches: a cone of smoke + sparks fired
+   * OPPOSITE the aim direction (nx,ny,nz = travel dir). Called once by
+   * RocketMeshes the frame a new rocket id first appears.
+   */
+  rocketBackblast(x: number, y: number, z: number, nx: number, ny: number, nz: number): void {
+    for (let i = 0; i < 10; i++) {
+      const s = rand(2.5, 6)
+      this.smoke.emit(
+        x, y, z,
+        -nx * s + rand(-1, 1), -ny * s + rand(-0.4, 0.8), -nz * s + rand(-1, 1),
+        rand(0.35, 0.6), rand(0.12, 0.22), 0.5, 0.42, 0.36, 0.6,
+      )
+    }
+    for (let i = 0; i < 14; i++) {
+      const s = rand(4, 10)
+      this.sparks.emit(
+        x, y, z,
+        -nx * s + rand(-1.2, 1.2), -ny * s + rand(-0.5, 1), -nz * s + rand(-1.2, 1.2),
+        rand(0.15, 0.35), rand(0.014, 0.024), 9, 4.6, 1.5, 1,
+      )
+    }
+    // muzzle flash sprite reuse: a brief hot puff at the tube mouth
+    this.flash.emit(x, y, z, 0, 0, 0, 0.08, 0.8, 14, 9, 4, 1)
+  }
+
   /** tiny hot sputter at the fuse tip (called by ProjectileMeshes) */
   fuseSpark(x: number, y: number, z: number): void {
     for (let i = 0; i < 2; i++) {

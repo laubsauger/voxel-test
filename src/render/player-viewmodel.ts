@@ -19,11 +19,13 @@ export const SWAP_DURATION = 0.3
 export const SWING_DURATION = 0.3
 
 /** per-tool swing/recoil style; mirrors the hotbar ToolIds (src/ui/hud.ts) */
-export type ViewTool = 'dig' | 'build' | 'gun' | 'bomb'
-const TOOL_IDS: readonly ViewTool[] = ['dig', 'build', 'gun', 'bomb']
+export type ViewTool = 'dig' | 'build' | 'gun' | 'bomb' | 'rocket' | 'tnt'
+const TOOL_IDS: readonly ViewTool[] = ['dig', 'build', 'gun', 'bomb', 'rocket', 'tnt']
 
 /** render-side anim cooldowns (ms) — mirror tool cadence, feedback only */
-const ANIM_COOLDOWN_MS: Record<ViewTool, number> = { dig: 220, build: 220, gun: 160, bomb: 900 }
+const ANIM_COOLDOWN_MS: Record<ViewTool, number> = {
+  dig: 220, build: 220, gun: 160, bomb: 900, rocket: 750, tnt: 260,
+}
 
 const SKIN_MAT = new MeshStandardMaterial({ color: COLOR_SKIN, roughness: 0.85 })
 const SLEEVE_MAT = new MeshStandardMaterial({ color: COLOR_SHIRT, roughness: 0.9 })
@@ -32,6 +34,9 @@ const METAL_MAT = new MeshStandardMaterial({ color: 0x8d939c, roughness: 0.35, m
 const DARK_MAT = new MeshStandardMaterial({ color: 0x2b2b30, roughness: 0.5, metalness: 0.3 })
 const CONCRETE_MAT = new MeshStandardMaterial({ color: 0xb8b4ac, roughness: 0.95 })
 const FUSE_MAT = new MeshStandardMaterial({ color: 0xd9a13c, roughness: 0.6 })
+const TNT_MAT = new MeshStandardMaterial({ color: 0xb0342a, roughness: 0.85 })
+const TNT_BAND_MAT = new MeshStandardMaterial({ color: 0xe8e2d0, roughness: 0.8 })
+const WARHEAD_MAT = new MeshStandardMaterial({ color: 0x9a3b2c, roughness: 0.6, metalness: 0.4 })
 
 function box(w: number, h: number, d: number, mat: MeshStandardMaterial, x = 0, y = 0, z = 0): Mesh {
   const m = new Mesh(new BoxGeometry(w, h, d), mat)
@@ -73,6 +78,17 @@ function buildTool(id: ViewTool): Group {
       g.add(box(0.18, 0.18, 0.18, DARK_MAT, 0, 0.13, -0.08))
       g.add(box(0.04, 0.1, 0.04, FUSE_MAT, 0.04, 0.26, -0.1))
       break
+    case 'rocket': // shoulder-fired launcher tube + stubby warhead
+      g.add(box(0.14, 0.14, 0.62, DARK_MAT, 0, 0.12, -0.16))
+      g.add(box(0.16, 0.16, 0.1, METAL_MAT, 0, 0.12, 0.14)) // rear blast collar
+      g.add(box(0.11, 0.11, 0.16, WARHEAD_MAT, 0, 0.12, -0.5)) // warhead poking out the muzzle
+      g.add(box(0.03, 0.09, 0.14, METAL_MAT, 0, 0.22, -0.18)) // top sight rail
+      break
+    case 'tnt': // red dynamite bundle with a light band
+      g.add(box(0.2, 0.16, 0.16, TNT_MAT, 0, 0.13, -0.08))
+      g.add(box(0.205, 0.05, 0.165, TNT_BAND_MAT, 0, 0.13, -0.08)) // wrap band
+      g.add(box(0.02, 0.09, 0.02, DARK_MAT, 0, 0.24, -0.08)) // detonator nub
+      break
   }
   return g
 }
@@ -104,7 +120,9 @@ export class PlayerViewmodel {
     this.group.add(this.armR, this.armL)
     // carry angle per tool: cancels the arm's upward pitch so the shovel
     // rides tip-down and the gun sits level
-    const carry: Record<ViewTool, number> = { dig: -0.85, build: -0.25, gun: -0.3, bomb: -0.25 }
+    const carry: Record<ViewTool, number> = {
+      dig: -0.85, build: -0.25, gun: -0.3, bomb: -0.25, rocket: -0.35, tnt: -0.25,
+    }
     for (const id of TOOL_IDS) {
       const t = buildTool(id)
       t.visible = id === this.equipped
@@ -121,7 +139,7 @@ export class PlayerViewmodel {
     const now = performance.now()
     if (now - this.lastUseAt < ANIM_COOLDOWN_MS[this.equipped]) return
     this.lastUseAt = now
-    if (this.equipped === 'gun') this.recoilK = 1
+    if (this.equipped === 'gun' || this.equipped === 'rocket') this.recoilK = 1
     else this.swingT = 0
   }
 
