@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   generateLayout,
   isCarKind,
+  isTwoWheelerKind,
   GROUND_Y,
   propRect,
   SPAWN_VX,
@@ -46,8 +47,38 @@ describe('town layout generator (T19/T50, V2)', () => {
     expect(l.pools.length).toBeGreaterThan(0)
     expect(l.props.some((p) => isCarKind(p.kind))).toBe(true)
     expect(l.groundY).toBe(GROUND_Y)
+    // P14 — ridable two-wheelers scattered in the denser districts
+    expect(l.props.some((p) => p.kind === 'bicycle')).toBe(true)
+    expect(l.props.some((p) => p.kind === 'scooter')).toBe(true)
     expect(GROUND_Y).toBeGreaterThanOrEqual(40)
     expect(GROUND_Y).toBeLessThanOrEqual(64)
+  })
+
+  it('P14 — scattered two-wheelers keep clear of every building (spawn safety)', () => {
+    // WHY: parked two-wheelers become real Jolt vehicles; one whose footprint
+    // clips a wall would be ejected violently at spawn (the B36 "freakout").
+    // They must sit fully outside houses, rowhouse blocks, towers and the
+    // villa cabana — modest counts, both kinds present, across seeds.
+    for (const seed of [42, 1234, 7]) {
+      const l = generateLayout(seed)
+      const twos = l.props.filter((p) => isTwoWheelerKind(p.kind))
+      expect(twos.length, `seed ${seed}: some two-wheelers`).toBeGreaterThanOrEqual(4)
+      expect(twos.length, `seed ${seed}: modest count`).toBeLessThanOrEqual(30)
+      expect(twos.some((p) => p.kind === 'bicycle')).toBe(true)
+      expect(twos.some((p) => p.kind === 'scooter')).toBe(true)
+      const buildings: Rect[] = [
+        ...l.houses.flatMap((h) => [h.rect, ...(h.garage ? [h.garage] : []), ...(h.ell ? [h.ell] : [])]),
+        ...l.rowBlocks.map((b) => b.rect),
+        ...l.towers.map((t) => t.rect),
+        l.villa.cabana,
+      ]
+      for (const p of twos) {
+        const r = propRect(p)
+        for (const b of buildings) {
+          expect(overlaps(r, b), `seed ${seed}: ${p.kind} clips a building`).toBe(false)
+        }
+      }
+    }
   })
 
   it('districts: 4×4 downtown core + nature ring + coast, disjoint, in bounds (T50/B32)', () => {

@@ -176,6 +176,39 @@ function buildBench(): VoxelGrid {
   return g
 }
 
+// ---- P14 two-wheelers: authored voxel frames for the ridable bicycle +
+// delivery scooter props (physics wheels are added by vehicle.ts; the frame
+// carries no wheel voxels). Footprints must match PROP_DIMS bicycle/scooter.
+// vehicle.ts resolveArchetype reads THESE grids so the chassis and the parked
+// prop are one model (single source of truth). --------------------------------
+
+/** bicycle: thin metal frame, saddle + handlebar (0.4 × 1.3 × 1.8 m) */
+export function buildBicycle(): VoxelGrid {
+  const g = makeGrid(4, 13, 18)
+  fill(g, 1, 4, 2, 2, 8, 3, MAT_METAL) // head tube / fork column
+  fill(g, 1, 8, 2, 2, 9, 4, MAT_METAL) // stem
+  fill(g, 0, 9, 2, 3, 9, 3, MAT_ASPHALT) // handlebar grips
+  fill(g, 1, 4, 4, 2, 5, 14, MAT_METAL) // top/down tube spine
+  fill(g, 1, 6, 12, 2, 8, 13, MAT_METAL) // seat post
+  fill(g, 0, 9, 12, 3, 9, 14, MAT_ASPHALT) // saddle
+  fill(g, 1, 4, 14, 2, 6, 15, MAT_METAL) // rear stay
+  return g
+}
+
+/** delivery scooter: step-through frame + big rear topbox (0.6 × 1.4 × 2.0 m) */
+export function buildScooter(): VoxelGrid {
+  const g = makeGrid(6, 14, 20)
+  const body = MAT_ROOFTILE // moped red
+  fill(g, 1, 3, 1, 4, 4, 18, MAT_METAL) // floorboard / spine
+  fill(g, 1, 4, 1, 4, 10, 3, body) // front apron
+  fill(g, 2, 6, 1, 3, 6, 1, MAT_LAMP) // headlight
+  fill(g, 0, 10, 1, 5, 10, 3, MAT_ASPHALT) // handlebar
+  fill(g, 1, 5, 9, 4, 7, 14, body) // seat base
+  fill(g, 0, 7, 9, 5, 8, 14, MAT_ASPHALT) // saddle
+  fill(g, 0, 4, 15, 5, 9, 19, MAT_PLASTER) // delivery topbox
+  return g
+}
+
 /** garden shed 2.2×1.8 m, 2 m tall: wood walls, flat roof, door on -z */
 function buildShed(): VoxelGrid {
   const g = makeGrid(22, 20, 18)
@@ -201,6 +234,8 @@ export function placeholderProps(): Record<string, VoxelGrid> {
     sofa: buildSofa(),
     bench: buildBench(),
     shed: buildShed(),
+    bicycle: buildBicycle(), // P14 — ridable two-wheelers
+    scooter: buildScooter(),
   }
   for (const [arch, build] of Object.entries(CAR_BUILDERS)) {
     for (let c = 0; c < CAR_BODY_MATS.length; c++) {

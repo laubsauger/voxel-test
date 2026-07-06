@@ -478,6 +478,12 @@ export function isCarKind(kind: string): boolean {
   return /^(sedan|pickup|van)\d$/.test(kind)
 }
 
+// P14 — ridable two-wheelers: single-model props (no color suffix) that the
+// stamper converts to live Jolt vehicles just like cars. Footprints below.
+export function isTwoWheelerKind(kind: string): boolean {
+  return kind === 'bicycle' || kind === 'scooter'
+}
+
 // T51 — prop footprints (x × z voxels, unrotated). Single authority shared by
 // layout placement, props.ts grid builders, and tests.
 export const PROP_DIMS: Record<string, readonly [number, number]> = {
@@ -488,6 +494,9 @@ export const PROP_DIMS: Record<string, readonly [number, number]> = {
   sofa: [14, 6],
   bench: [12, 4],
   shed: [22, 18],
+  // P14 — two-wheeler footprints (unrotated x×z), matching the props.ts frames
+  bicycle: [4, 18],
+  scooter: [6, 20],
   ...Object.fromEntries(CAR_ARCHS.flatMap((a) => [0, 1, 2].map((c) => [`${a}${c}`, CAR_DIMS[a]]))),
 }
 
@@ -1225,6 +1234,52 @@ function makeParks(seed: number, districts: District[]): ParkOut {
   return out
 }
 
+/**
+ * P14 — scatter ridable two-wheelers around the denser districts: bicycle
+ * racks on the sidewalk side of rowhouse fronts and delivery scooters parked
+ * by commercial tower entrances. Seeded (own derived stream, V2) and kept
+ * clear of every building via the shared buildingKeep rects. Modest counts:
+ * a rack at every-other rowhouse row + a couple scooters at every-other tower
+ * (~12-24 total on the default world) — guaranteed to place both kinds.
+ */
+function scatterTwoWheelers(seed: number, rowBlocks: RowBlock[], towers: Tower[], buildingKeep: Rect[]): Prop[] {
+  const out: Prop[] = []
+  const rng = new Prng((seed ^ 0xb1c7c1e5) >>> 0)
+  const tryPlace = (kind: string, x: number, z: number, rot: 0 | 1 | 2 | 3): void => {
+    const p: Prop = { kind, x, y: GROUND_Y, z, rot }
+    if (!buildingKeep.some((b) => rectsTouch(propRect(p), b))) out.push(p)
+  }
+  // bicycle racks along rowhouse fronts (sidewalk side, outside the wall)
+  for (let i = 0; i < rowBlocks.length; i++) {
+    const b = rowBlocks[i]
+    const n = 2 + rng.nextInt(3) // 2-4 bikes (drawn unconditionally: stream stability)
+    const x0 = b.rect.x0 + 12 + rng.nextInt(24)
+    if (i % 2 !== 0) continue
+    const frontZneg = b.front === 'z-'
+    const railZ = frontZneg ? b.rect.z0 - 22 : b.rect.z1 + 4
+    for (let k = 0; k < n; k++) tryPlace('bicycle', x0 + k * 6, railZ, frontZneg ? 2 : 0)
+  }
+  // delivery scooters by commercial tower entrances (front face, on the plaza)
+  for (let i = 0; i < towers.length; i++) {
+    const t = towers[i]
+    const n = 1 + rng.nextInt(2) // 1-2 scooters
+    const off = rng.nextInt(8)
+    if (i % 2 !== 0) continue
+    const cxT = (t.rect.x0 + t.rect.x1) >> 1
+    const czT = (t.rect.z0 + t.rect.z1) >> 1
+    for (let k = 0; k < n; k++) {
+      const s = off + k * 10
+      switch (t.front) {
+        case 'z-': tryPlace('scooter', cxT - 8 + s, t.rect.z0 - 26, 0); break
+        case 'z+': tryPlace('scooter', cxT - 8 + s, t.rect.z1 + 6, 2); break
+        case 'x-': tryPlace('scooter', t.rect.x0 - 26, czT - 8 + s, 1); break
+        case 'x+': tryPlace('scooter', t.rect.x1 + 6, czT - 8 + s, 3); break
+      }
+    }
+  }
+  return out
+}
+
 export function generateLayout(seed: number): Layout {
   const prng = new Prng(seed)
   const roads = makeRoads()
@@ -1784,6 +1839,10 @@ export function generateLayout(seed: number): Layout {
     ...com.towers.map((t) => t.rect),
     villa.cabana,
   ].map((r) => growRect(r, 2))
+
+  // P14 — ridable bicycles + scooters, scattered in the denser districts clear
+  // of every building (same keep-out the parked cars use above)
+  props.push(...scatterTwoWheelers(seed, rowBlocks, com.towers, buildingKeep))
 
   // P8 — the airport/beach/desert districts stamp their surface AFTER the road
   // grid (so no roads cut through them). Drop road-following furniture + curb

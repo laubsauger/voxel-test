@@ -46,6 +46,7 @@ import {
   STAIR_W,
   STORY_H,
   isCarKind,
+  isTwoWheelerKind,
   type Airport,
   type DesertPlot,
   type Farmhouse,
@@ -1311,6 +1312,9 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   const cx0 = WORLD_VX / 2
   const cz0 = WORLD_VZ / 2
   const cars: { p: (typeof layout.props)[number]; d2: number }[] = []
+  // P14 — two-wheelers (bicycle/scooter): small, so every one becomes a LIVE
+  // ridable vehicle (never stamped static, never competing for the car cap).
+  const twoWheelers: (typeof layout.props)[number][] = []
   for (const p of layout.props) {
     if (isCarKind(p.kind)) {
       const dx = p.x - cx0
@@ -1318,28 +1322,37 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
       cars.push({ p, d2: dx * dx + dz * dz })
       continue
     }
+    if (isTwoWheelerKind(p.kind)) {
+      twoWheelers.push(p)
+      continue
+    }
     stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot)
   }
   cars.sort((a, b) => a.d2 - b.d2 || a.p.x - b.p.x || a.p.z - b.p.z)
   const vehicleSpawns: VehicleSpawnRequest[] = []
+  // shared: prop footprint center → VehicleSpawnRequest (grille at local z=0;
+  // stampGrid rot 1 turns local -z toward +x and spawnVehicle maps forward to
+  // (-sin, -cos), so yaw = -rot·π/2). Cars and two-wheelers convert identically.
+  const spawnFor = (p: (typeof layout.props)[number]): VehicleSpawnRequest => {
+    const { sx, sz } = propGrids[p.kind]
+    const [w, d] = p.rot % 2 === 0 ? [sx, sz] : [sz, sx]
+    return {
+      archetype: p.kind,
+      cx: (p.x + w / 2) * VOXEL_SIZE,
+      cy: p.y * VOXEL_SIZE,
+      cz: (p.z + d / 2) * VOXEL_SIZE,
+      yaw: -p.rot * (Math.PI / 2),
+    }
+  }
   for (let i = 0; i < cars.length; i++) {
     const p = cars[i].p
     if (i < MAX_REAL_VEHICLES) {
-      const { sx, sz } = propGrids[p.kind]
-      const [w, d] = p.rot % 2 === 0 ? [sx, sz] : [sz, sx]
-      vehicleSpawns.push({
-        archetype: p.kind,
-        cx: (p.x + w / 2) * VOXEL_SIZE,
-        cy: p.y * VOXEL_SIZE,
-        cz: (p.z + d / 2) * VOXEL_SIZE,
-        // stampGrid rot 1 turns local -z (grille) toward +x; spawnVehicle's
-        // yaw rotation maps forward to (-sin, -cos) — so yaw = -rot·π/2
-        yaw: -p.rot * (Math.PI / 2),
-      })
+      vehicleSpawns.push(spawnFor(p))
     } else {
       stampGrid(store, propGrids[p.kind], p.x, p.y, p.z, p.rot) // static voxel car
     }
   }
+  for (const p of twoWheelers) vehicleSpawns.push(spawnFor(p))
 
   // vegetation last: leaf blobs fill AIR only, so canopies drape around
   // everything already stamped instead of overwriting it
