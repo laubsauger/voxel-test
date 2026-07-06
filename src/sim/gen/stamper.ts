@@ -44,9 +44,11 @@ import {
   STAIR_STEPS,
   STAIR_TREAD,
   STAIR_W,
+  STORY_H,
   isCarKind,
   type Airport,
   type DesertPlot,
+  type Farmhouse,
   type Trailer,
   STALL_D,
   STALL_W,
@@ -606,19 +608,40 @@ function stampTower(store: ChunkStore, layout: Layout, t: Tower): void {
     const yb = g + f * t.storyH
     const gy0 = yb + 5
     const gy1 = yb + t.storyH - 1
-    // glass curtain per wall (corner columns 4 wide stay concrete)
-    store.fillBox(r.x0 + 4, gy0, r.z0, r.x1 - 4, gy1, r.z0 + 1, MAT_GLASS)
-    store.fillBox(r.x0 + 4, gy0, r.z1 - 1, r.x1 - 4, gy1, r.z1, MAT_GLASS)
-    store.fillBox(r.x0, gy0, r.z0 + 4, r.x0 + 1, gy1, r.z1 - 4, MAT_GLASS)
-    store.fillBox(r.x1 - 1, gy0, r.z0 + 4, r.x1, gy1, r.z1 - 4, MAT_GLASS)
-    // metal mullions
-    for (let x = r.x0 + 4 + t.mullion; x <= r.x1 - 5; x += t.mullion) {
-      store.fillBox(x, gy0, r.z0, x, gy1, r.z0 + 1, MAT_METAL)
-      store.fillBox(x, gy0, r.z1 - 1, x, gy1, r.z1, MAT_METAL)
-    }
-    for (let z = r.z0 + 4 + t.mullion; z <= r.z1 - 5; z += t.mullion) {
-      store.fillBox(r.x0, gy0, z, r.x0 + 1, gy1, z, MAT_METAL)
-      store.fillBox(r.x1 - 1, gy0, z, r.x1, gy1, z, MAT_METAL)
+    if (t.style === 0) {
+      // glass curtain per wall (corner columns 4 wide stay concrete)
+      store.fillBox(r.x0 + 4, gy0, r.z0, r.x1 - 4, gy1, r.z0 + 1, MAT_GLASS)
+      store.fillBox(r.x0 + 4, gy0, r.z1 - 1, r.x1 - 4, gy1, r.z1, MAT_GLASS)
+      store.fillBox(r.x0, gy0, r.z0 + 4, r.x0 + 1, gy1, r.z1 - 4, MAT_GLASS)
+      store.fillBox(r.x1 - 1, gy0, r.z0 + 4, r.x1, gy1, r.z1 - 4, MAT_GLASS)
+      // metal mullions
+      for (let x = r.x0 + 4 + t.mullion; x <= r.x1 - 5; x += t.mullion) {
+        store.fillBox(x, gy0, r.z0, x, gy1, r.z0 + 1, MAT_METAL)
+        store.fillBox(x, gy0, r.z1 - 1, x, gy1, r.z1, MAT_METAL)
+      }
+      for (let z = r.z0 + 4 + t.mullion; z <= r.z1 - 5; z += t.mullion) {
+        store.fillBox(r.x0, gy0, z, r.x0 + 1, gy1, z, MAT_METAL)
+        store.fillBox(r.x1 - 1, gy0, z, r.x1, gy1, z, MAT_METAL)
+      }
+    } else {
+      // P23 style 1 — masonry facade: brick wall face this story, then punched
+      // glass windows between brick piers (corner columns 4 wide stay concrete).
+      // Reads as a solid brick building with window holes vs the glass skin.
+      const winBot = yb + 8
+      const winTop = yb + t.storyH - 6
+      const winW = 6
+      store.fillBox(r.x0 + 4, gy0, r.z0, r.x1 - 4, gy1, r.z0 + 1, MAT_BRICK)
+      store.fillBox(r.x0 + 4, gy0, r.z1 - 1, r.x1 - 4, gy1, r.z1, MAT_BRICK)
+      store.fillBox(r.x0, gy0, r.z0 + 4, r.x0 + 1, gy1, r.z1 - 4, MAT_BRICK)
+      store.fillBox(r.x1 - 1, gy0, r.z0 + 4, r.x1, gy1, r.z1 - 4, MAT_BRICK)
+      for (let x = r.x0 + 8; x + winW <= r.x1 - 8; x += t.mullion) {
+        store.fillBox(x, winBot, r.z0, x + winW - 1, winTop, r.z0 + 1, MAT_GLASS)
+        store.fillBox(x, winBot, r.z1 - 1, x + winW - 1, winTop, r.z1, MAT_GLASS)
+      }
+      for (let z = r.z0 + 8; z + winW <= r.z1 - 8; z += t.mullion) {
+        store.fillBox(r.x0, winBot, z, r.x0 + 1, winTop, z + winW - 1, MAT_GLASS)
+        store.fillBox(r.x1 - 1, winBot, z, r.x1, winTop, z + winW - 1, MAT_GLASS)
+      }
     }
     // interior slab (floors above ground)
     if (f > 0) {
@@ -626,9 +649,15 @@ function stampTower(store: ChunkStore, layout: Layout, t: Tower): void {
     }
   }
 
-  // roof: slab, parapet, hashed HVAC boxes
+  // roof: slab, parapet/crown, hashed HVAC boxes
   store.fillBox(r.x0, roofY, r.z0, r.x1, roofY + 1, r.z1, MAT_CONCRETE)
-  stampWalls(store, r, roofY + 2, roofY + 4, MAT_CONCRETE)
+  if (t.style === 0) {
+    stampWalls(store, r, roofY + 2, roofY + 4, MAT_CONCRETE)
+  } else {
+    // P23 style 1 — taller stepped brick crown (distinct silhouette)
+    stampWalls(store, r, roofY + 2, roofY + 7, MAT_BRICK)
+    stampWalls(store, { x0: r.x0 + 2, z0: r.z0 + 2, x1: r.x1 - 2, z1: r.z1 - 2 }, roofY + 8, roofY + 9, MAT_BRICK)
+  }
   const w = r.x1 - r.x0 + 1
   const d = r.z1 - r.z0 + 1
   for (let k = 0; k < 2; k++) {
@@ -926,6 +955,96 @@ function stampAirport(store: ChunkStore, a: Airport, g: number): void {
   // apron edge lamps
 }
 
+/**
+ * P21 — rural compound: a long low farmhouse with a covered porch, a big gable
+ * barn (wide door + hayloft), and an optional grain silo (round concrete column
+ * with a metal dome). Distinctly bigger + rural vs the suburb houses.
+ */
+function stampFarmhouse(store: ChunkStore, layout: Layout, f: Farmhouse): void {
+  const g = layout.groundY
+  const frontZneg = f.front === 'z-'
+
+  // clear meadow bumps across the whole compound (grass surface at g-1 stays)
+  const cx0 = Math.min(f.house.x0, f.barn.x0)
+  const cx1 = Math.max(f.house.x1, f.barn.x1, f.silo ? f.silo.x + f.silo.r : -Infinity)
+  const cz0 = Math.min(f.house.z0, f.barn.z0, f.porch.z0)
+  const cz1 = Math.max(f.house.z1, f.barn.z1, f.porch.z1)
+  store.fillBox(cx0, g, cz0, cx1, g + 2, cz1, MAT_AIR)
+
+  // --- main house: long low body, shallow gable roof, front porch -----------
+  const h = f.house
+  const wallTop = g + f.floors * f.storyH - 1
+  store.fillBox(h.x0, g, h.z0, h.x1, g, h.z1, MAT_WOOD) // floor slab
+  stampWalls(store, h, g + 1, wallTop, f.wallMat)
+  for (let fl = 1; fl < f.floors; fl++) {
+    store.fillBox(h.x0 + WALL_T, g + fl * f.storyH - 1, h.z0 + WALL_T, h.x1 - WALL_T, g + fl * f.storyH, h.z1 - WALL_T, MAT_WOOD)
+  }
+  // gable spanning the short (z) axis, stepped 1-up:2-in
+  const roofY = wallTop + 1
+  for (let lvl = 0; h.z0 + 2 * lvl <= h.z1 - 2 * lvl; lvl++) {
+    store.fillBox(h.x0, roofY + lvl, h.z0 + 2 * lvl, h.x1, roofY + lvl, h.z1 - 2 * lvl, f.roofMat)
+  }
+  // door + flanking windows on the front wall, windows on the back too
+  const hw = h.x1 - h.x0 + 1
+  const doorOff = (hw - DOOR_W) >> 1
+  wallOpening(store, h, f.front, doorOff, DOOR_W, g + 1, g + DOOR_H, MAT_AIR)
+  const backSide: Side = frontZneg ? 'z+' : 'z-'
+  for (let fl = 0; fl < f.floors; fl++) {
+    const yb = g + fl * f.storyH
+    for (const off of [12, doorOff - 20, doorOff + DOOR_W + 8, hw - 24]) {
+      if (off < 6 || off + 10 > hw - 6) continue
+      if (fl === 0 && off + 10 >= doorOff - 3 && off <= doorOff + DOOR_W + 3) continue
+      wallOpening(store, h, f.front, off, 10, yb + 10, yb + 21, MAT_GLASS)
+      wallOpening(store, h, backSide, off, 10, yb + 10, yb + 21, MAT_GLASS)
+    }
+  }
+  // covered porch: concrete deck, corner + mid posts, wood awning
+  const p = f.porch
+  store.fillBox(p.x0, g, p.z0, p.x1, g, p.z1, MAT_CONCRETE)
+  const awnY = g + f.storyH - 2
+  const outerZ = frontZneg ? p.z0 : p.z1
+  for (const px of [p.x0, p.x1, (p.x0 + p.x1) >> 1]) {
+    store.fillBox(px, g + 1, outerZ, px, awnY - 1, outerZ, MAT_WOOD)
+  }
+  store.fillBox(p.x0, awnY, p.z0, p.x1, awnY + 1, p.z1, MAT_WOOD)
+
+  // --- barn: tall wood box, big gable roof, wide door + hayloft -------------
+  const b = f.barn
+  const barnWallTop = g + 44
+  store.fillBox(b.x0, g, b.z0, b.x1, g, b.z1, MAT_WOOD)
+  stampWalls(store, b, g + 1, barnWallTop, MAT_WOOD)
+  const barnRoofY = barnWallTop + 1
+  for (let lvl = 0; b.z0 + lvl <= b.z1 - lvl; lvl++) {
+    store.fillBox(b.x0, barnRoofY + lvl, b.z0 + lvl, b.x1, barnRoofY + lvl, b.z1 - lvl, f.roofMat)
+  }
+  const bw = b.x1 - b.x0 + 1
+  wallOpening(store, b, f.front, (bw - 24) >> 1, 24, g + 1, g + 32, MAT_AIR) // sliding door
+  wallOpening(store, b, 'x-', ((b.z1 - b.z0) >> 1) - 4, 8, barnWallTop - 12, barnWallTop - 4, MAT_AIR) // hayloft
+
+  // --- silo: round concrete column with a metal dome cap --------------------
+  if (f.silo) {
+    const s = f.silo
+    const r2 = s.r * s.r
+    const inner = (s.r - 1) * (s.r - 1)
+    const siloTop = g + 64
+    for (let y = g; y <= siloTop; y++) {
+      for (let dz = -s.r; dz <= s.r; dz++) {
+        for (let dx = -s.r; dx <= s.r; dx++) {
+          const d2 = dx * dx + dz * dz
+          if (d2 > r2) continue
+          store.setVoxel(s.x + dx, y, s.z + dz, y > g && d2 <= inner ? MAT_AIR : MAT_CONCRETE)
+        }
+      }
+    }
+    for (let dz = -s.r; dz <= s.r; dz++) {
+      for (let dx = -s.r; dx <= s.r; dx++) {
+        if (dx * dx + dz * dz > r2) continue
+        store.setVoxel(s.x + dx, siloTop + 1, s.z + dz, MAT_METAL)
+      }
+    }
+  }
+}
+
 /** slightly-oblate leaf blob; fills AIR only so it never eats structures */
 function fillLeafBlob(store: ChunkStore, cx: number, cy: number, cz: number, r: number, seed: number): void {
   const r2 = r * r
@@ -1096,6 +1215,7 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   for (const p of layout.plazas) stampPlaza(store, p, layout.groundY)
   for (const t of layout.towers) stampTower(store, layout, t)
   for (const p of layout.parking) stampParkingLot(store, p, layout.groundY)
+  for (const fh of layout.farmhouses) stampFarmhouse(store, layout, fh)
 
   const waterFills: WaterFillRequest[] = []
   for (const pool of layout.pools) {

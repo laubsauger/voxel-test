@@ -40,6 +40,14 @@
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
+/* Cinematic mode (H): hide all overlay UI for clean screenshots / video.
+   #fatal is top-level and deliberately excluded so V10 failures stay visible. */
+body.bb-cinematic #ui-root,
+body.bb-cinematic #hud,
+body.bb-cinematic .bb-dev-panel,
+body.bb-cinematic .three-inspector {
+  display: none !important;
+}
 /* zero-specificity reset so component classes keep control of padding */
 :where(#ui-root button) {
   font-family: inherit;

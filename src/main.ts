@@ -319,6 +319,19 @@ const tools = new ToolController(game, hud, (e) => {
 hud.onSelect = () => void sfxPlay('ui-hotbar')
 hud.setLockHint(false)
 
+// Cinematic mode (H) — hide ALL overlay UI (HUD, hotbar, crosshair, net HUD,
+// TOD gizmo, dev panel) for clean screenshots / video. Toggles a body class;
+// `#fatal` stays top-level and visible, and any session-death or pause exits
+// cinematic (see mpFatal + the pause branch below) so V10 failures never hide.
+let cinematic = false
+function setCinematic(on: boolean): void {
+  cinematic = on
+  document.body.classList.toggle('bb-cinematic', on)
+}
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyH' && game.state === 'play') setCinematic(!cinematic)
+})
+
 // B37 — in-game time-of-day gizmo (sun/moon arc + clock + scrub/pause controls)
 const todGizmo = new TodGizmo(() => game.world.sky, store)
 root.appendChild(todGizmo.el)
@@ -514,7 +527,10 @@ document.addEventListener('pointerlockchange', () => {
     screenshotUnlock = false // deliberate unlock: no pause, HUD hint shows re-lock path
     return
   }
-  if (game.state === 'play' && !settings.visible && settingsReturn === null && !map.isOpen) pause.show()
+  if (game.state === 'play' && !settings.visible && settingsReturn === null && !map.isOpen) {
+    if (cinematic) setCinematic(false) // reveal UI when the session pauses
+    pause.show()
+  }
 })
 
 // ============================================================================
@@ -555,6 +571,7 @@ let mpOnStart: (() => void) | null = null
 let mpOnJoinCode: ((code: string) => void) | null = null
 
 function mpFatal(title: string, lines: string[]): void {
+  setCinematic(false) // V10: session-death UI must never be hidden by cinematic
   desyncOverlay.show(title, lines)
 }
 

@@ -28,6 +28,7 @@ const KEYBINDS: [string, string][] = [
   ['Camera fp/tp', 'V'],
   ['Fly mode', 'F'],
   ['Fly up / down', 'E / Q'],
+  ['Cinematic — hide UI', 'H'],
   ['Pause', 'Esc'],
 ]
 

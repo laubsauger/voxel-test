@@ -146,6 +146,7 @@ describe('town layout generator (T19/T50, V2)', () => {
       ...l.plazas,
       ...l.parkPaths,
       ...l.ponds.map((p) => ({ x0: p.box.x0, z0: p.box.z0, x1: p.box.x1, z1: p.box.z1 })),
+      ...l.farmhouses.flatMap((f) => [f.house, f.barn, f.porch]),
       l.villa.deck,
       l.villa.cabana,
     ]
@@ -199,6 +200,7 @@ describe('town layout generator (T19/T50, V2)', () => {
       for (const t of l.towers) {
         expect(t.floors).toBeGreaterThanOrEqual(5)
         expect(t.floors).toBeLessThanOrEqual(15)
+        expect([0, 1], 'tower has a valid P23 style').toContain(t.style)
         expect(t.storyH).toBe(TOWER_STORY_H)
         // tower sits inside a commercial district
         expect(comDistricts.some((d) => contains(d.rect, t.rect)), `tower outside commercial districts`).toBe(true)
@@ -221,6 +223,57 @@ describe('town layout generator (T19/T50, V2)', () => {
         }
       }
     }
+  })
+
+  it('P23 towers: 2+ facade styles seeded per tower, both appear across the skyline', () => {
+    // WHY: every commercial tower used to be an identical glass box — a seeded
+    // per-tower style makes the skyline vary. Both styles must actually occur.
+    const seen = new Set<number>()
+    for (const seed of [42, 7, 99, 1337, 31337]) {
+      const l = generateLayout(seed)
+      for (const t of l.towers) {
+        expect([0, 1]).toContain(t.style)
+        seen.add(t.style)
+      }
+    }
+    expect(seen.has(0), 'glass-curtain towers occur').toBe(true)
+    expect(seen.has(1), 'masonry towers occur').toBe(true)
+  })
+
+  it('P21 farmhouses: rural compounds on SOME park blocks, bigger than suburb houses, clear of paths/ponds', () => {
+    // WHY: the nature rim needs an occasional rural set-piece — a big farmhouse
+    // + barn (+ silo) compound, distinct from suburb houses, placed on a subset
+    // of park blocks and kept clear of the park path cross / plaza / pond.
+    let total = 0
+    for (const seed of [42, 7, 99, 1337]) {
+      const l = generateLayout(seed)
+      const parks = l.districts.filter((d) => d.kind === 'park')
+      expect(l.farmhouses.length, `seed ${seed} has farmhouses`).toBeGreaterThan(0)
+      expect(l.farmhouses.length, `seed ${seed} occasional (not every park)`).toBeLessThan(parks.length)
+      total += l.farmhouses.length
+      for (const f of l.farmhouses) {
+        // whole compound sits inside a single park district
+        expect(
+          parks.some((d) => contains(d.rect, f.house) && contains(d.rect, f.barn)),
+          'compound inside a park district',
+        ).toBe(true)
+        // long footprint — clearly bigger than a suburb house
+        expect(f.house.x1 - f.house.x0 + 1, 'farmhouse is long').toBeGreaterThanOrEqual(88)
+        expect(overlaps(f.house, f.barn), 'barn separate from house').toBe(false)
+        // clear of park paths + plaza
+        for (const path of l.parkPaths) {
+          expect(overlaps(f.house, path), 'house off the paths').toBe(false)
+          expect(overlaps(f.barn, path), 'barn off the paths').toBe(false)
+        }
+        // clear of ponds
+        for (const p of l.ponds) {
+          const pr: Rect = { x0: p.box.x0, z0: p.box.z0, x1: p.box.x1, z1: p.box.z1 }
+          expect(overlaps(f.house, pr), 'house off the pond').toBe(false)
+          expect(overlaps(f.barn, pr), 'barn off the pond').toBe(false)
+        }
+      }
+    }
+    expect(total, 'a few farmhouses across the sampled seeds').toBeGreaterThan(4)
   })
 
   it('rowhouses: units tile each row exactly, 2-3 stories, inside their district (T50)', () => {
