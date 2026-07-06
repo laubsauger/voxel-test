@@ -1642,10 +1642,26 @@ export function generateLayout(seed: number): Layout {
   }
 
   if (!villa) throw new Error('generateLayout: villa lot was never generated (B19)')
+
+  // B36 — drop any parked CAR whose footprint clips a building. Curb-parked cars
+  // hug the road edge with no building check, so where a road borders a rowhouse
+  // / commercial block the car overlapped the wall — and since parked cars are
+  // now real physics vehicles, one spawned inside a building's colliders gets
+  // ejected violently ("freakout"). Grow the building rects for clearance.
+  const buildingKeep: Rect[] = [
+    ...houses.flatMap((h) => [h.rect, ...(h.garage ? [h.garage] : []), ...(h.ell ? [h.ell] : [])]),
+    ...rowBlocks.map((b) => b.rect),
+    ...com.towers.map((t) => t.rect),
+    villa.cabana,
+  ].map((r) => growRect(r, 2))
+  const clearedProps = props.filter(
+    (p) => !isCarKind(p.kind) || !buildingKeep.some((b) => rectsTouch(propRect(p), b)),
+  )
+
   return {
     seed, groundY: GROUND_Y, roads, districts, lots, houses, pools, villa,
     rowBlocks, towers: com.towers, parking: com.parking, plazas: com.plazas,
     ponds: park.ponds, beaches, deserts, airports, parkPaths: park.parkPaths,
-    props, trees, shrubs, fences, lamps, mailboxes, bins,
+    props: clearedProps, trees, shrubs, fences, lamps, mailboxes, bins,
   }
 }
