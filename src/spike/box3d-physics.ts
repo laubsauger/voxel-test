@@ -62,7 +62,8 @@ function chunkUnionRegion(chunkIndices: number[], margin: number) {
  *  exact shape + orientation — NOT rasterised back to voxels, which scattered
  *  rotated pieces into axis-aligned sprinkle and evicted whatever was there). */
 const FREEZE_TICKS = 55 // ~0.9 s settle
-const REST_SPEED_SQ = 0.09 // (0.3 m/s)²
+const REST_SPEED_SQ = 0.09 // (0.3 m/s)² linear
+const REST_ANG_SQ = 0.09 // (0.3 rad/s)² angular — a tipping/rolling piece is NOT at rest
 /** cap on live ACTIVE (non-frozen) dynamic bodies — stress collapse pauses above
  *  this so one building can't spawn thousands of moving fragments in a tick.
  *  Frozen rubble is cheap (no step/readback) and doesn't count against it. */
@@ -309,8 +310,12 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
       const q = body.getRotation()
       b.qx = q.x; b.qy = q.y; b.qz = q.z; b.qw = q.w
       const lv = body.getLinearVelocity()
+      const av = body.getAngularVelocity()
       const sp2 = lv.x * lv.x + lv.y * lv.y + lv.z * lv.z
-      b.restTicks = sp2 < 0.09 ? b.restTicks + 1 : 0
+      const asp2 = av.x * av.x + av.y * av.y + av.z * av.z
+      // only accrue rest when BOTH linear and angular are slow — a tower tipping
+      // over has tiny linear speed but big angular speed; it must NOT freeze mid-fall.
+      b.restTicks = sp2 < REST_SPEED_SQ && asp2 < REST_ANG_SQ ? b.restTicks + 1 : 0
     }
   }
 
