@@ -140,6 +140,15 @@ try {
     wrap(schedMod.RemeshScheduler.prototype, 'take', 'sched.take')
     wrap(wrMod.WorldRenderer.prototype, 'render', 'world.render')
     wrap(bodyMod.BodyMeshes.prototype, 'update', 'bodies.update')
+    // T94 — post-Box3D probe round: debris layer + debris render + LOD + water CA
+    const debrisMod = await import('/src/sim/debris.ts')
+    const dmMod = await import('/src/render/debris-meshes.ts')
+    const lodMod = await import('/src/render/lod-manager.ts')
+    const waterSimMod = await import('/src/sim/water/water-sim.ts')
+    wrap(debrisMod.DebrisLayer.prototype, 'step', 'debris.step')
+    wrap(dmMod.DebrisMeshes.prototype, 'update', 'debrisMeshes.update')
+    wrap(lodMod.LodManager.prototype, 'update', 'lod.update')
+    wrap(waterSimMod.WaterSim.prototype, 'step', 'waterSim.step')
 
     try {
       new PerformanceObserver((l) => {
