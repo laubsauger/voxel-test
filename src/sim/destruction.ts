@@ -92,6 +92,9 @@ export function destroySphere(sim: Sim, cx: number, cy: number, cz: number, r: n
   const y0 = Math.floor(cy - r), y1 = Math.ceil(cy + r)
   const z0 = Math.floor(cz - r), z1 = Math.ceil(cz + r)
   const r2 = r * r
+  // T89 — decisions read the pre-edit store (no removal here changes another
+  // voxel's verdict: the rule is pure distance+material), writes batch at the end
+  const removed: Array<{ x: number; y: number; z: number }> = []
   for (let y = y0; y <= y1; y++) {
     for (let z = z0; z <= z1; z++) {
       for (let x = x0; x <= x1; x++) {
@@ -101,10 +104,11 @@ export function destroySphere(sim: Sim, cx: number, cy: number, cz: number, r: n
         const d2 = dx * dx + dy * dy + dz * dz
         if (d2 > r2) continue
         const falloff = 1 - Math.sqrt(d2) / r
-        if (falloff * power >= material(mat).strength) sim.world.setVoxel(x, y, z, 0)
+        if (falloff * power >= material(mat).strength) removed.push({ x, y, z })
       }
     }
   }
+  sim.world.clearVoxels(removed)
 }
 
 /**
@@ -163,9 +167,14 @@ export function explodeSphere(
     if (lx < 0 || ly < 0 || lz < 0 || lx >= snx || ly >= sny || lz >= snz) return 0
     return snap[lx + lz * snx + ly * snx * snz]
   }
+  // T89 — removals mirror into the snapshot immediately (scan semantics) but the
+  // WORLD writes batch into one bulk clearVoxels after the scan: since the scan
+  // reads only the snapshot, interleaved world writes are unobservable, and the
+  // bulk path amortizes chunk fetches + dirty marks (~4ms off a bomb tick).
+  const removedList: Array<{ x: number; y: number; z: number }> = []
   const clear = (x: number, y: number, z: number): void => {
     snap[(x - sx0) + (z - sz0) * snx + (y - sy0) * snx * snz] = 0
-    sim.world.setVoxel(x, y, z, 0)
+    removedList.push({ x, y, z })
   }
 
   // fixed scan order y→z→x (V2). Exposure checks read the snapshot mid-scan:
@@ -208,6 +217,9 @@ export function explodeSphere(
       }
     }
   }
+
+  // batched world writes for every removal (see `clear` above)
+  sim.world.clearVoxels(removedList)
 
   // MID → ejecta clumps (deterministic prng selection, capped)
   const used = spawnEjecta(sim, phys, mid, cx, cy, cz, r, power)

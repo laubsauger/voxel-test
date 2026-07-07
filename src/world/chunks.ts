@@ -176,6 +176,57 @@ export class ChunkStore {
     if (this.onVoxelChanged) this.onVoxelChanged(x, y, z)
   }
 
+  /**
+   * T89 — bulk voxel CLEAR (→ air). Semantically identical to calling
+   * setVoxel(x,y,z,0) per entry — same skip-if-already-air, same dirty marks,
+   * same fine AABB, same per-changed-voxel onVoxelChanged — but amortizes the
+   * per-call overhead: one chunk fetch per chunk-coherent run (the destruction
+   * scans emit y→z→x order, highly coherent) and one dirty Set add per chunk.
+   * Destruction's hot write path (blast removals, island extraction).
+   */
+  clearVoxels(vs: ReadonlyArray<{ x: number; y: number; z: number }>): void {
+    let lastCi = -1
+    let chunk: Chunk | null = null
+    let chunkDirty = false
+    for (const v of vs) {
+      const { x, y, z } = v
+      if (!inBounds(x, y, z)) continue
+      const ci = chunkIndex(x >> 5, y >> 5, z >> 5)
+      if (ci !== lastCi) {
+        if (chunkDirty && lastCi >= 0) this.dirty.add(lastCi)
+        lastCi = ci
+        chunk = this.chunks[ci]
+        chunkDirty = this.dirty.has(ci)
+        if (chunk.kind === ChunkKind.Palette) this.inflate(chunk)
+      }
+      const c = chunk!
+      const vi = voxelInChunk(x, y, z)
+      if (c.kind === ChunkKind.Dense) {
+        if (c.data![vi] === 0) continue
+        c.data![vi] = 0
+      } else {
+        const current = c.kind === ChunkKind.Uniform ? c.mat : 0
+        if (current === 0) continue
+        this.realize(c)
+        c.data![vi] = 0
+      }
+      chunkDirty = true
+      if (this.dLo === null) {
+        this.dLo = [x, y, z]
+        this.dHi[0] = x; this.dHi[1] = y; this.dHi[2] = z
+      } else {
+        if (x < this.dLo[0]) this.dLo[0] = x
+        if (y < this.dLo[1]) this.dLo[1] = y
+        if (z < this.dLo[2]) this.dLo[2] = z
+        if (x > this.dHi[0]) this.dHi[0] = x
+        if (y > this.dHi[1]) this.dHi[1] = y
+        if (z > this.dHi[2]) this.dHi[2] = z
+      }
+      if (this.onVoxelChanged) this.onVoxelChanged(x, y, z)
+    }
+    if (chunkDirty && lastCi >= 0) this.dirty.add(lastCi)
+  }
+
   /** fine voxel-space AABB of edits since the last drainDirty, or null. Read-only
    *  (does not reset — call before drainDirty, which clears it). */
   peekDirtyBounds(): { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } | null {

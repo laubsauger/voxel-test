@@ -198,7 +198,8 @@ describe('explosion falloff zones (T55, B14, B16)', () => {
     // deterministic clump cap (destruction.ts). The layer's local ACTIVE_CAP
     // (500) is far above this and never triggers here.
     expect(stats.ejectaBodies).toBe(MAX_EJECTA_BODIES)
-    // T89 — deferred hulls: drain the spawn queue (≤24/step), then all exist
+    // T89 — deferred hulls: drain the spawn queue (≤16/step), then all exist
+    sim.step()
     sim.step()
     sim.step()
     expect(phys.debris!.bodies.size).toBe(MAX_EJECTA_BODIES)

@@ -52,11 +52,11 @@ const ACTIVE_CAP = 500
 const MAX_HULL_POINTS = 1600
 /** collider streaming: chunks within this many chunks of an active body AABB */
 const COLLIDER_MARGIN_CHUNKS = 1
-const COLLIDER_BUILD_BUDGET = 8
+const COLLIDER_BUILD_BUDGET = 4
 /** evict colliders unneeded for this many ticks */
 const COLLIDER_EVICT_TICKS = 240
 /** B23/T88 — deferred island-piece hull creations per step */
-const SPAWN_BUDGET = 24
+const SPAWN_BUDGET = 16
 
 /** counters only — no wall-clock in src/sim (V2 purity scan); render-layer
  *  profilers time the layer from outside if needed */

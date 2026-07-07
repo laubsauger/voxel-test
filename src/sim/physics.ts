@@ -82,14 +82,14 @@ export const COLLIDER_REBUILD_BUDGET = 4
 
 /** B23/T88 — max chunks fed into one connectivity flood; the spill re-queues.
  *  Bounds the per-tick region flood; cascades were already multi-tick. */
-export const CONNECTIVITY_CHUNKS_PER_PASS = 9
+export const CONNECTIVITY_CHUNKS_PER_PASS = 6
 
 /** T89 — edits bigger than this (voxel AABB volume) defer flood/colliders/stress
  *  off their own tick entirely (bomb-scale; shots/digs stay same-tick) */
 export const BIG_EDIT_VOL = 6000
 
 /** T89 — max island voxels extracted per tick (≥1 island always) */
-export const EXTRACT_VOX_BUDGET = 4000
+export const EXTRACT_VOX_BUDGET = 2200
 
 // ---------------------------------------------------------------------------
 // T40 — destruction feel tuning
@@ -557,7 +557,28 @@ export class PhysicsWorld implements IPhysicsWorld {
     // the edit tick itself (that tick already pays explode + connectivity)
     if (this.pendingStress.length > 0 && sim.tick % STRESS_INTERVAL === 0 && this.pendingStress[0].tick < sim.tick) {
       const boxes = this.pendingStress.splice(0)
-      for (const edit of boxes) this.runStressAndCoarse(sim, edit)
+      // T89 — MERGE overlapping/nearby boxes before running: a machine gun puts
+      // several shots into the same wall per window, and each used to pay a full
+      // stress+coarse analysis (~7ms). Nearby boxes union into one run.
+      // Deterministic: fixed order, fixed 8-voxel proximity padding.
+      const merged: typeof boxes = []
+      for (const b of boxes) {
+        let joined = false
+        for (const m of merged) {
+          if (
+            b.x0 - 8 <= m.x1 && b.x1 + 8 >= m.x0 &&
+            b.y0 - 8 <= m.y1 && b.y1 + 8 >= m.y0 &&
+            b.z0 - 8 <= m.z1 && b.z1 + 8 >= m.z0
+          ) {
+            m.x0 = Math.min(m.x0, b.x0); m.y0 = Math.min(m.y0, b.y0); m.z0 = Math.min(m.z0, b.z0)
+            m.x1 = Math.max(m.x1, b.x1); m.y1 = Math.max(m.y1, b.y1); m.z1 = Math.max(m.z1, b.z1)
+            joined = true
+            break
+          }
+        }
+        if (!joined) merged.push({ ...b })
+      }
+      for (const edit of merged) this.runStressAndCoarse(sim, edit)
     }
 
     const dirtied = sim.world.drainDirty()
@@ -657,7 +678,7 @@ export class PhysicsWorld implements IPhysicsWorld {
    * layer (headless tests), the voxels are removed and no body spawns.
    */
   extractIsland(sim: Sim, island: Island): DynamicBody | null {
-    for (const v of island.voxels) sim.world.setVoxel(v.x, v.y, v.z, 0)
+    sim.world.clearVoxels(island.voxels) // T89 — bulk write path (identical semantics)
     // B23/T88 — island hulls are created DEFERRED (budgeted in layer.step, same
     // tick for small counts) so a big collapse never builds hundreds of hulls
     // synchronously inside the edit tick. No caller needs an island body handle.
