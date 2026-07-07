@@ -34,8 +34,12 @@ describe('island extraction → LOCAL debris body (T12→T86, V17)', () => {
     expect(islands.length).toBe(1)
 
     const idBefore = sim.nextEntityId
-    const body = phys.extractIsland(sim, islands[0])
-    expect(body).not.toBeNull()
+    phys.extractIsland(sim, islands[0])
+    // B23/T88 — island hulls materialize via the layer's budgeted queue (same
+    // tick in-game: layer.step runs as a sim system). Advance one step here.
+    sim.step()
+    const body = [...phys.debris!.bodies.values()][0]
+    expect(body).toBeDefined()
 
     // V17c — debris ids are LOCAL: the deterministic sim entity counter is
     // untouched (local body counts must never influence hashed sim state)
@@ -58,7 +62,7 @@ describe('island extraction → LOCAL debris body (T12→T86, V17)', () => {
 
     // spawn transform = grid origin corner, in meters
     expect(body!.px).toBeCloseTo(2.0, 6)
-    expect(body!.py).toBeCloseTo(2.0, 6)
+    expect(body!.py).toBeCloseTo(2.0, 1) // fell ~3mm during the deferred-spawn step
     phys.dispose()
   }, 30000)
 

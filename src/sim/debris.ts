@@ -20,7 +20,7 @@
  *  - kill plane + local body cap (visual-only cap — voxels are already gone)
  */
 import Box3D, { type B3Body, type B3World } from 'box3d-wasm/standard'
-import { CHUNK, VOXEL_SIZE, WORLD_CX, WORLD_CZ, chunkIndex, type ChunkStore } from '../world/chunks'
+import { CHUNK, ChunkKind, VOXEL_SIZE, WORLD_CX, WORLD_CZ, chunkIndex, type ChunkStore } from '../world/chunks'
 import { greedyBoxes } from './greedy-boxes'
 import { MAT_FLAG_FLOATS, material, VOXEL_VOLUME } from './materials'
 import type { IslandVoxel } from './connectivity'
@@ -52,9 +52,11 @@ const ACTIVE_CAP = 500
 const MAX_HULL_POINTS = 1600
 /** collider streaming: chunks within this many chunks of an active body AABB */
 const COLLIDER_MARGIN_CHUNKS = 1
-const COLLIDER_BUILD_BUDGET = 24
+const COLLIDER_BUILD_BUDGET = 8
 /** evict colliders unneeded for this many ticks */
 const COLLIDER_EVICT_TICKS = 240
+/** B23/T88 — deferred island-piece hull creations per step */
+const SPAWN_BUDGET = 24
 
 /** counters only — no wall-clock in src/sim (V2 purity scan); render-layer
  *  profilers time the layer from outside if needed */
@@ -74,9 +76,13 @@ export class DebrisLayer {
   private tickNo = 0
   private readonly chunkBodies = new Map<number, B3Body[]>()
   private readonly chunkLastNeeded = new Map<number, number>()
-  /** spawn tick per body — damageBodiesSphere skips SAME-tick ejecta (a blast
-   *  must not instantly re-carve the debris it just created) */
+  /** spawn BATCH per body — damageBodiesSphere skips same-batch ejecta (a blast
+   *  must not instantly re-carve the debris it just created). The batch bumps at
+   *  step END, so last tick's spawns ARE damageable by this tick's ops. */
   private readonly spawnedAt = new Map<number, number>()
+  private batch = 0
+  /** B23/T88 — voxel sets awaiting budgeted hull creation (islands) */
+  private readonly pendingSpawns: IslandVoxel[][] = []
 
   static async create(): Promise<DebrisLayer> {
     const layer = new DebrisLayer()
@@ -105,6 +111,28 @@ export class DebrisLayer {
   spawnDebris(voxels: IslandVoxel[]): DynamicBody | null {
     if (voxels.length === 0) return null
     if (voxels.length <= MONOLITH_MAX) return this.spawnPiece(voxels)
+    const frags = this.fragment(voxels)
+    let first: DynamicBody | null = null
+    for (const a of frags) {
+      const b = this.spawnPiece(a)
+      first ??= b
+    }
+    return first
+  }
+
+  /** B23/T88 — deferred spawn: pieces queue and materialize ≤ SPAWN_BUDGET per
+   *  step (hull creation off the edit tick's critical path). For islands — no
+   *  caller needs the body handle back (ejecta use spawnDebris for velocity). */
+  spawnDeferred(voxels: IslandVoxel[]): void {
+    if (voxels.length === 0) return
+    if (voxels.length <= MONOLITH_MAX) {
+      this.pendingSpawns.push(voxels)
+      return
+    }
+    for (const a of this.fragment(voxels)) this.pendingSpawns.push(a)
+  }
+
+  private fragment(voxels: IslandVoxel[]): IslandVoxel[][] {
     const frags = new Map<number, IslandVoxel[]>()
     for (const v of voxels) {
       const key = ((v.x / FRAGMENT) | 0) | (((v.z / FRAGMENT) | 0) << 10) | (((v.y / FRAGMENT) | 0) << 20)
@@ -112,12 +140,7 @@ export class DebrisLayer {
       if (!a) { a = []; frags.set(key, a) }
       a.push(v)
     }
-    let first: DynamicBody | null = null
-    for (const a of frags.values()) {
-      const b = this.spawnPiece(a)
-      first ??= b
-    }
-    return first
+    return [...frags.values()]
   }
 
   private spawnPiece(vs: IslandVoxel[]): DynamicBody | null {
@@ -161,7 +184,7 @@ export class DebrisLayer {
     }
     this.bodies.set(entity.id, entity)
     this.owned.add(entity)
-    this.spawnedAt.set(entity.id, this.tickNo)
+    this.spawnedAt.set(entity.id, this.batch)
     return entity
   }
 
@@ -326,7 +349,7 @@ export class DebrisLayer {
 
   damageBodiesSphere(wx: number, wy: number, wz: number, rMeters: number): void {
     for (const b of [...this.bodies.values()]) {
-      if (this.spawnedAt.get(b.id) === this.tickNo) continue // same-blast ejecta
+      if (this.spawnedAt.get(b.id) === this.batch) continue // same-batch (same-blast) ejecta
       const dx = b.px - wx, dy = b.py - wy, dz = b.pz - wz
       const reach = rMeters + Math.max(b.sx, b.sy, b.sz) * VOXEL_SIZE
       if (dx * dx + dy * dy + dz * dz > reach * reach) continue
@@ -351,6 +374,13 @@ export class DebrisLayer {
   /** step the local world; call once per sim tick AFTER the deterministic sim */
   step(world: ChunkStore, dt: number): void {
     this.tickNo++
+    // budgeted deferred spawns (island pieces) — hulls come up over a few ticks
+    let spawned = 0
+    while (this.pendingSpawns.length > 0 && spawned < SPAWN_BUDGET) {
+      const vs = this.pendingSpawns.shift()!
+      this.spawnPiece(vs)
+      spawned++
+    }
     this.streamColliders(world)
     if (this.activeCount > 0) this.world.step(dt, SUB_STEPS)
     this.readback()
@@ -359,6 +389,7 @@ export class DebrisLayer {
     this.prof.active = this.activeCount
     this.prof.frozen = this.frozen.size
     this.prof.chunkColliders = this.chunkBodies.size
+    this.batch++ // end-of-step: next tick's ops may damage this step's spawns
   }
 
   private readback(): void {
@@ -453,17 +484,18 @@ export class DebrisLayer {
     const cz = ((ci / WORLD_CX) | 0) % WORLD_CZ
     const cy = (ci / (WORLD_CX * WORLD_CZ)) | 0
     const ox = cx * CHUNK, oy = cy * CHUNK, oz = cz * CHUNK
-    const grid = new Uint8Array(CHUNK * CHUNK * CHUNK)
-    let any = false
-    for (let ly = 0; ly < CHUNK; ly++)
-      for (let lz = 0; lz < CHUNK; lz++)
-        for (let lx = 0; lx < CHUNK; lx++) {
-          const m = world.getVoxel(ox + lx, oy + ly, oz + lz)
-          if (m !== 0) { grid[lx + lz * CHUNK + ly * CHUNK * CHUNK] = m; any = true }
-        }
-    if (!any) { this.chunkBodies.set(ci, []); return }
+    // direct chunk access (chunkAt inflates Palette) — no per-voxel getVoxel
+    const c = world.chunkAt(ci)
+    if (c.kind === ChunkKind.Empty || (c.kind === ChunkKind.Uniform && c.mat === 0)) {
+      this.chunkBodies.set(ci, [])
+      return
+    }
+    const boxes =
+      c.kind === ChunkKind.Uniform
+        ? [{ x: 0, y: 0, z: 0, sx: CHUNK, sy: CHUNK, sz: CHUNK }] // solid cube, 1 box
+        : greedyBoxes(c.data!, CHUNK, CHUNK, CHUNK)
     const out: B3Body[] = []
-    for (const b of greedyBoxes(grid, CHUNK, CHUNK, CHUNK)) {
+    for (const b of boxes) {
       const body = this.world.createBody({
         type: 'static',
         position: {

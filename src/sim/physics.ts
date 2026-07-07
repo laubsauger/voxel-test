@@ -75,6 +75,15 @@ export const GRAVITY_Y = -9.81
  *  not per shot. ~6 ticks = 100ms collapse latency, imperceptible. */
 export const STRESS_INTERVAL = 6
 
+/** B23/T88 — stale Jolt chunk-collider rebuilds per tick. 4 × ~1-2ms ≈ ≤8ms of
+ *  rebuild work per tick; a bomb's 20-30 dirty chunks clear in ~5-7 ticks with
+ *  the OLD shapes live meanwhile (anchor-nearest rebuilt first). */
+export const COLLIDER_REBUILD_BUDGET = 4
+
+/** B23/T88 — max chunks fed into one connectivity flood; the spill re-queues.
+ *  Bounds the per-tick region flood; cascades were already multi-tick. */
+export const CONNECTIVITY_CHUNKS_PER_PASS = 9
+
 // ---------------------------------------------------------------------------
 // T40 — destruction feel tuning
 // ---------------------------------------------------------------------------
@@ -374,6 +383,9 @@ export class PhysicsWorld implements IPhysicsWorld {
     this.streamColliders(sim) // B35 — load/evict static colliders near anchors
     tickVehiclesPlow(sim, this) // T64 — carve weak materials BEFORE collider rebuild
     this.structuralPass(sim)
+    // B23/T88 — budgeted stale-collider rebuilds BEFORE the Jolt step: anchor-
+    // nearest first, so plow carves land same-tick while bomb batches spread out
+    this.flushStaleColliders(sim.world, COLLIDER_REBUILD_BUDGET)
     tickVehiclesPreStep(this) // T64 — driver input → Jolt controller
     tickAircraftPreStep(this) // P17 — pilot input → arcade flight velocity
     this.joltInterface.Step(DT, 1)
@@ -451,15 +463,34 @@ export class PhysicsWorld implements IPhysicsWorld {
     const editBounds = sim.world.peekDirtyBounds()
     const drained = sim.world.drainDirty()
     for (const ci of drained) {
-      this.rebuildChunkBody(sim.world, ci)
+      this.staleColliders.add(ci) // B23/T88 — budgeted rebuild, not synchronous
       this.remesh.add(ci)
     }
     this.debris?.invalidateChunks(sim.world, drained)
-    const check = this.pendingConnectivity.concat(drained)
+    const queued = this.pendingConnectivity.concat(drained)
     this.pendingConnectivity = []
-    // NOTE: no early return on empty `check` — a queued stress/coarse flush must
+    // NOTE: no early return on empty queue — a queued stress/coarse flush must
     // still fire on its scheduled tick even when no chunk went dirty this tick.
-    if (check.length === 0 && this.pendingStress.length === 0) return
+    if (queued.length === 0 && this.pendingStress.length === 0) return
+
+    // B23/T88 — connectivity floods AT MOST once per tick and over at most
+    // CONNECTIVITY_CHUNKS_PER_PASS chunks (ascending ci = deterministic); the
+    // spill waits for the NEXT tick (structuralPass runs again from the op
+    // handler AND phys.tick in the same tick — without the once-guard the spill
+    // would just re-flood immediately and the cap would bound nothing).
+    let check: number[] = []
+    if (queued.length > 0 && this.lastFloodTick !== sim.tick) {
+      this.lastFloodTick = sim.tick
+      if (queued.length > CONNECTIVITY_CHUNKS_PER_PASS) {
+        queued.sort((a, b) => a - b)
+        check = queued.slice(0, CONNECTIVITY_CHUNKS_PER_PASS)
+        this.pendingConnectivity = queued.slice(CONNECTIVITY_CHUNKS_PER_PASS)
+      } else {
+        check = queued
+      }
+    } else if (queued.length > 0) {
+      this.pendingConnectivity = queued // already flooded this tick — hold
+    }
 
     if (check.length > 0) {
       const region = chunkUnionRegion(check, CONNECTIVITY_MARGIN)
@@ -475,12 +506,14 @@ export class PhysicsWorld implements IPhysicsWorld {
     // window, not per shot. ~100ms collapse latency is imperceptible.
     if (editBounds) {
       this.pendingStress.push({
+        tick: sim.tick,
         x0: editBounds.x0 - 1, y0: editBounds.y0 - 1, z0: editBounds.z0 - 1,
         x1: editBounds.x1 + 1, y1: editBounds.y1 + 1, z1: editBounds.z1 + 1,
       })
       if (this.pendingStress.length > 8) {
         // overflow → merge everything into one union box (bounded work per flush)
         const u = this.pendingStress.reduce((a, b) => ({
+          tick: Math.min(a.tick, b.tick),
           x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), z0: Math.min(a.z0, b.z0),
           x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), z1: Math.max(a.z1, b.z1),
         }))
@@ -488,14 +521,16 @@ export class PhysicsWorld implements IPhysicsWorld {
         this.pendingStress.push(u)
       }
     }
-    if (this.pendingStress.length > 0 && sim.tick % STRESS_INTERVAL === 0) {
+    // flush only boxes queued on EARLIER ticks — the analysis never stacks onto
+    // the edit tick itself (that tick already pays explode + connectivity)
+    if (this.pendingStress.length > 0 && sim.tick % STRESS_INTERVAL === 0 && this.pendingStress[0].tick < sim.tick) {
       const boxes = this.pendingStress.splice(0)
       for (const edit of boxes) this.runStressAndCoarse(sim, edit)
     }
 
     const dirtied = sim.world.drainDirty()
     for (const ci of dirtied) {
-      this.rebuildChunkBody(sim.world, ci)
+      this.staleColliders.add(ci) // B23/T88 — budgeted rebuild
       this.remesh.add(ci)
       this.pendingConnectivity.push(ci)
     }
@@ -503,7 +538,48 @@ export class PhysicsWorld implements IPhysicsWorld {
   }
 
   /** B32/T87 — edit boxes awaiting the scheduled stress/coarse flush */
-  private readonly pendingStress: Array<{ x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }> = []
+  private readonly pendingStress: Array<{ tick: number; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }> = []
+
+  /** B23/T88 — dirtied chunks whose Jolt collider awaits its budgeted rebuild.
+   *  StaticCompoundShape.Create is the edit tick's dominant cost (~1-2ms/chunk,
+   *  a bomb dirties 20-30) — rebuilds spread over ticks instead. The OLD shape
+   *  stays live until its replacement lands (never a hole under a player); the
+   *  flush is deterministic: fixed budget, anchor-distance priority (pure sim
+   *  state), stable tie-break by chunk index. */
+  private readonly staleColliders = new Set<number>()
+  /** B23/T88 — connectivity floods at most once per tick (see structuralPass) */
+  private lastFloodTick = -1
+
+  /** rebuild up to `budget` stale chunk colliders, nearest sim anchors first —
+   *  a plowing vehicle must not bounce off the fence it just carved */
+  private flushStaleColliders(world: ChunkStore, budget: number): void {
+    if (this.staleColliders.size === 0) return
+    const chunkM = CHUNK * VOXEL_SIZE
+    const anchors: Array<{ x: number; z: number }> = []
+    for (const p of this.players.values()) anchors.push({ x: p.px, z: p.pz })
+    for (const v of this.vehicles.values()) anchors.push({ x: v.px, z: v.pz })
+    for (const a of this.aircraft.values()) anchors.push({ x: a.px, z: a.pz })
+    const dist2 = (ci: number): number => {
+      if (anchors.length === 0) return 0
+      const cx = ((ci % WORLD_CX) + 0.5) * chunkM
+      const cz = ((((ci / WORLD_CX) | 0) % WORLD_CZ) + 0.5) * chunkM
+      let best = Infinity
+      for (const a of anchors) {
+        const dx = cx - a.x
+        const dz = cz - a.z
+        const d = dx * dx + dz * dz
+        if (d < best) best = d
+      }
+      return best
+    }
+    const order = [...this.staleColliders].sort((a, b) => dist2(a) - dist2(b) || a - b)
+    const n = Math.min(budget, order.length)
+    for (let i = 0; i < n; i++) {
+      const ci = order[i]
+      this.staleColliders.delete(ci)
+      this.rebuildChunkBody(world, ci)
+    }
+  }
 
   /** T86 — one queued edit box → full-column stress + coarse floating support.
    *  Deterministic: pure world inputs, fixed budgets. Fast-skips when nothing
@@ -548,7 +624,11 @@ export class PhysicsWorld implements IPhysicsWorld {
    */
   extractIsland(sim: Sim, island: Island): DynamicBody | null {
     for (const v of island.voxels) sim.world.setVoxel(v.x, v.y, v.z, 0)
-    return this.debris ? this.debris.spawnDebris(island.voxels) : null
+    // B23/T88 — island hulls are created DEFERRED (budgeted in layer.step, same
+    // tick for small counts) so a big collapse never builds hundreds of hulls
+    // synchronously inside the edit tick. No caller needs an island body handle.
+    this.debris?.spawnDeferred(island.voxels)
+    return null
   }
 
   /**
