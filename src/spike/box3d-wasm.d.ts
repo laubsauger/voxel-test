@@ -41,6 +41,8 @@ declare module 'box3d-wasm/standard' {
     getPosition(): B3Vec3
     getRotation(): B3Quat
     setTransform(def: { position: B3Vec3; rotation?: B3Quat }): void
+    setType(type: 'static' | 'kinematic' | 'dynamic'): void
+    getType(): string
     setBullet(on: boolean): void
     isBullet(): boolean
     setLinearVelocity(v: B3Vec3): void
@@ -57,10 +59,12 @@ declare module 'box3d-wasm/standard' {
   }
   export interface B3RayHit {
     hit: boolean
-    body?: B3Body
     point?: B3Vec3
     normal?: B3Vec3
     fraction?: number
+    /** userData of the hit body (set via body.setUserData) — 0 if none */
+    bodyUserData?: number
+    shapeUserData?: number
   }
   export interface B3World {
     createBody(def: { type: 'static' | 'dynamic'; position?: B3Vec3 }): B3Body

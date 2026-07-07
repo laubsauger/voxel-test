@@ -28,6 +28,7 @@ import {
 import { greedyBoxes } from '../sim/greedy-boxes'
 import { findUnsupportedIslands, type Island, type IslandVoxel } from '../sim/connectivity'
 import { findStressCollapses } from '../sim/structure'
+import { CoarseSupport } from '../sim/coarse-support'
 import { material, VOXEL_VOLUME } from '../sim/materials'
 import { registerDestructionOps } from '../sim/destruction'
 import { attachEditPhysics } from '../sim/edit-ops'
@@ -57,16 +58,20 @@ function chunkUnionRegion(chunkIndices: number[], margin: number) {
   return { x0: x0 - margin, y0: y0 - margin, z0: z0 - margin, x1: x1 + margin, y1: y1 + margin, z1: z1 + margin }
 }
 
-/** ticks a debris body must rest before it welds back to the static world */
-const REWELD_TICKS = 45 // ~0.75 s — weld rubble fast so body slots free up under heavy collapse
+/** ticks a debris body must rest before it FREEZES (dynamic → static, keeping its
+ *  exact shape + orientation — NOT rasterised back to voxels, which scattered
+ *  rotated pieces into axis-aligned sprinkle and evicted whatever was there). */
+const FREEZE_TICKS = 55 // ~0.9 s settle
 const REST_SPEED_SQ = 0.09 // (0.3 m/s)²
-/** hard cap on live dynamic bodies — stress collapse pauses above this so a big
- *  building doesn't spawn thousands of fragments in one tick (perf guardrail);
- *  reweld drains the pile and collapse resumes. */
+/** cap on live ACTIVE (non-frozen) dynamic bodies — stress collapse pauses above
+ *  this so one building can't spawn thousands of moving fragments in a tick.
+ *  Frozen rubble is cheap (no step/readback) and doesn't count against it. */
 const BODY_CAP = 500
 /** ejecta launch speed is full at/below this mass (kg) and falls off ∝ 1/mass
  *  above it — a ~10 kg brick flies, a 400 kg slab barely lurches. */
 const MASS_REF = 12
+/** island bigger than this is fragmented into chunks instead of one hull body */
+const MONOLITH_MAX = 220
 
 export interface PhysProfile {
   structuralMs: number
@@ -85,10 +90,12 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
   private readonly chunkBodies = new Map<number, B3Body[]>()
   private readonly remesh = new Set<number>()
   private pendingConnectivity: number[] = []
-  /** reweld toggle (perf A/B) + last-tick profile */
-  reweldEnabled = true
+  /** freeze-settled-debris toggle (perf A/B) + last-tick profile */
+  freezeEnabled = true
   /** T56 weak-neck stress collapse toggle */
   stressEnabled = true
+  /** ids of settled bodies frozen to static (kept in `bodies` + mesh, skip readback) */
+  private readonly frozen = new Set<number>()
   readonly prof: PhysProfile = { structuralMs: 0, stepMs: 0, readbackMs: 0, reweldMs: 0, bodies: 0, awake: 0, weldedThisTick: 0 }
 
   private constructor(world: B3World) {
@@ -115,6 +122,8 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     world.drainDirty() // clear world-gen dirty; we build the region's chunks below
     const r = region ?? { cx0: 0, cy0: 0, cz0: 0, cx1: WORLD_CX - 1, cy1: WORLD_CY - 1, cz1: WORLD_CZ - 1 }
     this.region = r
+    this.coarse = new CoarseSupport(r)
+    this.coarse.rebuild(world)
     for (let cy = r.cy0; cy <= r.cy1; cy++)
       for (let cz = r.cz0; cz <= r.cz1; cz++)
         for (let cx = r.cx0; cx <= r.cx1; cx++) {
@@ -125,6 +134,7 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
   }
 
   private region: { cx0: number; cy0: number; cz0: number; cx1: number; cy1: number; cz1: number } | null = null
+  private coarse: CoarseSupport | null = null
   private inRegion(ci: number): boolean {
     if (!this.region) return true
     const cx = ci % WORLD_CX
@@ -197,7 +207,7 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     const t2 = performance.now()
     this.readbackBodies()
     const t3 = performance.now()
-    const welded = this.reweldEnabled ? this.reweldPass(sim) : 0
+    const welded = this.freezeEnabled ? this.freezePass() : 0
     const t4 = performance.now()
     this.killPlanePass(sim)
     const p = this.prof
@@ -219,40 +229,32 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
    *  structures (trees, neighbours) far away. So reweld drains its OWN dirty here
    *  and updates only colliders + render for those chunks — it never reaches
    *  structuralPass, so a settling pile never triggers a collapse elsewhere. */
-  private reweldPass(sim: Sim): number {
-    let ready: number[] | undefined
-    for (const b of this.bodies.values()) if (b.restTicks >= REWELD_TICKS) (ready ??= []).push(b.id)
-    if (!ready) return 0
-    ready.sort((a, b) => a - b)
-    for (const id of ready) {
-      const b = this.bodies.get(id)
-      if (b) this.reweldBody(sim, b)
+  private freezePass(): number {
+    let n = 0
+    for (const b of this.bodies.values()) {
+      if (this.frozen.has(b.id) || b.restTicks < FREEZE_TICKS) continue
+      // glue it in place as it rests: keep its convex-hull shape + orientation,
+      // just stop simulating it. No world writes → no shape distortion, no
+      // eviction, no distant re-collapse. A later blast unfreezes it (impulse/damage).
+      ;(b.body as B3Body).setType('static')
+      this.frozen.add(b.id)
+      n++
     }
-    // consume the weld dirty locally (collider + remesh only) so it does NOT
-    // surface in the next structuralPass as an edit → no distant re-collapse.
-    for (const ci of sim.world.drainDirty()) {
-      this.rebuildChunkBody(sim.world, ci)
-      this.remesh.add(ci)
-    }
-    return ready.length
+    return n
   }
 
-  private reweldBody(sim: Sim, b: DynamicBody): void {
-    const q = { x: b.qx, y: b.qy, z: b.qz, w: b.qw }
-    for (let ly = 0; ly < b.sy; ly++)
-      for (let lz = 0; lz < b.sz; lz++)
-        for (let lx = 0; lx < b.sx; lx++) {
-          const m = b.grid[lx + lz * b.sx + ly * b.sx * b.sz]
-          if (m === 0) continue
-          const local = { x: (lx + 0.5) * VOXEL_SIZE, y: (ly + 0.5) * VOXEL_SIZE, z: (lz + 0.5) * VOXEL_SIZE }
-          const w = rotate(q, local)
-          const vx = Math.floor((b.px + w.x) / VOXEL_SIZE)
-          const vy = Math.floor((b.py + w.y) / VOXEL_SIZE)
-          const vz = Math.floor((b.pz + w.z) / VOXEL_SIZE)
-          if (sim.world.getVoxel(vx, vy, vz) === 0) sim.world.setVoxel(vx, vy, vz, m)
-        }
-    this.despawnBody(b.id)
+  /** wake a frozen rubble piece back to dynamic (a fresh blast dislodges it) */
+  private unfreeze(b: DynamicBody): void {
+    if (!this.frozen.delete(b.id)) return
+    ;(b.body as B3Body).setType('dynamic')
+    b.restTicks = 0
   }
+
+  /** active (non-frozen) dynamic body count — the collapse budget */
+  private get activeCount(): number {
+    return this.bodies.size - this.frozen.size
+  }
+
 
   structuralPass(sim: Sim): void {
     // capture the FINE edit AABB before draining — the stress pass triggers on the
@@ -266,6 +268,17 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     if (check.length === 0) return
     const region = chunkUnionRegion(check, CONNECTIVITY_MARGIN)
     for (const island of findUnsupportedIslands(sim.world, region)) this.extractIsland(sim, island)
+
+    // FLOATING-STRUCTURE catch (coarse global support). The local region misses a
+    // tall structure whose base was just severed — its top hangs in the air. The
+    // coarse grid floods the WHOLE active region from the ground cheaply; any
+    // solid coarse cell it can't reach is floating, and its voxel region is
+    // fine-extracted. Catches severed tops of any size, anywhere.
+    if (this.coarse && editBounds) {
+      this.coarse.update(sim.world, drained)
+      const floating = this.coarse.findFloating()
+      if (floating) for (const island of findUnsupportedIslands(sim.world, floating)) this.extractIsland(sim, island)
+    }
     // T56 — weak-neck stress collapse. Expand the region UP (to see the mass a
     // low edit must still support) and out (to enclose the building footprint),
     // else a thin base neck never sees its true load. Clamped in findStressCollapses.
@@ -273,11 +286,11 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     // connectivity cascade, so a hole in one wall can't re-judge and topple
     // untouched neighbours. edit = the changed chunks; analysis expands UP so the
     // undermined column sees the mass it must still hold.
-    if (this.stressEnabled && this.bodies.size < BODY_CAP && editBounds) {
+    if (this.stressEnabled && this.activeCount < BODY_CAP && editBounds) {
       // pad the edit box slightly so a neck right at the blast rim counts as touched
       const edit = { x0: editBounds.x0 - 1, y0: editBounds.y0 - 1, z0: editBounds.z0 - 1, x1: editBounds.x1 + 1, y1: editBounds.y1 + 1, z1: editBounds.z1 + 1 }
       const analysis = { x0: edit.x0 - 6, y0: edit.y0, z0: edit.z0 - 6, x1: edit.x1 + 6, y1: edit.y1 + 44, z1: edit.z1 + 6 }
-      const budget = BODY_CAP - this.bodies.size
+      const budget = BODY_CAP - this.activeCount
       for (const island of findStressCollapses(sim.world, analysis, edit, { maxIslands: budget })) this.extractIsland(sim, island)
     }
     const dirtied = sim.world.drainDirty()
@@ -289,6 +302,7 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
 
   private readbackBodies(): void {
     for (const b of this.bodies.values()) {
+      if (this.frozen.has(b.id)) continue // static rubble: transform fixed, skip
       const body = b.body as B3Body
       const p = body.getPosition()
       b.px = p.x; b.py = p.y; b.pz = p.z
@@ -314,13 +328,31 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     if (!b) return
     ;(b.body as B3Body).destroy()
     this.bodies.delete(id)
+    this.frozen.delete(id)
   }
 
   // --- dynamic island / debris bodies ---------------------------------------
 
   extractIsland(sim: Sim, island: Island): DynamicBody {
     for (const v of island.voxels) sim.world.setVoxel(v.x, v.y, v.z, 0)
-    return this.buildVoxelBody(sim, island.voxels)
+    // a big severed section (e.g. a whole floating top) crumbles into chunks
+    // rather than falling as one giant convex-hull monolith (wrong shape + heavy).
+    if (island.voxels.length <= MONOLITH_MAX) return this.buildVoxelBody(sim, island.voxels)
+    const F = 6
+    const frags = new Map<number, IslandVoxel[]>()
+    for (const v of island.voxels) {
+      const key = ((v.x / F) | 0) | (((v.z / F) | 0) << 10) | (((v.y / F) | 0) << 20)
+      let a = frags.get(key)
+      if (!a) { a = []; frags.set(key, a) }
+      a.push(v)
+    }
+    let first: DynamicBody | undefined
+    for (const a of frags.values()) {
+      if (this.activeCount >= BODY_CAP) break
+      const b = this.buildVoxelBody(sim, a)
+      first ??= b
+    }
+    return first ?? this.buildVoxelBody(sim, island.voxels)
   }
 
   spawnDebrisBody(sim: Sim, voxels: IslandVoxel[]): DynamicBody {
@@ -424,6 +456,7 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
       const d = Math.sqrt(d2) || 1e-6
       const mag = strength * (1 - Math.sqrt(d2) / radius)
       if (mag <= 0) continue
+      this.unfreeze(b) // a blast wakes settled rubble in range so it reacts
       ;(b.body as B3Body).applyLinearImpulseToCenter(
         { x: (dx / d) * mag, y: d2 < 1e-6 ? mag : (dy / d) * mag, z: (dz / d) * mag },
         true,
@@ -434,6 +467,7 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
   /** carve a body's voxel grid in a world sphere; rebuild hull (destroy+recreate) or despawn */
   damageBodySphere(b: DynamicBody, wx: number, wy: number, wz: number, rMeters: number, power: number, snapToVoxel = false): number {
     void power; void snapToVoxel
+    this.unfreeze(b) // shooting settled rubble wakes it so it can be broken further
     const body = b.body as B3Body
     const p = body.getPosition()
     const q = body.getRotation()
@@ -484,14 +518,24 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     }
   }
 
+  /** nearest collider hit along a ray — static walls AND dynamic/frozen bodies.
+   *  Returns the world hit point (so a shot stops at the first real surface, not
+   *  tunnelling through fallen rubble to the wall behind it). */
+  raycast(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number): { x: number; y: number; z: number } | null {
+    const hit = this.world.castRayClosest({ x: ox, y: oy, z: oz }, { x: dx * maxDist, y: dy * maxDist, z: dz * maxDist })
+    if (!hit.hit) return null
+    if (hit.point) return { x: hit.point.x, y: hit.point.y, z: hit.point.z }
+    const f = hit.fraction ?? 0
+    return { x: ox + dx * maxDist * f, y: oy + dy * maxDist * f, z: oz + dz * maxDist * f }
+  }
+
   castRayBody(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number): BodyRayHit | null {
     const hit = this.world.castRayClosest(
       { x: ox, y: oy, z: oz },
       { x: dx * maxDist, y: dy * maxDist, z: dz * maxDist },
     )
-    if (!hit.hit || !hit.body) return null
-    const id = hit.body.getUserData()
-    const body = this.bodies.get(id)
+    if (!hit.hit || !hit.bodyUserData) return null
+    const body = this.bodies.get(hit.bodyUserData)
     if (!body) return null
     const f = hit.fraction ?? 0
     const pt = hit.point ?? { x: ox + dx * maxDist * f, y: oy + dy * maxDist * f, z: oz + dz * maxDist * f }

@@ -6,7 +6,7 @@
  *
  * Profiling HUD breaks the per-tick cost into structural / step / readback /
  * reweld so the exact perf cost of repeated destruction is visible. [R] fires a
- * rocket barrage (repro), [F] toggles reweld (perf A/B). No Jolt, no net.
+ * rocket barrage (repro), [F] toggles freeze (perf A/B). No Jolt, no net.
  */
 import { Scene, WebGPURenderer, DirectionalLight, HemisphereLight, Color, Group, Vector3 } from 'three/webgpu'
 import { FlyCam } from '../render/flycam'
@@ -17,7 +17,8 @@ import { registerEditOps } from '../sim/edit-ops'
 import { generateLayout } from '../sim/gen/layout'
 import { stampScene } from '../sim/gen/stamper'
 import { placeholderProps } from '../sim/gen/props'
-import { CHUNK, VOXEL_SIZE, WORLD_CX, WORLD_CZ, chunkIndex } from '../world/chunks'
+import { CHUNK, VOXEL_SIZE, WORLD_CX, WORLD_CZ } from '../world/chunks'
+import { MAT_GRASS, MAT_CONCRETE, MAT_GLASS, MAT_BRICK, MAT_METAL } from '../sim/materials'
 
 const app = document.getElementById('app')!
 const hud = document.getElementById('hud')!
@@ -31,18 +32,91 @@ if (!('gpu' in navigator)) die('WebGPU not available. Desktop Chrome required.')
 
 const SEED = 1337
 const PHYS_HZ = 60
-// active region (chunk-space AABB) clipped from the full stamped suburb — the
-// densest building cluster for seed 1337 sits around chunk (56,56).
-const REGION = { cx0: 52, cy0: 0, cz0: 52, cx1: 66, cy1: 7, cz1: 66 }
-const CX = (REGION.cx0 + REGION.cx1) / 2
-const CZ = (REGION.cz0 + REGION.cz1) / 2
-const CENTER_VX = Math.round(CX * CHUNK + CHUNK / 2)
-const CENTER_VZ = Math.round(CZ * CHUNK + CHUNK / 2)
+// demolition playground: a cleared pad of freestanding highrises + test shapes,
+// placed next to the real suburb's dense cluster (chunk ~56). Region covers both.
+const PAD_X = 1400
+const PAD_Z = 1810
+const REGION = { cx0: 42, cy0: 0, cz0: 54, cx1: 66, cy1: 6, cz1: 68 }
+const CENTER_VX = PAD_X + 110
+const CENTER_VZ = PAD_Z + 95
+
+// --- freestanding highrises to kaputt --------------------------------------
+type W = { setVoxel(x: number, y: number, z: number, m: number): void; fillBox(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, m: number): void }
+
+/** hollow tower: perimeter walls `wall` thick, floor slab every `storey`, glass window band */
+function hollowTower(w: W, x0: number, y0: number, z0: number, sw: number, h: number, sd: number, wall: number, storey: number, wallMat: number, glassMat: number): void {
+  for (let y = 0; y < h; y++) {
+    const floor = y % storey === 0 || y === h - 1
+    for (let z = 0; z < sd; z++)
+      for (let x = 0; x < sw; x++) {
+        const perim = x < wall || x >= sw - wall || z < wall || z >= sd - wall
+        if (floor) w.setVoxel(x0 + x, y0 + y, z0 + z, MAT_CONCRETE)
+        else if (perim) {
+          const band = y % storey >= 2 && y % storey <= storey - 2
+          const mid = (x > wall && x < sw - wall - 1) || (z > wall && z < sd - wall - 1)
+          w.setVoxel(x0 + x, y0 + y, z0 + z, band && mid ? glassMat : wallMat)
+        }
+      }
+  }
+}
+
+/** framed tower: 4 corner columns + floor slabs every `storey` (hollow → pancakes) */
+function framedTower(w: W, x0: number, y0: number, z0: number, sw: number, h: number, sd: number, storey: number, col: number): void {
+  for (let y = 0; y < h; y++) {
+    const floor = y % storey === 0 || y === h - 1
+    for (let z = 0; z < sd; z++)
+      for (let x = 0; x < sw; x++) {
+        const inCol = (x < col || x >= sw - col) && (z < col || z >= sd - col)
+        if (floor || inCol) w.setVoxel(x0 + x, y0 + y, z0 + z, MAT_CONCRETE)
+      }
+  }
+}
+
+/** simple experimental shapes to probe collapsibility (offset to the pad) */
+function buildTestShapes(w: W, ox: number, oz: number): void {
+  const pillar = (x: number, z: number, s: number, h: number, m: number): void => w.fillBox(ox + x, 4, oz + z, ox + x + s - 1, 4 + h - 1, oz + z + s - 1, m)
+  // pillars of increasing thickness (how slender before it topples)
+  pillar(28, 172, 1, 22, MAT_BRICK)
+  pillar(38, 172, 2, 28, MAT_BRICK)
+  pillar(50, 172, 3, 34, MAT_CONCRETE)
+  pillar(64, 172, 5, 40, MAT_CONCRETE)
+  pillar(82, 172, 8, 48, MAT_CONCRETE)
+  // gate/portal — two legs + a lintel. Knock a leg → the lintel drops.
+  const gx = ox + 105, gz = oz + 172, leg = 3, gap = 10, gh = 24
+  w.fillBox(gx, 4, gz, gx + leg - 1, 4 + gh - 1, gz + leg - 1, MAT_CONCRETE)
+  w.fillBox(gx + leg + gap, 4, gz, gx + leg + gap + leg - 1, 4 + gh - 1, gz + leg - 1, MAT_CONCRETE)
+  w.fillBox(gx, 4 + gh, gz, gx + leg + gap + leg - 1, 6 + gh, gz + leg - 1, MAT_CONCRETE) // lintel
+  // cantilever / overhang (T): post + horizontal arm sticking out unsupported
+  w.fillBox(ox + 140, 4, oz + 173, ox + 142, 37, oz + 175, MAT_CONCRETE)
+  w.fillBox(ox + 140, 35, oz + 173, ox + 162, 37, oz + 175, MAT_CONCRETE)
+  // freestanding wall with a doorway
+  w.fillBox(ox + 175, 4, oz + 172, ox + 205, 30, oz + 174, MAT_BRICK)
+  w.fillBox(ox + 186, 4, oz + 172, ox + 193, 17, oz + 174, 0)
+}
+
+/** clear a flat demolition pad beside the suburb + build the towers + test shapes */
+function buildPlayground(w: W, ox: number, oz: number): void {
+  // clear whatever the suburb stamped here, lay a flat grass pad + rim wall
+  w.fillBox(ox - 6, 4, oz - 6, ox + 224, 120, oz + 224, 0)
+  w.fillBox(ox - 6, 0, oz - 6, ox + 224, 3, oz + 224, MAT_GRASS)
+  w.fillBox(ox + 10, 3, oz + 10, ox + 210, 6, oz + 12, MAT_METAL)
+  w.fillBox(ox + 10, 3, oz + 208, ox + 210, 6, oz + 210, MAT_METAL)
+  w.fillBox(ox + 10, 3, oz + 10, ox + 12, 6, oz + 210, MAT_METAL)
+  w.fillBox(ox + 208, 3, oz + 10, ox + 210, 6, oz + 210, MAT_METAL)
+  hollowTower(w, ox + 40, 4, oz + 40, 18, 92, 18, 2, 10, MAT_CONCRETE, MAT_GLASS) // glass highrise
+  w.fillBox(ox + 90, 4, oz + 42, ox + 105, 78, oz + 57, MAT_CONCRETE) // solid concrete tower
+  framedTower(w, ox + 150, 4, oz + 40, 22, 104, 22, 9, 3) // columned frame → pancake
+  hollowTower(w, ox + 45, 4, oz + 110, 18, 66, 18, 2, 8, MAT_BRICK, MAT_GLASS) // brick tower
+  w.fillBox(ox + 120, 4, oz + 120, ox + 149, 40, oz + 149, MAT_CONCRETE) // stepped setback
+  w.fillBox(ox + 126, 40, oz + 126, ox + 143, 74, oz + 143, MAT_CONCRETE)
+  w.fillBox(ox + 131, 74, oz + 131, ox + 138, 100, oz + 138, MAT_CONCRETE)
+  buildTestShapes(w, ox, oz)
+}
 
 const HOTKEYS = [
-  'MOUSE aim · CLICK explode-at-aim',
-  '[R] rocket barrage (repro)  [X] blast center  [F] reweld on/off',
-  '[B] toggle island bodies',
+  'MOUSE aim · CLICK blast-at-crosshair',
+  '[R] rocket barrage at aim  [X] big blast at aim  [F] freeze on/off',
+  '[B] hide loose bodies  [V] hide welded world (isolate loose)',
 ].join('\n')
 
 function chunkGrid(sim: Sim, cx: number, cy: number, cz: number): { grid: Uint8Array; any: boolean } {
@@ -112,7 +186,8 @@ async function main(): Promise<void> {
   // --- real suburb, clipped to REGION ---------------------------------------
   const sim = new Sim(SEED)
   registerEditOps(sim)
-  stampScene(sim.world, generateLayout(SEED), placeholderProps())
+  stampScene(sim.world, generateLayout(SEED), placeholderProps()) // real suburb
+  buildPlayground(sim.world, PAD_X, PAD_Z) // + tower/test-shape demolition pad
   const phys: Box3DPhysicsWorld = await createBox3DPhysics(sim, REGION)
   const target = findTallColumn(sim) // a real building column to blast
   // frame the camera on the target building
@@ -193,13 +268,17 @@ async function main(): Promise<void> {
   function aimVoxel(): { vx: number; vy: number; vz: number } | null {
     cam.camera.getWorldDirection(fwd)
     const o = cam.camera.position
-    for (let d = 1; d < 70; d += 0.35) {
-      const vx = Math.round((o.x + fwd.x * d) / VOXEL_SIZE)
-      const vy = Math.round((o.y + fwd.y * d) / VOXEL_SIZE)
-      const vz = Math.round((o.z + fwd.z * d) / VOXEL_SIZE)
-      if (sim.world.getVoxel(vx, vy, vz) !== 0) return { vx, vy, vz }
+    // raycast the physics world — hits static walls AND dynamic/frozen debris, so
+    // a shot stops at the first real surface (fallen rubble included), never
+    // tunnels through to the wall behind it.
+    const hit = phys.raycast(o.x, o.y, o.z, fwd.x, fwd.y, fwd.z, 80)
+    if (!hit) return null
+    // nudge slightly along the ray so the blast centres in the material it hit
+    return {
+      vx: Math.round((hit.x + fwd.x * 0.15) / VOXEL_SIZE),
+      vy: Math.round((hit.y + fwd.y * 0.15) / VOXEL_SIZE),
+      vz: Math.round((hit.z + fwd.z * 0.15) / VOXEL_SIZE),
     }
-    return null
   }
   function explodeAtAim(): void {
     const a = aimVoxel()
@@ -218,7 +297,7 @@ async function main(): Promise<void> {
     switch (e.code) {
       case 'KeyR': fireBarrage(); break
       case 'KeyX': { const a = aimVoxel() ?? target; explode(a.vx, a.vy, a.vz, 12, 9); break }
-      case 'KeyF': phys.reweldEnabled = !phys.reweldEnabled; break
+      case 'KeyF': phys.freezeEnabled = !phys.freezeEnabled; break
       case 'KeyB':
         showBodies = !showBodies
         for (const rec of bodyGroups.values()) rec.group.visible = showBodies
@@ -265,17 +344,17 @@ async function main(): Promise<void> {
 
     const p = phys.prof
     hud.textContent =
-      `BOX3D SPIKE — REAL suburb, REAL pipeline\n${HOTKEYS}\n` +
-      `tick ${sim.tick}  bodies ${p.bodies}  chunks ${chunkGroups.size}  reweld ${phys.reweldEnabled ? 'ON' : 'off'} (welded/t ${p.weldedThisTick})\n` +
-      `PHYS  structural ${p.structuralMs.toFixed(2)}  step ${p.stepMs.toFixed(2)}  readback ${p.readbackMs.toFixed(2)}  reweld ${p.reweldMs.toFixed(2)} ms\n` +
+      `BOX3D SPIKE — freestanding highrises · REAL pipeline\n${HOTKEYS}\n` +
+      `tick ${sim.tick}  bodies ${p.bodies}  chunks ${chunkGroups.size}  freeze ${phys.freezeEnabled ? 'ON' : 'off'} (frozen/t ${p.weldedThisTick})\n` +
+      `PHYS  structural ${p.structuralMs.toFixed(2)}  step ${p.stepMs.toFixed(2)}  readback ${p.readbackMs.toFixed(2)}  freeze ${p.reweldMs.toFixed(2)} ms\n` +
       `RENDER ${renderMs.toFixed(2)} ms  (chunk remesh + ${bodyGroups.size} body meshes)`
   })
 
   ;(globalThis as unknown as { __spike: unknown }).__spike = {
-    sim, phys, scene, cam: cam.camera,
+    sim, phys, scene, cam: cam.camera, target,
     fireBarrage, explode,
     prof: () => ({ ...phys.prof, renderMs, bodyMeshes: bodyGroups.size, chunks: chunkGroups.size }),
-    setReweld: (on: boolean) => { phys.reweldEnabled = on },
+    setFreeze: (on: boolean) => { phys.freezeEnabled = on },
   }
 }
 
