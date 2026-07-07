@@ -30,6 +30,8 @@ export interface Rocket {
   vz: number
   /** ticks of life left before it fizzles out at max range */
   ttl: number
+  /** player combat — shooter playerId (kill attribution, 0 = world); hashed */
+  owner: number
 }
 
 /** rocket cruise speed, m/s — fast enough to read as hitscan-ish */
@@ -45,6 +47,9 @@ export const ROCKET_SPAWN_OFFSET = 0.6
 
 export function registerRocketOps(sim: Sim, phys: PhysicsWorld): void {
   sim.onOp('rocket', (s, cmd) => {
+    // player combat — dead players ignore input ops
+    const shooter = phys.players.get(cmd.playerId)
+    if (shooter && !shooter.alive) return
     const { ox, oy, oz, dx, dy, dz } = cmd.op
     // normalize defensively — the op ships a camera direction (already unit,
     // but a bad client must not desync the flight integration)
@@ -60,6 +65,7 @@ export function registerRocketOps(sim: Sim, phys: PhysicsWorld): void {
       vy: ny * ROCKET_SPEED,
       vz: nz * ROCKET_SPEED,
       ttl: ROCKET_TTL_TICKS,
+      owner: cmd.playerId,
     })
   })
 }
@@ -89,6 +95,25 @@ export function tickRockets(sim: Sim, phys: PhysicsWorld): void {
     const bodyHit = phys.castRayBody(r.x, r.y, r.z, nx, ny, nz, Math.min(travel, worldDist))
     const bodyDist = bodyHit ? bodyHit.fraction * Math.min(travel, worldDist) : Infinity
 
+    // T95b/V17b — LOCAL debris (frozen rubble walls!) must stop rockets in SP:
+    // a collapsed wall remnant is debris, not world voxels — without this test
+    // rockets sailed straight through visually-solid rubble. Same dual-mode
+    // rule as shoot-op: in MP lockstep the detonation position must stay
+    // deterministic, so local debris never redirects it there (peers may see a
+    // rocket pass through rubble — consistent on every machine).
+    if (!sim.lockstep) {
+      const debrisHit = phys.castRayDebris?.(r.x, r.y, r.z, nx, ny, nz, Math.min(travel, worldDist, bodyDist))
+      if (debrisHit) {
+        ;(detonate ??= []).push({
+          r,
+          x: (debrisHit.px + nx * VOXEL_SIZE * 0.5) / VOXEL_SIZE,
+          y: (debrisHit.py + ny * VOXEL_SIZE * 0.5) / VOXEL_SIZE,
+          z: (debrisHit.pz + nz * VOXEL_SIZE * 0.5) / VOXEL_SIZE,
+        })
+        continue
+      }
+    }
+
     if (bodyHit && bodyDist <= worldDist) {
       // detonate at the body impact point (nudged a touch into the surface so
       // the sphere bites the grid, mirroring the world path's +0.5 centering)
@@ -108,13 +133,14 @@ export function tickRockets(sim: Sim, phys: PhysicsWorld): void {
       r.z += r.vz * DT
       r.ttl--
       if (r.ttl <= 0) (dead ??= []).push(r.id)
+      // T95b — prewarm handled generically in phys.prewarmHotspots
     }
   }
   if (dead) for (const id of dead) phys.rockets.delete(id)
   if (detonate) {
     for (const d of detonate) {
       phys.rockets.delete(d.r.id)
-      runExplosion(sim, phys, d.x, d.y, d.z, ROCKET_RADIUS, ROCKET_POWER)
+      runExplosion(sim, phys, d.x, d.y, d.z, ROCKET_RADIUS, ROCKET_POWER, d.r.owner)
     }
   }
 }

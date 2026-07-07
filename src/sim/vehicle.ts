@@ -1466,6 +1466,7 @@ export function registerVehicleOps(sim: Sim, phys: PhysicsWorld): void {
   sim.onOp('vehicle_enter', (s, cmd) => {
     const p = phys.players.get(cmd.playerId)
     if (!p) throw new Error(`vehicle_enter for unspawned player ${cmd.playerId} at tick ${s.tick}`)
+    if (!p.alive) return // player combat — dead players ignore input ops
     enterVehicle(s, phys, p)
   })
   sim.onOp('vehicle_exit', (s, cmd) => {

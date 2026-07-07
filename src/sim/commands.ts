@@ -32,6 +32,10 @@ export interface ShootOp {
   dx: number
   dy: number
   dz: number
+  /** player combat — hp damage on a direct player hit (int). Omitted = the
+   *  default hotbar gun (SHOOT_DMG_MG in shoot-op.ts); future weapon variants
+   *  set it per shot (e.g. SHOOT_DMG_PISTOL). */
+  dmg?: number
 }
 
 export interface ExplodeOp {

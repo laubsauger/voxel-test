@@ -42,6 +42,7 @@ import { installVehicleDevControls } from './render/vehicle-meshes'
 import { generateLayout } from './sim/gen/layout'
 import { WORLD_VX, WORLD_VZ } from './world/chunks'
 import { MpLobby, NetHud, StallBanner, DesyncOverlay } from './ui/mp'
+import { CombatHud } from './ui/combat-hud'
 import { SignalingClient, type Signaling } from './net/signaling'
 import { PeerSignalingClient } from './net/peer-signaling'
 import { GuestLobby, HostLobby, HOST_PLAYER_ID, playerName, type SessionPlayer } from './net/session'
@@ -154,6 +155,9 @@ function setMusic(name: 'music-menu' | 'music-game-ambient'): void {
 // per-frame: listener follows the active camera; footstep/jump/land poller
 const listenerFwd = new Vector3()
 const listenerUp = new Vector3()
+// T95 — combat HUD per-frame (HP bar, respawn countdown, arrow rotation)
+const combatFrameHook = (): void => combatHud.frame()
+
 const audioFrameHook = (dt: number): void => {
   const cam = game.cam.camera
   cam.getWorldDirection(listenerFwd)
@@ -334,6 +338,23 @@ store.subscribe('dev.profiling', syncDev)
 
 // --- HUD + tools (T28) --------------------------------------------------------
 const hud = new Hud(root)
+// T95 — combat HUD (HP / kill feed / damage direction / death / scoreboard).
+// Providers close over the live `game` so the MP instance swap needs no rewire.
+const combatHud = new CombatHud(root, {
+  localId: () => game.localPlayerId,
+  tick: () => game.sim.tick,
+  players: () =>
+    [...game.phys.players.values()].map((p) => ({
+      id: p.id,
+      hp: p.hp,
+      alive: p.alive,
+      respawnAtTick: p.respawnAtTick,
+      kills: p.kills,
+      deaths: p.deaths,
+    })),
+  name: (pid) => (pid === game.localPlayerId ? 'You' : playerName(pid)),
+  camYaw: () => game.cam.camera.rotation.y,
+})
 const tools = new ToolController(game, hud, (e) => {
   // T52 — tool feedback → material-aware impact/explosion sounds
   switch (e.kind) {
@@ -393,9 +414,22 @@ function wireGame(g: Game): void {
   // T54/T64 — detonations + vehicle one-shots ride sim events (V6)
   g.onSimEvents = (events) => {
     for (const e of events) {
+      combatHud.onEvent(e) // T95
       switch (e.kind) {
         case 'explosion':
           gameAudio.onExplosion(e.x, e.y, e.z, e.power)
+          break
+        // T95 — hit-CONFIRM (you hit someone) rides the Hud hitmarker (T28);
+        // being-hit feedback (vignette + hurt sfx) rides onPlayerDamaged below
+        case 'player-hit':
+          if (e.attacker === g.localPlayerId && e.victim !== g.localPlayerId) hud.hitmarker()
+          if (e.victim === g.localPlayerId) {
+            hud.damageFlash()
+            gameAudio.onHurt()
+          }
+          break
+        case 'player-death':
+          if (e.attacker === g.localPlayerId && e.victim !== g.localPlayerId) void sfxPlay('ui-click')
           break
         case 'vehicle_crash':
           void sfxPlay(e.large ? 'car-crash-large' : 'car-crash-small', {
@@ -425,6 +459,7 @@ function wireGame(g: Game): void {
   stopVehicleLoops()
   g.addFrameHook(vehicleAudioHook)
   g.addFrameHook(mapHook)
+  g.addFrameHook(combatFrameHook) // T95
   g.addFrameHook(promptHook)
   // T65 — re-apply time-of-day + cycle speed to the new world renderer
   applyTime()

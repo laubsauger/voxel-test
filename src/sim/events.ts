@@ -54,6 +54,43 @@ export interface ShotEvent {
   mat: number
 }
 
+/** player combat — a player took hp damage (hit feedback: markers, damage direction) */
+export interface PlayerHitEvent {
+  kind: 'player-hit'
+  /** victim playerId */
+  victim: number
+  /** attacker playerId (0 = world/environment) */
+  attacker: number
+  /** hp actually removed (int) */
+  dmg: number
+  /** victim hp after the hit (int 0..100) */
+  hpAfter: number
+  /** normalized horizontal direction FROM attacker TO victim (0,0 if attacker
+   *  is 0/world or the direction is degenerate, e.g. self-damage) */
+  dx: number
+  dz: number
+}
+
+/** player combat — hp reached 0 (killfeed, death screen) */
+export interface PlayerDeathEvent {
+  kind: 'player-death'
+  victim: number
+  /** attacker playerId (0 = world/environment; suicide = victim's own id) */
+  attacker: number
+}
+
+/** player combat — respawned at the deterministic spawn point with full hp */
+export interface PlayerRespawnEvent {
+  kind: 'player-respawn'
+  playerId: number
+}
+
 import type { VehicleEvent } from './vehicle'
 
-export type SimEvent = ExplosionEvent | ShotEvent | VehicleEvent
+export type SimEvent =
+  | ExplosionEvent
+  | ShotEvent
+  | VehicleEvent
+  | PlayerHitEvent
+  | PlayerDeathEvent
+  | PlayerRespawnEvent

@@ -14,7 +14,8 @@
 import type { Sim } from './loop'
 import { VOXEL_SIZE } from '../world/chunks'
 import { destroySphere } from './destruction'
-import { damagePlayersSphere } from './player'
+import { damagePlayerHp, damagePlayersSphere, raycastPlayers } from './player'
+import { MAT_FLESH } from './materials'
 import type { IPhysicsWorld } from './iphysics'
 
 /** max hitscan range, voxels (= 120 m) */
@@ -25,6 +26,12 @@ export const SHOOT_RADIUS = 1.5
 export const SHOOT_POWER = 3
 /** B17 — impulse (kg·m/s) a shot puts into a hit dynamic body */
 export const SHOOT_BODY_IMPULSE = 120
+/** player combat — hp per direct hit, default weapon: the hotbar gun is an
+ *  auto rifle/MG (160 ms cooldown in src/ui/tools.ts) */
+export const SHOOT_DMG_MG = 12
+/** player combat — hp per direct hit for a slower pistol-class shot (senders
+ *  put it in ShootOp.dmg; no hotbar weapon uses it yet) */
+export const SHOOT_DMG_PISTOL = 20
 
 export interface VoxelHit {
   /** hit voxel coords (integer) */
@@ -122,6 +129,9 @@ export function ddaRaycast(
 /** Register the 'shoot' handler. Call after createPhysics (needs structuralPass). */
 export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
   sim.onOp('shoot', (s, cmd) => {
+    // player combat — dead players ignore input ops (no shooting from a corpse)
+    const shooter = phys.players.get(cmd.playerId)
+    if (shooter && !shooter.alive) return
     const { ox, oy, oz, dx, dy, dz } = cmd.op
     const hit = ddaRaycast(
       s.world,
@@ -137,11 +147,19 @@ export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1
     const nx = dx / len, ny = dy / len, nz = dz / len
 
+    // player combat — deterministic ray vs player capsules (pure TS math, NOT
+    // a Jolt query), capped at the world hit: a player strictly in front of
+    // the voxel surface absorbs the shot INSTEAD of the world edit. Dead
+    // players neither take damage nor block shots (raycastPlayers skips them).
+    const worldLenM = (hit ? hit.dist : SHOOT_RANGE_VOX) * VOXEL_SIZE
+    const playerHit = raycastPlayers(phys, ox, oy, oz, nx, ny, nz, worldLenM, cmd.playerId)
+
     // B17 — the ray also tests Jolt dynamic bodies (vehicle wrecks). Those are
     // DETERMINISTIC sim state, so a wreck hit may gate the world edit exactly as
-    // before. Ray length is capped at the world hit, so a returned body hit is
-    // strictly in front of any voxel surface.
-    const rayLenM = (hit ? hit.dist : SHOOT_RANGE_VOX) * VOXEL_SIZE
+    // before. Ray length is capped at the nearest deterministic surface (world
+    // hit, or the player in front of it), so a returned body hit is strictly
+    // in front of both.
+    const rayLenM = playerHit ? playerHit.dist : worldLenM
     const bodyHit = phys.castRayBody(ox, oy, oz, nx, ny, nz, rayLenM)
     if (bodyHit) {
       s.emit({
@@ -206,6 +224,38 @@ export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
         true,
       )
       if (!s.lockstep) return // SP: rubble blocks the shot entirely
+    }
+
+    // player combat — direct player hit: weapon damage INSTEAD of the world
+    // edit (the bullet stopped in the player). This is a DETERMINISTIC
+    // decision (V17b): local debris may occlude it in SP only (the
+    // `!s.lockstep` return above), never in MP.
+    if (playerHit) {
+      const dmg = cmd.op.dmg ?? SHOOT_DMG_MG
+      if (!debrisHit) {
+        // one impact FX per shot — same rule as the world path below
+        s.emit({
+          kind: 'shot',
+          ox, oy, oz,
+          dx: nx, dy: ny, dz: nz,
+          hit: 1,
+          x: playerHit.px, y: playerHit.py, z: playerHit.pz,
+          nx: -nx, ny: -ny, nz: -nz,
+          mat: MAT_FLESH,
+        })
+      }
+      // T22 — carve the victim's segmented voxel body at the entry point
+      // (nudged into the capsule along the ray, same rule as the body paths)
+      damagePlayersSphere(
+        phys,
+        (playerHit.px + nx * VOXEL_SIZE * 0.6) / VOXEL_SIZE,
+        (playerHit.py + ny * VOXEL_SIZE * 0.6) / VOXEL_SIZE,
+        (playerHit.pz + nz * VOXEL_SIZE * 0.6) / VOXEL_SIZE,
+        SHOOT_RADIUS,
+        SHOOT_POWER,
+      )
+      damagePlayerHp(s, phys, playerHit.player, dmg, cmd.playerId)
+      return
     }
 
     if (!hit) {

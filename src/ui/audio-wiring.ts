@@ -91,6 +91,12 @@ export function attachUiSounds(root: HTMLElement, player: UiSoundPlayer): void {
   root.addEventListener('click', (e) => {
     const el = (e.target as Element | null)?.closest(CLICK_SELECTOR)
     if (!el) return
+    // T95c — a mouse-clicked button KEEPS FOCUS, so Space in-game "clicks" it
+    // again (heard as a stray ui-click on every jump). Blur after real mouse
+    // clicks (e.detail > 0); keyboard menu navigation (detail 0) keeps focus.
+    if (e.detail > 0) (el as HTMLElement).blur()
+    // keyboard-synthesized clicks while pointer-locked are gameplay keys, not UI
+    if (e.detail === 0 && document.pointerLockElement) return
     player.play(el.matches(BACK_SELECTOR) ? 'ui-back' : 'ui-click')
   })
 }

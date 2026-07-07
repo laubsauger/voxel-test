@@ -20,7 +20,7 @@
  *  - kill plane + local body cap (visual-only cap — voxels are already gone)
  */
 import Box3D, { type B3Body, type B3World } from 'box3d-wasm/standard'
-import { CHUNK, ChunkKind, VOXEL_SIZE, WORLD_CX, WORLD_CZ, chunkIndex, type ChunkStore } from '../world/chunks'
+import { CHUNK, ChunkKind, VOXEL_SIZE, WORLD_CX, WORLD_CY, WORLD_CZ, chunkIndex, type ChunkStore } from '../world/chunks'
 import { greedyBoxes } from './greedy-boxes'
 import { MAT_FLAG_FLOATS, material, VOXEL_VOLUME } from './materials'
 import type { IslandVoxel } from './connectivity'
@@ -57,6 +57,9 @@ const COLLIDER_BUILD_BUDGET = 4
 const COLLIDER_EVICT_TICKS = 240
 /** B23/T88 — deferred island-piece hull creations per step */
 const SPAWN_BUDGET = 16
+/** T95b — blast-core chunk colliders force-built per step so spawns never
+ *  materialize into a collider-less region (~0.5ms each) */
+const SPAWN_COLLIDER_CAP = 12
 
 /** counters only — no wall-clock in src/sim (V2 purity scan); render-layer
  *  profilers time the layer from outside if needed */
@@ -382,9 +385,26 @@ export class DebrisLayer {
   step(world: ChunkStore, dt: number): void {
     this.tickNo++
     // budgeted deferred spawns (island + ejecta pieces) — hulls come up over a
-    // few ticks; ejecta apply their stored launch velocity on materialization
+    // few ticks; ejecta apply their stored launch velocity on materialization.
+    // T95b — a spawn only materializes once the static colliders around it
+    // exist: a rocket into a COLD area (no prewarm coverage) used to drop ~30
+    // overlapping hulls into a collider-less region — nothing to rest on, and
+    // the solver chained the overlaps apart into a straight-line ejection.
+    // Building the few blast-core chunks synchronously (capped) before the
+    // piece appears costs a tick of delay at most, never the artifact.
     let spawned = 0
+    let builtNow = 0
     while (this.pendingSpawns.length > 0 && spawned < SPAWN_BUDGET) {
+      const need = this.missingCollidersAround(this.pendingSpawns[0].voxels)
+      if (need.length > 0) {
+        if (builtNow >= SPAWN_COLLIDER_CAP) break // rest of the queue waits a tick
+        for (const ci of need) {
+          if (builtNow >= SPAWN_COLLIDER_CAP) break
+          this.rebuildChunk(world, ci)
+          builtNow++
+        }
+        if (this.missingCollidersAround(this.pendingSpawns[0].voxels).length > 0) break
+      }
       const { voxels, vel } = this.pendingSpawns.shift()!
       const b = this.spawnPiece(voxels)
       if (b && vel) this.setVelocity(b, vel.vx, vel.vy, vel.vz, vel.wx, vel.wy, vel.wz)
@@ -461,7 +481,7 @@ export class DebrisLayer {
       for (let dz = -1; dz <= 1 && built < budget; dz++)
         for (let dx = -1; dx <= 1 && built < budget; dx++) {
           const cx = pcx + dx, cy = pcy + dy, cz = pcz + dz
-          if (cx < 0 || cy < 0 || cz < 0 || cx >= WORLD_CX || cz >= WORLD_CZ) continue
+          if (cx < 0 || cy < 0 || cz < 0 || cx >= WORLD_CX || cy >= WORLD_CY || cz >= WORLD_CZ) continue
           const ci = chunkIndex(cx, cy, cz)
           this.chunkLastNeeded.set(ci, this.tickNo)
           if (!this.chunkBodies.has(ci)) {
@@ -503,6 +523,30 @@ export class DebrisLayer {
       this.chunkBodies.delete(ci)
       this.chunkLastNeeded.delete(ci)
     }
+  }
+
+  /** T95b — chunk colliders still missing where the spawn lives: the chunks
+   *  its voxel bbox OVERLAPS plus the layer directly BELOW (the floor it must
+   *  land on). Deliberately NOT a full ±1 shell — that's 27 chunks and starves
+   *  same-tick spawning; lateral/upper neighbours stream in normally. */
+  private missingCollidersAround(voxels: IslandVoxel[]): number[] {
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity
+    for (const v of voxels) {
+      if (v.x < x0) x0 = v.x
+      if (v.y < y0) y0 = v.y
+      if (v.z < z0) z0 = v.z
+      if (v.x > x1) x1 = v.x
+      if (v.y > y1) y1 = v.y
+      if (v.z > z1) z1 = v.z
+    }
+    const out: number[] = []
+    for (let cy = Math.max(0, (y0 >> 5) - 1); cy <= Math.min(WORLD_CY - 1, y1 >> 5); cy++)
+      for (let cz = z0 >> 5; cz <= Math.min(WORLD_CZ - 1, z1 >> 5); cz++)
+        for (let cx = x0 >> 5; cx <= Math.min(WORLD_CX - 1, x1 >> 5); cx++) {
+          const ci = chunkIndex(cx, cy, cz)
+          if (!this.chunkBodies.has(ci)) out.push(ci)
+        }
+    return out
   }
 
   private rebuildChunk(world: ChunkStore, ci: number): void {

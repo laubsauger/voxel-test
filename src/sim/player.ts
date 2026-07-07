@@ -35,6 +35,17 @@ export const EYE_HEIGHT = 1.47
 export const CROUCH_HALF_CYL = 0.3
 export const CROUCH_HEIGHT = 2 * (CROUCH_HALF_CYL + PLAYER_RADIUS)
 
+// ---------------------------------------------------------------------------
+// Player combat — hp / death / respawn. All fields integer or boolean, all
+// transitions driven by deterministic sim inputs (V2); hp/alive/respawnAtTick/
+// kills/deaths are folded into hashPhysics (V3).
+// ---------------------------------------------------------------------------
+export const MAX_HP = 100
+/** dead → respawn delay: 5 s at 60 Hz */
+export const RESPAWN_DELAY_TICKS = 300
+/** hp lost per unit explosion power at the blast center (linear falloff to 0 at r) */
+export const EXPLOSION_HP_PER_POWER = 12
+
 export const WALK_SPEED = 4
 export const CROUCH_SPEED = 2
 /** T44 — sprint: ground-only speed multiplier */
@@ -213,6 +224,16 @@ export interface PlayerEntity {
   seatedAircraft: number
   /** P17 — seat index in the aircraft's seat list (0 = pilot); hashed */
   aircraftSeat: number
+  /** player combat — hit points, int 0..MAX_HP; hashed sim state (V3) */
+  hp: number
+  /** player combat — false while dead (inert: no physics, no damage, no input);
+   *  hashed sim state (V3) */
+  alive: boolean
+  /** player combat — tick the player respawns at (0 while alive); hashed */
+  respawnAtTick: number
+  /** player combat — K/D counters; hashed sim state (V3) */
+  kills: number
+  deaths: number
   char: Jolt.CharacterVirtual
   /** standing capsule shape — retained for crouch↔stand swaps (T44) */
   standShape: Jolt.Shape
@@ -302,6 +323,11 @@ export function spawnPlayer(sim: Sim, phys: PhysicsWorld, playerId: number): Pla
     seat: 0,
     seatedAircraft: 0,
     aircraftSeat: 0,
+    hp: MAX_HP,
+    alive: true,
+    respawnAtTick: 0,
+    kills: 0,
+    deaths: 0,
     char,
     standShape,
     crouchShape,
@@ -328,6 +354,7 @@ export function damagePlayersSphere(
   const pids = [...phys.players.keys()].sort((a, b) => a - b)
   for (const pid of pids) {
     const p = phys.players.get(pid)!
+    if (!p.alive) continue // dead players take no damage (player combat)
     // player-local grids are axis-aligned at the feet voxel (yaw ignored, v1)
     const bx = Math.floor(p.px / VOXEL_SIZE)
     const by = Math.floor(p.py / VOXEL_SIZE)
@@ -366,6 +393,228 @@ export function damagePlayersSphere(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Player combat — hp damage, death attribution, respawn.
+// ---------------------------------------------------------------------------
+
+/**
+ * Structural phys surface for the combat path — the Jolt PhysicsWorld and any
+ * IPhysicsWorld backend both satisfy it (spike backends have an empty players
+ * map and no seats: every function below degrades to a no-op there).
+ */
+interface CombatPhys {
+  players: Map<number, PlayerEntity>
+  vehicles?: Map<number, { occupants: number[] }>
+  aircraft?: Map<number, { occupants: number[] }>
+}
+
+/**
+ * Apply integer hp damage to a living player, with attacker attribution
+ * (attacker = playerId, 0 = world/environment). Emits 'player-hit'; on hp 0
+ * flips the entity dead (inert until respawnAtTick), bumps K/D counters
+ * (suicide/world death credits nobody) and emits 'player-death'.
+ * Deterministic: integer hp, all inputs sim state (V2/V3).
+ */
+export function damagePlayerHp(
+  sim: Sim,
+  phys: CombatPhys,
+  victim: PlayerEntity,
+  dmg: number,
+  attacker: number,
+): void {
+  if (!victim.alive) return // dead players take no damage
+  dmg = Math.min(victim.hp, Math.max(0, dmg | 0)) // int hp only (V2)
+  if (dmg === 0) return
+  victim.hp -= dmg
+  // hit direction: normalized horizontal FROM attacker TO victim (render
+  // damage-direction indicator). 0,0 for world damage or degenerate distance.
+  let dx = 0
+  let dz = 0
+  if (attacker !== 0) {
+    const a = phys.players.get(attacker)
+    if (a) {
+      const hx = victim.px - a.px
+      const hz = victim.pz - a.pz
+      const len = Math.sqrt(hx * hx + hz * hz)
+      if (len > 1e-6) {
+        dx = hx / len
+        dz = hz / len
+      }
+    }
+  }
+  sim.emit({ kind: 'player-hit', victim: victim.playerId, attacker, dmg, hpAfter: victim.hp, dx, dz })
+  if (victim.hp > 0) return
+
+  // death: inert corpse — updatePlayers skips it entirely (no movement, no
+  // collision update; CharacterVirtual is not a broadphase body so nothing
+  // collides with it either) and 'move'/'noclip'/enter ops are ignored.
+  victim.alive = false
+  victim.deaths++
+  victim.respawnAtTick = sim.tick + RESPAWN_DELAY_TICKS
+  victim.input = 0
+  victim.vx = 0
+  victim.vy = 0
+  victim.vz = 0
+  // dying seated frees the seat so the vehicle/aircraft system stops driving
+  // the corpse (it stays where it died; respawn teleports it later)
+  if (victim.seatedVehicle !== 0) {
+    const v = phys.vehicles?.get(victim.seatedVehicle)
+    if (v) v.occupants[victim.seat] = 0
+    victim.seatedVehicle = 0
+    victim.seat = 0
+  }
+  if (victim.seatedAircraft !== 0) {
+    const a = phys.aircraft?.get(victim.seatedAircraft)
+    if (a) a.occupants[victim.aircraftSeat] = 0
+    victim.seatedAircraft = 0
+    victim.aircraftSeat = 0
+  }
+  if (attacker !== 0 && attacker !== victim.playerId) {
+    const killer = phys.players.get(attacker)
+    if (killer) killer.kills++
+  }
+  sim.emit({ kind: 'player-death', victim: victim.playerId, attacker })
+}
+
+/**
+ * Explosion hp damage with linear distance falloff — nearest point of the
+ * victim's vertical capsule axis to the blast center. Center/radius in world
+ * VOXEL coords (same convention as damagePlayersSphere); power is the T55
+ * destruction power. dmg = floor(power · EXPLOSION_HP_PER_POWER · falloff).
+ * Deterministic: ascending playerId, pure math from sim state (V2).
+ */
+export function damagePlayersExplosion(
+  sim: Sim,
+  phys: CombatPhys,
+  cx: number,
+  cy: number,
+  cz: number,
+  r: number,
+  power: number,
+  attacker: number,
+): void {
+  const pids = [...phys.players.keys()].sort((a, b) => a - b)
+  for (const pid of pids) {
+    const p = phys.players.get(pid)!
+    if (!p.alive) continue
+    const px = p.px / VOXEL_SIZE
+    const pz = p.pz / VOXEL_SIZE
+    const y0 = p.py / VOXEL_SIZE
+    const y1 = y0 + (p.crouching ? CROUCH_HEIGHT : PLAYER_HEIGHT) / VOXEL_SIZE
+    const py = Math.max(y0, Math.min(y1, cy)) // clamp center to the capsule axis
+    const dx = px - cx
+    const dy = py - cy
+    const dz = pz - cz
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz)
+    if (d >= r) continue
+    const dmg = Math.floor(power * EXPLOSION_HP_PER_POWER * (1 - d / r))
+    if (dmg <= 0) continue
+    damagePlayerHp(sim, phys, p, dmg, attacker)
+  }
+}
+
+/** result of a ray test against player capsules (shoot-op player hits) */
+export interface PlayerRayHit {
+  player: PlayerEntity
+  /** distance along the (normalized) ray, meters */
+  dist: number
+  /** hit point, world meters */
+  px: number
+  py: number
+  pz: number
+}
+
+/** slab interval of a ray vs [lo,hi] on one axis; null = parallel miss */
+function raySlab(o: number, d: number, lo: number, hi: number): [number, number] | null {
+  if (Math.abs(d) < 1e-12) return o >= lo && o <= hi ? [-Infinity, Infinity] : null
+  let t0 = (lo - o) / d
+  let t1 = (hi - o) / d
+  if (t0 > t1) {
+    const t = t0
+    t0 = t1
+    t1 = t
+  }
+  return [t0, t1]
+}
+
+/**
+ * Segment vs vertical player AABB (capsule bounds: radius PLAYER_RADIUS,
+ * height per crouch state) — pure TS math, NO physics-engine query, so the
+ * decision is bit-identical on every peer (V2). Skips dead players and the
+ * shooter. Nearest hit wins; ties resolve to the lowest playerId (ascending
+ * iteration + strict <). Origin/dir in world meters, dir normalized.
+ */
+export function raycastPlayers(
+  phys: { players: Map<number, PlayerEntity> },
+  ox: number,
+  oy: number,
+  oz: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  maxDist: number,
+  excludePlayerId: number,
+): PlayerRayHit | null {
+  let best: PlayerRayHit | null = null
+  const pids = [...phys.players.keys()].sort((a, b) => a - b)
+  for (const pid of pids) {
+    if (pid === excludePlayerId) continue
+    const p = phys.players.get(pid)!
+    if (!p.alive) continue
+    const h = p.crouching ? CROUCH_HEIGHT : PLAYER_HEIGHT
+    const ix = raySlab(ox, dx, p.px - PLAYER_RADIUS, p.px + PLAYER_RADIUS)
+    if (!ix) continue
+    const iy = raySlab(oy, dy, p.py, p.py + h)
+    if (!iy) continue
+    const iz = raySlab(oz, dz, p.pz - PLAYER_RADIUS, p.pz + PLAYER_RADIUS)
+    if (!iz) continue
+    const tEnter = Math.max(ix[0], iy[0], iz[0])
+    const tExit = Math.min(ix[1], iy[1], iz[1])
+    if (tExit < Math.max(tEnter, 0)) continue // behind the origin or no overlap
+    const t = Math.max(tEnter, 0) // origin inside the box = point-blank hit
+    if (t >= maxDist) continue // must be strictly in front of the world hit
+    if (best === null || t < best.dist) {
+      best = { player: p, dist: t, px: ox + dx * t, py: oy + dy * t, pz: oz + dz * t }
+    }
+  }
+  return best
+}
+
+/**
+ * Respawn: restore hp/alive, rebuild the voxel body, teleport to the same
+ * deterministic per-player spawn column the 'spawn' op uses. Called from
+ * updatePlayers when sim.tick reaches respawnAtTick.
+ */
+function respawnPlayer(sim: Sim, phys: PhysicsWorld, p: PlayerEntity): void {
+  const sp = spawnPoint(sim, p.playerId)
+  p.hp = MAX_HP
+  p.alive = true
+  p.respawnAtTick = 0
+  p.px = sp.x
+  p.py = sp.y
+  p.pz = sp.z
+  p.vx = 0
+  p.vy = 0
+  p.vz = 0
+  p.input = 0
+  // restore the segmented voxel body in place — version bump triggers the
+  // render rebuild (fresh objects would reset version and stall the cache)
+  for (const seg of p.segments) {
+    seg.grid.fill(MAT_FLESH)
+    seg.count = seg.initial
+    seg.version++
+  }
+  p.flags = 0
+  const api = phys.api
+  const pos = new api.RVec3(sp.x, sp.y, sp.z)
+  p.char.SetPosition(pos)
+  api.destroy(pos)
+  const vel = new api.Vec3(0, 0, 0)
+  p.char.SetLinearVelocity(vel)
+  api.destroy(vel)
+  sim.emit({ kind: 'player-respawn', playerId: p.playerId })
+}
+
 export function registerPlayerOps(sim: Sim, phys: PhysicsWorld): void {
   sim.onOp('spawn', (s, cmd) => {
     // idempotent: respawn requests for a live player are ignored
@@ -376,6 +625,7 @@ export function registerPlayerOps(sim: Sim, phys: PhysicsWorld): void {
     const p = phys.players.get(cmd.playerId)
     // V10: move for a non-spawned player = command-stream bug, fail loud
     if (!p) throw new Error(`move for unspawned player ${cmd.playerId} at tick ${s.tick}`)
+    if (!p.alive) return // dead players ignore input ops (player combat)
     p.input = cmd.op.input
     p.yaw = cmd.op.yaw
     p.pitch = cmd.op.pitch
@@ -384,6 +634,7 @@ export function registerPlayerOps(sim: Sim, phys: PhysicsWorld): void {
   sim.onOp('noclip', (s, cmd) => {
     const p = phys.players.get(cmd.playerId)
     if (!p) throw new Error(`noclip for unspawned player ${cmd.playerId} at tick ${s.tick}`)
+    if (!p.alive) return // dead players ignore input ops (player combat)
     p.noclip = !p.noclip
     if (!p.noclip) {
       // resuming collision: CharacterVirtual already tracks the flown position
@@ -466,6 +717,14 @@ export function updatePlayers(phys: PhysicsWorld, sim: Sim): void {
   const pids = [...phys.players.keys()].sort((a, b) => a - b)
   for (const pid of pids) {
     const p = phys.players.get(pid)!
+
+    // player combat — dead: fully inert (no movement, no collision update,
+    // corpse stays where it fell; input was cleared at death and move ops are
+    // ignored) until the deterministic respawn tick, then live again this tick.
+    if (!p.alive) {
+      if (sim.tick >= p.respawnAtTick) respawnPlayer(sim, phys, p)
+      else continue
+    }
 
     // T47 — noclip: direct command-driven integration, skip the character update
     if (p.noclip) {

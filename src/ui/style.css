@@ -1344,3 +1344,29 @@ body.bb-cinematic .three-inspector {
   color: var(--amber);
   border-color: var(--amber-glow);
 }
+
+/* T95 — combat HUD --------------------------------------------------------- */
+.bb-combat { position: absolute; inset: 0; pointer-events: none; font-family: 'Chakra Petch', ui-monospace, monospace; }
+.bb-hp { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); width: 220px; height: 10px; background: rgba(10,13,18,.72); border: 1px solid #2a303c; border-radius: 3px; }
+.bb-hp-fill { height: 100%; width: 100%; background: #d7dee9; border-radius: 2px; transition: width .15s ease; }
+.bb-hp-fill.bb-hp-low { background: #e04b3a; }
+.bb-hp-text { position: absolute; right: -34px; top: -5px; font-size: 13px; color: #d7dee9; text-shadow: 0 1px 2px #000; }
+.bb-killfeed { position: absolute; top: 64px; right: 18px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.bb-feed-line { background: rgba(10,13,18,.72); border: 1px solid #2a303c; border-radius: 3px; padding: 3px 8px; font-size: 12px; color: #aeb7c4; transition: opacity .4s; }
+.bb-feed-me { color: #ffb020; border-color: #6b5210; }
+.bb-feed-out { opacity: 0; }
+.bb-dmg-arrows { position: absolute; left: 50%; top: 50%; }
+.bb-dmg-arrow { position: absolute; width: 0; height: 0; }
+.bb-dmg-arrow i { position: absolute; left: -26px; top: -150px; width: 52px; height: 26px; display: block;
+  background: radial-gradient(ellipse at 50% 100%, rgba(224,75,58,.85), rgba(224,75,58,0) 70%);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.bb-death { position: absolute; inset: 0; display: grid; place-items: center; place-content: center; gap: 8px; background: radial-gradient(ellipse at center, rgba(60,8,8,.35), rgba(8,4,4,.78)); }
+.bb-death-title { font-size: 44px; font-weight: 700; letter-spacing: .12em; color: #e04b3a; text-shadow: 0 2px 12px #000; }
+.bb-death-sub { font-size: 16px; color: #d7dee9; text-align: center; }
+.bb-board { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); min-width: 340px; background: rgba(10,13,18,.88); border: 1px solid #2a303c; border-radius: 6px; padding: 12px 16px; }
+.bb-board-title { font-size: 14px; letter-spacing: .2em; color: #ffb020; text-transform: uppercase; margin-bottom: 8px; }
+.bb-board table { width: 100%; border-collapse: collapse; font-size: 13px; color: #d7dee9; }
+.bb-board th { text-align: left; color: #7b8494; font-weight: 400; padding: 2px 8px 6px 0; }
+.bb-board td { padding: 2px 8px 2px 0; }
+.bb-board-me td { color: #ffb020; }
+.bb-board-dead td { opacity: .45; }

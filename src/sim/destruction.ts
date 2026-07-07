@@ -26,7 +26,7 @@ import type { Sim } from './loop'
 import { VOXEL_SIZE, WORLD_VX, WORLD_VY, WORLD_VZ } from '../world/chunks'
 import { material } from './materials'
 import { snapshotRegion } from './connectivity'
-import { damagePlayersSphere } from './player'
+import { damagePlayersExplosion, damagePlayersSphere } from './player'
 import type { IPhysicsWorld } from './iphysics'
 
 /** impulse (kg·m/s) applied per unit of explode power at the blast center */
@@ -365,6 +365,10 @@ function spawnEjecta(
  * shockwave impulse — which also shoves the fresh ejecta bodies. Shared by
  * the 'explode' op and the bomb projectile fuse (T54).
  * Coordinates in voxels.
+ *
+ * `attacker` = playerId responsible for the blast (kill/damage attribution,
+ * 0 = world/environment) — threaded from the originating op by every caller
+ * that has one (explode op, bomb throw, rocket, TNT placer).
  */
 export function runExplosion(
   sim: Sim,
@@ -374,6 +378,7 @@ export function runExplosion(
   z: number,
   r: number,
   power: number,
+  attacker = 0,
 ): ExplosionStats {
   // B17 — blasts chew voxels off PRE-EXISTING dynamic bodies too, not just
   // impulse them. Snapshot ids first: the ejecta explodeSphere spawns below
@@ -381,6 +386,8 @@ export function runExplosion(
   const preIds = [...phys.bodies.keys()]
   const stats = explodeSphere(sim, phys, x, y, z, r, power)
   damagePlayersSphere(phys, x, y, z, r, power)
+  // player combat — hp damage with falloff + attacker credit
+  damagePlayersExplosion(sim, phys, x, y, z, r, power, attacker)
   phys.damageBodiesSphere(x * VOXEL_SIZE, y * VOXEL_SIZE, z * VOXEL_SIZE, r * VOXEL_SIZE, power, preIds)
   phys.structuralPass(sim)
   phys.applyRadialImpulse(
@@ -396,6 +403,6 @@ export function runExplosion(
 export function registerDestructionOps(sim: Sim, phys: IPhysicsWorld): void {
   sim.onOp('explode', (s, cmd) => {
     const { x, y, z, r, power } = cmd.op
-    runExplosion(s, phys, x, y, z, r, power)
+    runExplosion(s, phys, x, y, z, r, power, cmd.playerId)
   })
 }

@@ -794,6 +794,7 @@ export function registerAircraftOps(sim: Sim, phys: PhysicsWorld): void {
   sim.onOp('aircraft_enter', (s, cmd) => {
     const p = phys.players.get(cmd.playerId)
     if (!p) throw new Error(`aircraft_enter for unspawned player ${cmd.playerId} at tick ${s.tick}`)
+    if (!p.alive) return // player combat — dead players ignore input ops
     enterAircraft(s, phys, p)
   })
   sim.onOp('aircraft_exit', (s, cmd) => {

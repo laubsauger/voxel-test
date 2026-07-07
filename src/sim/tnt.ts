@@ -24,6 +24,9 @@ export interface Charge {
   x: number
   y: number
   z: number
+  /** player combat — placer playerId (kill attribution, 0 = world); hashed.
+   *  Chain detonations credit each charge's own placer. */
+  owner: number
 }
 
 /** destruction radius per charge, voxels — a big zoned boom (bomb is 15) */
@@ -35,9 +38,12 @@ export const TNT_CHAIN_RADIUS = 6
 
 export function registerTntOps(sim: Sim, phys: PhysicsWorld): void {
   sim.onOp('tnt_place', (s, cmd) => {
+    // player combat — dead players ignore input ops
+    const placer = phys.players.get(cmd.playerId)
+    if (placer && !placer.alive) return
     const { x, y, z } = cmd.op
     const id = s.allocEntityId()
-    phys.charges.set(id, { id, x, y, z })
+    phys.charges.set(id, { id, x, y, z, owner: cmd.playerId })
   })
 
   sim.onOp('tnt_detonate', (s, _cmd) => {
@@ -50,7 +56,7 @@ export function registerTntOps(sim: Sim, phys: PhysicsWorld): void {
       const c = phys.charges.get(id)
       if (!c) continue // already consumed by an earlier chain step
       phys.charges.delete(id)
-      runExplosion(s, phys, c.x / VOXEL_SIZE, c.y / VOXEL_SIZE, c.z / VOXEL_SIZE, TNT_RADIUS, TNT_POWER)
+      runExplosion(s, phys, c.x / VOXEL_SIZE, c.y / VOXEL_SIZE, c.z / VOXEL_SIZE, TNT_RADIUS, TNT_POWER, c.owner)
       // chain: enqueue every still-live charge within reach, ascending id, so
       // the cascade order is fully determined by sim state (V2)
       const r2 = TNT_CHAIN_RADIUS * TNT_CHAIN_RADIUS

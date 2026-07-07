@@ -31,6 +31,8 @@ export interface Projectile {
   fuse: number
   /** settled on a surface (render: no spin/trail) */
   resting: boolean
+  /** player combat — thrower playerId (kill attribution, 0 = world); hashed */
+  owner: number
 }
 
 /** 3 s at 60 Hz */
@@ -47,9 +49,19 @@ const MAX_BOUNCES = 3
 
 export function registerProjectileOps(sim: Sim, phys: PhysicsWorld): void {
   sim.onOp('throw', (s, cmd) => {
+    // player combat — dead players ignore input ops
+    const thrower = phys.players.get(cmd.playerId)
+    if (thrower && !thrower.alive) return
     const { ox, oy, oz, vx, vy, vz } = cmd.op
     const id = s.allocEntityId()
-    phys.projectiles.set(id, { id, x: ox, y: oy, z: oz, vx, vy, vz, fuse: BOMB_FUSE_TICKS, resting: false })
+    phys.projectiles.set(id, {
+      id,
+      x: ox, y: oy, z: oz,
+      vx, vy, vz,
+      fuse: BOMB_FUSE_TICKS,
+      resting: false,
+      owner: cmd.playerId,
+    })
   })
 }
 
@@ -60,25 +72,9 @@ export function tickProjectiles(sim: Sim, phys: PhysicsWorld): void {
   let dead: number[] | undefined
   // map iteration = insertion = entity-id allocation order (deterministic)
   for (const p of phys.projectiles.values()) {
-    integrate(sim, p)
-    // B23/T89 — pre-inflate P18 palette chunks around the projectile while it
-    // flies: spreads decompression over flight ticks instead of paying it all
-    // inside the detonation scan. chunkAt() inflates lazily, ~free when hot;
-    // inflation is a REPRESENTATION change only (logical no-op, same category
-    // as game.ts compactStep) — hash-neutral.
-    const pcx = Math.floor(p.x / VOXEL_SIZE) >> 5
-    const pcy = Math.floor(p.y / VOXEL_SIZE) >> 5
-    const pcz = Math.floor(p.z / VOXEL_SIZE) >> 5
-    for (let dy = -1; dy <= 1; dy++)
-      for (let dz = -1; dz <= 1; dz++)
-        for (let dx = -1; dx <= 1; dx++) {
-          const ccx = pcx + dx, ccy = pcy + dy, ccz = pcz + dz
-          if (ccx < 0 || ccy < 0 || ccz < 0 || ccx >= WORLD_CX || ccy >= WORLD_CY || ccz >= WORLD_CZ) continue
-          sim.world.chunkAt(chunkIndex(ccx, ccy, ccz))
-        }
-    // T89 — also pre-build the LOCAL debris layer's colliders under the bomb
-    // (budgeted per tick of flight) so detonation debris lands on warm ground
-    phys.debris?.prewarm(sim.world, Math.floor(p.x / VOXEL_SIZE), Math.floor(p.y / VOXEL_SIZE), Math.floor(p.z / VOXEL_SIZE), 2)
+    integrate(sim, phys, p)
+    // T95b — palette pre-inflation + debris prewarm moved to the GENERIC
+    // phys.prewarmHotspots (one place for every weapon/vehicle registry)
     p.fuse--
     if (p.fuse <= 0) (detonate ??= []).push(p)
     else if (p.y < KILL_PLANE_Y) (dead ??= []).push(p.id)
@@ -87,12 +83,12 @@ export function tickProjectiles(sim: Sim, phys: PhysicsWorld): void {
   if (detonate) {
     for (const p of detonate) {
       phys.projectiles.delete(p.id)
-      runExplosion(sim, phys, p.x / VOXEL_SIZE, p.y / VOXEL_SIZE, p.z / VOXEL_SIZE, BOMB_RADIUS, BOMB_POWER)
+      runExplosion(sim, phys, p.x / VOXEL_SIZE, p.y / VOXEL_SIZE, p.z / VOXEL_SIZE, BOMB_RADIUS, BOMB_POWER, p.owner)
     }
   }
 }
 
-function integrate(sim: Sim, p: Projectile): void {
+function integrate(sim: Sim, phys: PhysicsWorld, p: Projectile): void {
   p.vy += GRAVITY_Y * DT
   if (p.resting) {
     // stay asleep while supported; wake when the floor is dug/blown away
@@ -113,6 +109,27 @@ function integrate(sim: Sim, p: Projectile): void {
     if (speed < 1e-6) break
     const distVox = (speed * remaining) / VOXEL_SIZE + radiusVox
     const hit = ddaRaycast(sim.world, p.x / VOXEL_SIZE, p.y / VOXEL_SIZE, p.z / VOXEL_SIZE, p.vx, p.vy, p.vz, distVox)
+    // T95b/V17b — SP only: bombs bounce off LOCAL debris (frozen rubble) too,
+    // instead of rolling through visually-solid wall remnants. Never in MP
+    // lockstep — bomb kinematics feed the deterministic detonation position.
+    if (!sim.lockstep) {
+      const nvx = p.vx / speed, nvy = p.vy / speed, nvz = p.vz / speed
+      const maxM = (hit ? Math.max(hit.dist - radiusVox, 0) : distVox) * VOXEL_SIZE
+      const dHit = phys.castRayDebris?.(p.x, p.y, p.z, nvx, nvy, nvz, maxM)
+      if (dHit) {
+        const t = (dHit.fraction * maxM) / speed
+        p.x += p.vx * Math.max(t - 1e-3, 0)
+        p.y += p.vy * Math.max(t - 1e-3, 0)
+        p.z += p.vz * Math.max(t - 1e-3, 0)
+        // reflect off the debris surface with the same damping as world bounces
+        const dot = p.vx * dHit.nx + p.vy * dHit.ny + p.vz * dHit.nz
+        p.vx = (p.vx - 2 * dot * dHit.nx) * BOMB_RESTITUTION
+        p.vy = (p.vy - 2 * dot * dHit.ny) * BOMB_RESTITUTION
+        p.vz = (p.vz - 2 * dot * dHit.nz) * BOMB_RESTITUTION
+        remaining -= Math.max(t, 1e-3)
+        continue
+      }
+    }
     if (!hit) {
       p.x += p.vx * remaining
       p.y += p.vy * remaining

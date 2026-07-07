@@ -80,6 +80,10 @@ export const STRESS_INTERVAL = 6
  *  rebuild work per tick; a bomb's 20-30 dirty chunks clear in ~5-7 ticks with
  *  the OLD shapes live meanwhile (anchor-nearest rebuilt first). */
 export const COLLIDER_REBUILD_BUDGET = 4
+/** T95b — debris-collider prewarm builds per tick across ALL hotspots (bombs,
+ *  rockets, TNT, fast vehicles) — latency smoothing; the debris spawn gate is
+ *  the correctness backstop */
+const PREWARM_BUILD_BUDGET = 6
 
 /** B23/T88 — max chunks fed into one connectivity flood; the spill re-queues.
  *  Bounds the per-tick region flood; cascades were already multi-tick. */
@@ -393,7 +397,53 @@ export class PhysicsWorld implements IPhysicsWorld {
   }
 
   /** Sim system body: structural updates, then the fixed Jolt step (V2: DT only). */
+  /**
+   * T95b — GENERIC detonation prewarm: every registry that can produce an
+   * explosion/debris burst (bombs, rockets, TNT charges, fast vehicles +
+   * aircraft) gets palette pre-inflation (hash-neutral representation change)
+   * and local debris-collider prewarm around it, spread over the ticks BEFORE
+   * impact. One place — a new weapon only needs its registry added here, and
+   * even a forgotten one cannot reproduce the cold-area artifact: the debris
+   * layer's spawn gate (missingCollidersAround) force-builds the blast core
+   * before any piece materializes. This is latency smoothing, not correctness.
+   */
+  private prewarmHotspots(sim: Sim): void {
+    if (!this.debris) return
+    const spots: Array<{ x: number; y: number; z: number }> = []
+    for (const p of this.projectiles.values()) spots.push(p)
+    for (const r of this.rockets.values()) spots.push(r)
+    for (const c of this.charges.values()) spots.push(c)
+    // vehicles/aircraft prewarm AHEAD along velocity when fast enough to crash
+    for (const v of this.vehicles.values()) {
+      const sp = Math.hypot(v.vx, v.vz)
+      if (sp > 9) spots.push({ x: v.px + (v.vx / sp) * 6, y: v.py, z: v.pz + (v.vz / sp) * 6 })
+    }
+    for (const a of this.aircraft.values()) {
+      const sp = Math.hypot(a.vx, a.vy, a.vz)
+      if (sp > 9) spots.push({ x: a.px + (a.vx / sp) * 10, y: a.py + (a.vy / sp) * 10, z: a.pz + (a.vz / sp) * 10 })
+    }
+    let budget = PREWARM_BUILD_BUDGET
+    for (const s of spots) {
+      if (budget <= 0) break
+      const vx = Math.floor(s.x / VOXEL_SIZE), vy = Math.floor(s.y / VOXEL_SIZE), vz = Math.floor(s.z / VOXEL_SIZE)
+      // palette pre-inflation 3³ around the hotspot (chunkAt inflates lazily;
+      // logical no-op, same category as game.ts compactStep — hash-neutral)
+      const pcx = vx >> 5, pcy = vy >> 5, pcz = vz >> 5
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const cx = pcx + dx, cy = pcy + dy, cz = pcz + dz
+            if (cx < 0 || cy < 0 || cz < 0 || cx >= WORLD_CX || cy >= WORLD_CY || cz >= WORLD_CZ) continue
+            sim.world.chunkAt(chunkIndex(cx, cy, cz))
+          }
+      const before = budget
+      this.debris.prewarm(sim.world, vx, vy, vz, Math.min(2, budget))
+      budget = before - 2 // prewarm builds ≤ its budget; flat decrement keeps this bounded
+    }
+  }
+
   tick(sim: Sim): void {
+    this.prewarmHotspots(sim) // T95b — generic pre-detonation warmup (all weapons)
     this.streamColliders(sim) // B35 — load/evict static colliders near anchors
     tickVehiclesPlow(sim, this) // T64 — carve weak materials BEFORE collider rebuild
     this.structuralPass(sim)
@@ -1418,6 +1468,7 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.f64(p.vx).f64(p.vy).f64(p.vz)
     h.u32(p.fuse)
     h.u8(p.resting ? 1 : 0)
+    h.u32(p.owner) // player combat — kill attribution is sim state (V3)
   }
   // P19 — rockets in flight are sim state (V3)
   h.u32(phys.rockets.size)
@@ -1428,6 +1479,7 @@ export function hashPhysics(phys: PhysicsWorld): number {
     h.f64(r.x).f64(r.y).f64(r.z)
     h.f64(r.vx).f64(r.vy).f64(r.vz)
     h.u32(r.ttl)
+    h.u32(r.owner) // player combat — kill attribution is sim state (V3)
   }
   // P19 — placed TNT charges are sim state (V3)
   h.u32(phys.charges.size)
@@ -1436,6 +1488,7 @@ export function hashPhysics(phys: PhysicsWorld): number {
     const c = phys.charges.get(id)!
     h.u32(id)
     h.f64(c.x).f64(c.y).f64(c.z)
+    h.u32(c.owner) // player combat — kill attribution is sim state (V3)
   }
   h.u32(phys.players.size)
   const pids = [...phys.players.keys()].sort((a, b) => a - b)
@@ -1455,6 +1508,12 @@ export function hashPhysics(phys: PhysicsWorld): number {
     // P17 — aircraft seat state is sim state (V3)
     h.u32(p.seatedAircraft)
     h.u32(p.aircraftSeat)
+    // player combat — hp/alive/respawn tick + K/D counters are sim state (V3)
+    h.u32(p.hp)
+    h.u8(p.alive ? 1 : 0)
+    h.u32(p.respawnAtTick)
+    h.u32(p.kills)
+    h.u32(p.deaths)
     for (const seg of p.segments) {
       h.u32(seg.count)
       h.bytes(seg.grid)
