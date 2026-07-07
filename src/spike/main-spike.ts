@@ -83,6 +83,15 @@ async function main(): Promise<void> {
   renderer.shadowMap.enabled = true
   app.appendChild(renderer.domElement)
 
+  // aiming crosshair (center screen)
+  const crosshair = document.createElement('div')
+  crosshair.style.cssText =
+    'position:fixed;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);pointer-events:none;z-index:20'
+  crosshair.innerHTML =
+    '<div style="position:absolute;left:7px;top:0;width:2px;height:16px;background:rgba(255,255,255,.8);box-shadow:0 0 2px #000"></div>' +
+    '<div style="position:absolute;top:7px;left:0;height:2px;width:16px;background:rgba(255,255,255,.8);box-shadow:0 0 2px #000"></div>'
+  document.body.appendChild(crosshair)
+
   const scene = new Scene()
   scene.background = new Color(0x8fb6e8)
 
@@ -108,6 +117,20 @@ async function main(): Promise<void> {
   const target = findTallColumn(sim) // a real building column to blast
   // frame the camera on the target building
   cam.camera.position.set(target.vx * VOXEL_SIZE + 15, target.vy * VOXEL_SIZE * 0.6 + 6, target.vz * VOXEL_SIZE - 15)
+
+  // shadows: aim the sun's shadow camera at the target so voxels cast real shadows
+  const tw = { x: target.vx * VOXEL_SIZE, y: target.vy * VOXEL_SIZE * 0.5, z: target.vz * VOXEL_SIZE }
+  sun.position.set(tw.x + 24, tw.y + 46, tw.z + 16)
+  sun.target.position.set(tw.x, tw.y, tw.z)
+  scene.add(sun.target)
+  sun.shadow.mapSize.set(2048, 2048)
+  sun.shadow.camera.near = 1
+  sun.shadow.camera.far = 170
+  sun.shadow.camera.left = -38
+  sun.shadow.camera.right = 38
+  sun.shadow.camera.top = 38
+  sun.shadow.camera.bottom = -38
+  sun.shadow.bias = -0.0006
 
   const chunkGroups = new Map<number, Group>()
   function renderChunk(ci: number): void {
@@ -165,31 +188,44 @@ async function main(): Promise<void> {
     sim.queue.push({ tick: sim.tick, playerId: 1, seq: sim.tick, op: { kind: 'explode', x, y, z, r, power } })
   }
 
-  // rocket barrage: several blasts marched up a building, ~10 ticks apart (repro)
-  let barrage: { n: number; nextTick: number } | null = null
-  function fireBarrage(): void { barrage = { n: 0, nextTick: sim.tick } }
-
+  // raycast the camera crosshair to the first solid voxel (the real aim target)
   const fwd = new Vector3()
-  function explodeAtAim(): void {
+  function aimVoxel(): { vx: number; vy: number; vz: number } | null {
     cam.camera.getWorldDirection(fwd)
     const o = cam.camera.position
-    // march the ray until it enters a solid voxel (real target), cap 60 m
-    for (let d = 1; d < 60; d += 0.4) {
+    for (let d = 1; d < 70; d += 0.35) {
       const vx = Math.round((o.x + fwd.x * d) / VOXEL_SIZE)
       const vy = Math.round((o.y + fwd.y * d) / VOXEL_SIZE)
       const vz = Math.round((o.z + fwd.z * d) / VOXEL_SIZE)
-      if (sim.world.getVoxel(vx, vy, vz) !== 0) { explode(vx, vy, vz, 8, 8); return }
+      if (sim.world.getVoxel(vx, vy, vz) !== 0) return { vx, vy, vz }
     }
+    return null
+  }
+  function explodeAtAim(): void {
+    const a = aimVoxel()
+    if (a) explode(a.vx, a.vy, a.vz, 8, 8)
   }
 
+  // rocket barrage: blasts march DOWN the building you're aiming at (repro)
+  let barrage: { n: number; nextTick: number; tx: number; ty: number; tz: number } | null = null
+  function fireBarrage(): void {
+    const a = aimVoxel() ?? target
+    barrage = { n: 0, nextTick: sim.tick, tx: a.vx, ty: a.vy, tz: a.vz }
+  }
+
+  let showWorld = true // KeyV isolates the loose debris by hiding the welded world
   addEventListener('keydown', (e) => {
     switch (e.code) {
       case 'KeyR': fireBarrage(); break
-      case 'KeyX': explode(target.vx, target.vy - 4, target.vz, 12, 9); break
+      case 'KeyX': { const a = aimVoxel() ?? target; explode(a.vx, a.vy, a.vz, 12, 9); break }
       case 'KeyF': phys.reweldEnabled = !phys.reweldEnabled; break
       case 'KeyB':
         showBodies = !showBodies
         for (const rec of bodyGroups.values()) rec.group.visible = showBodies
+        break
+      case 'KeyV':
+        showWorld = !showWorld
+        for (const g of chunkGroups.values()) g.visible = showWorld
         break
     }
   })
@@ -210,8 +246,8 @@ async function main(): Promise<void> {
     while (acc >= stepDt && n < 5) {
       // drive the barrage: one blast every ~8 ticks, 6 total, marching up
       if (barrage && sim.tick >= barrage.nextTick && barrage.n < 6) {
-        // march blasts DOWN the building (top→base) — the way rockets chew a tower down
-        explode(target.vx, Math.max(6, target.vy - barrage.n * 4), target.vz, 10, 9)
+        // march blasts DOWN the aimed building (top→base) — rockets chewing it down
+        explode(barrage.tx, Math.max(6, barrage.ty - barrage.n * 4), barrage.tz, 10, 9)
         barrage.n++
         barrage.nextTick = sim.tick + 8
         if (barrage.n >= 6) barrage = null

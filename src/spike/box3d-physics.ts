@@ -64,6 +64,9 @@ const REST_SPEED_SQ = 0.09 // (0.3 m/s)²
  *  building doesn't spawn thousands of fragments in one tick (perf guardrail);
  *  reweld drains the pile and collapse resumes. */
 const BODY_CAP = 500
+/** ejecta launch speed is full at/below this mass (kg) and falls off ∝ 1/mass
+ *  above it — a ~10 kg brick flies, a 400 kg slab barely lurches. */
+const MASS_REF = 12
 
 export interface PhysProfile {
   structuralMs: number
@@ -391,6 +394,14 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
   }
 
   setBodyVelocity(b: DynamicBody, vx: number, vy: number, vz: number, wx: number, wy: number, wz: number): void {
+    // WEIGHT: the ejecta launch speed is a target for a light chunk; scale it down
+    // by mass so a big stone block barely lurches while a pebble still flies (a
+    // fixed impulse gives v = p/m). A really strong blast raises the input speed,
+    // so heavy chunks still move a bit. Shockwave (applyRadialImpulse) is already
+    // impulse/mass, so it stays consistent with this.
+    const heavy = Math.min(1, MASS_REF / Math.max(b.mass, MASS_REF))
+    vx *= heavy; vy *= heavy; vz *= heavy
+    wx *= heavy; wy *= heavy; wz *= heavy
     const vlen = Math.hypot(vx, vy, vz)
     if (vlen > MAX_LIN) { const s = MAX_LIN / vlen; vx *= s; vy *= s; vz *= s }
     const wlen = Math.hypot(wx, wy, wz)
