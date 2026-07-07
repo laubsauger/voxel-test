@@ -265,11 +265,17 @@ try {
   note(`both spawned (ticks ${startTicks.join(' / ')})`)
 
   // -- scripted mirrored inputs -------------------------------------------------
-  // walk: REAL input path (document keydown → PlayerInput bits → move ops)
-  const walk = async (page, key, ms) => {
+  // walk: REAL input path (document keydown → PlayerInput bits → move ops).
+  // Hold the key for a SIM-TICK count, not wall time: under headless GPU
+  // contention the early session can crawl (rAF gaps of seconds), so a
+  // wall-clock hold may cover almost no ticks and alias the "move ops flow"
+  // assertion into a false failure. Ticks are the authoritative clock (V2).
+  const walk = async (page, key, ticks) => {
+    const start = await page.evaluate(() => window.__bbNet.tick)
     await page.keyboard.down(key)
-    await new Promise((r) => setTimeout(r, ms))
-    await page.keyboard.up(key)
+    await page
+      .waitForFunction((t) => window.__bbNet.tick >= t, { timeout: 90000, polling: 100 }, start + ticks)
+      .finally(() => page.keyboard.up(key))
   }
   // tools: sanctioned op sink (Game.pushOp → lockstep submitLocal). Pointer
   // lock does not exist headless, so ToolController's mouse path can't fire;
@@ -283,7 +289,7 @@ try {
 
   note('scripted inputs: walk…')
   const posBefore = await pageA.evaluate(() => window.__bbNet.playerPos())
-  await Promise.all([walk(pageA, 'KeyW', 1200), walk(pageB, 'KeyW', 1200)])
+  await Promise.all([walk(pageA, 'KeyW', 72), walk(pageB, 'KeyW', 72)]) // ≈1200ms at 60Hz
   const posAfter = await pageA.evaluate(() => window.__bbNet.playerPos())
   const walked = Math.hypot(posAfter.x - posBefore.x, posAfter.z - posBefore.z)
   if (walked < 0.3) fail(`host player barely moved (${walked.toFixed(3)}m) — move ops not flowing?`)
@@ -325,7 +331,7 @@ try {
       vz: 4,
     }))
   }
-  await Promise.all([walk(pageA, 'KeyA', 800), walk(pageB, 'KeyD', 800)])
+  await Promise.all([walk(pageA, 'KeyA', 48), walk(pageB, 'KeyD', 48)]) // ≈800ms at 60Hz
 
   // -- run out the clock ----------------------------------------------------------
   const targetTick = Math.max(...startTicks) + RUN_TICKS

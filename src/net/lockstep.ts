@@ -221,6 +221,8 @@ export class LockstepHost {
    * The drop is announced in that bundle (BundleMsg.dropped).
    */
   dropPlayer(playerId: number): void {
+    // transport triage breadcrumb — drops are rare and must never be silent (V10)
+    console.warn(`[net] host dropping p${playerId} at nextRelease=${this.nextRelease}, waitingOn=[${this.waitingOn()}]`)
     if (playerId === this.node.playerId) throw new Error('lockstep host: cannot drop the host')
     if (!this.playerIds.has(playerId) || this.droppedIds.has(playerId)) return
     this.playerIds.delete(playerId)

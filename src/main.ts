@@ -715,7 +715,17 @@ function finishSessionStart(s: MpSession, pingSend: (n: number) => void): void {
     }
     // stall UX
     if (s.role === 'host' && s.lockstepHost) {
-      const waiting = s.lockstepHost.waitingOn().filter((pid) => pid !== s.playerId)
+      // B31 — waitingOn() is an INSTANTANEOUS view: in a flowing session it
+      // almost always names whichever peer's input is in flight (the host's
+      // own input lands synchronously at step time; remote inputs always
+      // trail by network+scheduling latency), so sampling it directly
+      // accumulates false stall time and eventually drops a healthy peer.
+      // A genuinely stalled peer freezes the session tick within inputDelay
+      // ticks — only count waiting time while the tick itself is frozen.
+      const frozen = now - lastTickAt >= STALL_BANNER_AFTER_MS
+      const waiting = frozen
+        ? s.lockstepHost.waitingOn().filter((pid) => pid !== s.playerId)
+        : []
       for (const pid of waiting) if (!stallSince.has(pid)) stallSince.set(pid, now)
       for (const pid of [...stallSince.keys()]) if (!waiting.includes(pid)) stallSince.delete(pid)
       let worst: { pid: number; ms: number } | null = null
