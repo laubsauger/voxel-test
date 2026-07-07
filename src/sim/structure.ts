@@ -18,9 +18,9 @@ import type { ChunkStore } from '../world/chunks'
 import { material, MAT_DIRT, MAT_GRASS, MAT_ASPHALT, MAT_SAND } from './materials'
 import { clampRegion, snapshotRegion, type Island, type IslandVoxel, type Region } from './connectivity'
 
-/** terrain materials = the GROUND reference, not flooded as structure. Excluding
- *  them keeps each building its own small component (a dig doesn't flood the whole
- *  suburb through the shared ground slab) — both correct and fast. */
+/** terrain = the GROUND reference: grounds structure, never flooded/collapsed.
+ *  Everything else (incl. wood trunks + leaves) IS structure — so chopping a
+ *  tree's trunk collapses it, but only when the edit actually touches it. */
 const TERRAIN = new Uint8Array(256)
 for (const m of [MAT_DIRT, MAT_GRASS, MAT_ASPHALT, MAT_SAND]) TERRAIN[m] = 1
 const isStruct = (m: number): boolean => m !== 0 && TERRAIN[m] === 0
@@ -46,9 +46,16 @@ const DEF: Required<StressOpts> = {
   minComponent: 24,
 }
 
-export function findStressCollapses(world: ChunkStore, region: Region, opts: StressOpts = {}): Island[] {
+/**
+ * @param region     analysis box (expanded UP so a low edit sees the mass above)
+ * @param editRegion the voxels actually changed this edit — ONLY components that
+ *                   intersect this collapse. Untouched neighbours/trees are left
+ *                   alone (the fix for "a hole in one wall drops the whole block").
+ */
+export function findStressCollapses(world: ChunkStore, region: Region, editRegion: Region, opts: StressOpts = {}): Island[] {
   const o = { ...DEF, ...opts }
   const R = clampRegion(region)
+  const E = editRegion
   if (R.x0 > R.x1 || R.y0 > R.y1 || R.z0 > R.z1) return []
   const nx = R.x1 - R.x0 + 1
   const ny = R.y1 - R.y0 + 1
@@ -76,12 +83,15 @@ export function findStressCollapses(world: ChunkStore, region: Region, opts: Str
         visited[si] = 1
         let grounded = false // touches world ground (y=0) or structure below the region
         let boundary = false // extends past the region horizontally → assume supported elsewhere
+        let touched = false // component overlaps the actual edit → eligible to collapse
         const comp: number[] = [] // packed lx|lz<<8|ly<<16
         while (head < tail) {
           const p = queue[head++]
           const lx = p & 0xff, lz = (p >> 8) & 0xff, ly = p >> 16
           comp.push(p)
-          if (R.y0 + ly === 0) grounded = true
+          const wx = R.x0 + lx, wy = R.y0 + ly, wz = R.z0 + lz
+          if (wx >= E.x0 && wx <= E.x1 && wy >= E.y0 && wy <= E.y1 && wz >= E.z0 && wz <= E.z1) touched = true
+          if (wy === 0) grounded = true
           // grounded if resting on terrain (the ground reference) directly below
           const below = ly > 0 ? grid[lx + lz * nx + (ly - 1) * nxnz] : world.getVoxel(R.x0 + lx, R.y0 - 1, R.z0 + lz)
           if (TERRAIN[below] === 1) grounded = true
@@ -105,7 +115,8 @@ export function findStressCollapses(world: ChunkStore, region: Region, opts: Str
         // always extends past the region, but the building's own neck is still
         // judged from the weakest cross-section, which the ground never is.
         void boundary
-        if (!grounded || comp.length < o.minComponent) continue
+        // untouched = not overlapping this edit → leave it standing (locality).
+        if (!touched || !grounded || comp.length < o.minComponent) continue
 
         // per-height cross-section + strength + mass
         const csY = new Int32Array(ny)

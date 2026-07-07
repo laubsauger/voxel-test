@@ -81,6 +81,10 @@ export class ChunkStore {
   private readonly chunks: Chunk[] = new Array(CHUNK_COUNT)
   /** chunk indices touched since last drain — consumed by mesher/mirror */
   readonly dirty = new Set<number>()
+  /** fine voxel-space AABB of edits since last drainDirty (null = none). Lets a
+   *  consumer act on the ACTUAL edited voxels, not the coarse 32³ chunk union. */
+  private dLo: [number, number, number] | null = null
+  private readonly dHi: [number, number, number] = [0, 0, 0]
   /** P18 — persistent cursor for compactStep's background sweep */
   private compactCursor = 0
   /**
@@ -158,7 +162,25 @@ export class ChunkStore {
       c.data![vi] = mat
     }
     this.dirty.add(ci)
+    if (this.dLo === null) {
+      this.dLo = [x, y, z]
+      this.dHi[0] = x; this.dHi[1] = y; this.dHi[2] = z
+    } else {
+      if (x < this.dLo[0]) this.dLo[0] = x
+      if (y < this.dLo[1]) this.dLo[1] = y
+      if (z < this.dLo[2]) this.dLo[2] = z
+      if (x > this.dHi[0]) this.dHi[0] = x
+      if (y > this.dHi[1]) this.dHi[1] = y
+      if (z > this.dHi[2]) this.dHi[2] = z
+    }
     if (this.onVoxelChanged) this.onVoxelChanged(x, y, z)
+  }
+
+  /** fine voxel-space AABB of edits since the last drainDirty, or null. Read-only
+   *  (does not reset — call before drainDirty, which clears it). */
+  peekDirtyBounds(): { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } | null {
+    if (this.dLo === null) return null
+    return { x0: this.dLo[0], y0: this.dLo[1], z0: this.dLo[2], x1: this.dHi[0], y1: this.dHi[1], z1: this.dHi[2] }
   }
 
   /** uniform/empty → dense, preserving contents */
@@ -351,6 +373,7 @@ export class ChunkStore {
   drainDirty(): number[] {
     const out = [...this.dirty].sort((a, b) => a - b)
     this.dirty.clear()
+    this.dLo = null // fine-AABB window aligns with the chunk-dirty window
     return out
   }
 }

@@ -208,7 +208,14 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
 
   /** settled debris (rested REWELD_TICKS) rasterises back to the static world +
    *  despawns — bounds live body/mesh count so perf stays flat under repeated
-   *  destruction (the parity feature the Jolt backend has). */
+   *  destruction (the parity feature the Jolt backend has).
+   *
+   *  CRITICAL: reweld is a SETTLING op, not a destructive edit. Debris scatters
+   *  far from the impact, so if its welds fed the normal edit pipeline they would
+   *  re-run stress + connectivity at every spot rubble lands and topple unrelated
+   *  structures (trees, neighbours) far away. So reweld drains its OWN dirty here
+   *  and updates only colliders + render for those chunks — it never reaches
+   *  structuralPass, so a settling pile never triggers a collapse elsewhere. */
   private reweldPass(sim: Sim): number {
     let ready: number[] | undefined
     for (const b of this.bodies.values()) if (b.restTicks >= REWELD_TICKS) (ready ??= []).push(b.id)
@@ -217,6 +224,12 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     for (const id of ready) {
       const b = this.bodies.get(id)
       if (b) this.reweldBody(sim, b)
+    }
+    // consume the weld dirty locally (collider + remesh only) so it does NOT
+    // surface in the next structuralPass as an edit → no distant re-collapse.
+    for (const ci of sim.world.drainDirty()) {
+      this.rebuildChunkBody(sim.world, ci)
+      this.remesh.add(ci)
     }
     return ready.length
   }
@@ -239,6 +252,10 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
   }
 
   structuralPass(sim: Sim): void {
+    // capture the FINE edit AABB before draining — the stress pass triggers on the
+    // actual edited voxels, not the coarse chunk union (a blast straddling a chunk
+    // boundary must not reach a tree in the neighbouring chunk).
+    const editBounds = sim.world.peekDirtyBounds()
     const drained = sim.world.drainDirty()
     for (const ci of drained) this.rebuildChunkBody(sim.world, ci)
     const check = this.pendingConnectivity.concat(drained)
@@ -249,10 +266,16 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     // T56 — weak-neck stress collapse. Expand the region UP (to see the mass a
     // low edit must still support) and out (to enclose the building footprint),
     // else a thin base neck never sees its true load. Clamped in findStressCollapses.
-    if (this.stressEnabled && this.bodies.size < BODY_CAP) {
-      const sr = { x0: region.x0 - 10, y0: region.y0, z0: region.z0 - 10, x1: region.x1 + 10, y1: region.y1 + 44, z1: region.z1 + 10 }
+    // T56 — run stress collapse ONLY on THIS edit (drained), not the accumulated
+    // connectivity cascade, so a hole in one wall can't re-judge and topple
+    // untouched neighbours. edit = the changed chunks; analysis expands UP so the
+    // undermined column sees the mass it must still hold.
+    if (this.stressEnabled && this.bodies.size < BODY_CAP && editBounds) {
+      // pad the edit box slightly so a neck right at the blast rim counts as touched
+      const edit = { x0: editBounds.x0 - 1, y0: editBounds.y0 - 1, z0: editBounds.z0 - 1, x1: editBounds.x1 + 1, y1: editBounds.y1 + 1, z1: editBounds.z1 + 1 }
+      const analysis = { x0: edit.x0 - 6, y0: edit.y0, z0: edit.z0 - 6, x1: edit.x1 + 6, y1: edit.y1 + 44, z1: edit.z1 + 6 }
       const budget = BODY_CAP - this.bodies.size
-      for (const island of findStressCollapses(sim.world, sr, { maxIslands: budget })) this.extractIsland(sim, island)
+      for (const island of findStressCollapses(sim.world, analysis, edit, { maxIslands: budget })) this.extractIsland(sim, island)
     }
     const dirtied = sim.world.drainDirty()
     for (const ci of dirtied) {
