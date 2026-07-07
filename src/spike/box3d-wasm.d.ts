@@ -49,6 +49,8 @@ declare module 'box3d-wasm/standard' {
     getLinearVelocity(): B3Vec3
     setAngularVelocity(v: B3Vec3): void
     getAngularVelocity(): B3Vec3
+    setLinearDamping(d: number): void
+    setAngularDamping(d: number): void
     applyLinearImpulseToCenter(impulse: B3Vec3, wake?: boolean): void
     applyLinearImpulse(impulse: B3Vec3, point: B3Vec3, wake?: boolean): void
     setUserData(v: number): void

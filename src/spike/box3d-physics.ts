@@ -36,8 +36,10 @@ import type { IPhysicsWorld, DynamicBody, BodyRayHit } from '../sim/iphysics'
 import type { PlayerEntity } from '../sim/player'
 
 const GRAVITY_Y = -9.81
-const MAX_LIN = 60
-const MAX_ANG = 25
+const MAX_LIN = 28 // m/s hard cap (box3d has no per-body max; we clamp each tick)
+const MAX_ANG = 14 // rad/s
+const LINEAR_DAMPING = 0.06 // air drag so debris sheds speed instead of yeeting
+const ANGULAR_DAMPING = 0.25
 const KILL_PLANE_Y = -10
 const SUB_STEPS = 4
 const CONNECTIVITY_MARGIN = 8
@@ -290,7 +292,18 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     if (this.stressEnabled && this.activeCount < BODY_CAP && editBounds) {
       // pad the edit box slightly so a neck right at the blast rim counts as touched
       const edit = { x0: editBounds.x0 - 1, y0: editBounds.y0 - 1, z0: editBounds.z0 - 1, x1: editBounds.x1 + 1, y1: editBounds.y1 + 1, z1: editBounds.z1 + 1 }
-      const analysis = { x0: edit.x0 - 6, y0: edit.y0, z0: edit.z0 - 6, x1: edit.x1 + 6, y1: edit.y1 + 44, z1: edit.z1 + 6 }
+      // analyse the FULL column from the ground up to the top of whatever stands
+      // above the edit — otherwise a thin base remnant is judged against only the
+      // little mass in a local box, not the whole tower it's actually holding up,
+      // and never breaks. y0 = ground so the component is grounded (slice from base).
+      const gy = this.region ? this.region.cy0 * CHUNK : 0
+      const yScan = this.region ? (this.region.cy1 + 1) * CHUNK - 1 : editBounds.y1 + 120
+      let topY = edit.y1
+      for (let z = edit.z0; z <= edit.z1; z += 2)
+        for (let x = edit.x0; x <= edit.x1; x += 2)
+          for (let y = yScan; y > topY; y--)
+            if (sim.world.getVoxel(x, y, z) !== 0) { topY = y; break }
+      const analysis = { x0: edit.x0 - 6, y0: gy, z0: edit.z0 - 6, x1: edit.x1 + 6, y1: topY, z1: edit.z1 + 6 }
       const budget = BODY_CAP - this.activeCount
       for (const island of findStressCollapses(sim.world, analysis, edit, { maxIslands: budget })) this.extractIsland(sim, island)
     }
@@ -309,8 +322,22 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
       b.px = p.x; b.py = p.y; b.pz = p.z
       const q = body.getRotation()
       b.qx = q.x; b.qy = q.y; b.qz = q.z; b.qw = q.w
-      const lv = body.getLinearVelocity()
-      const av = body.getAngularVelocity()
+      let lv = body.getLinearVelocity()
+      let av = body.getAngularVelocity()
+      // hard clamp — box3d has no per-body max velocity, so an unlucky shockwave
+      // impulse on a light chunk would otherwise fling it at mach speed.
+      const sp2raw = lv.x * lv.x + lv.y * lv.y + lv.z * lv.z
+      if (sp2raw > MAX_LIN * MAX_LIN) {
+        const s = MAX_LIN / Math.sqrt(sp2raw)
+        body.setLinearVelocity({ x: lv.x * s, y: lv.y * s, z: lv.z * s })
+        lv = body.getLinearVelocity()
+      }
+      const asp2raw = av.x * av.x + av.y * av.y + av.z * av.z
+      if (asp2raw > MAX_ANG * MAX_ANG) {
+        const s = MAX_ANG / Math.sqrt(asp2raw)
+        body.setAngularVelocity({ x: av.x * s, y: av.y * s, z: av.z * s })
+        av = body.getAngularVelocity()
+      }
       const sp2 = lv.x * lv.x + lv.y * lv.y + lv.z * lv.z
       const asp2 = av.x * av.x + av.y * av.y + av.z * av.z
       // only accrue rest when BOTH linear and angular are slow — a tower tipping
@@ -389,8 +416,12 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
       position: { x: x0 * VOXEL_SIZE, y: y0 * VOXEL_SIZE, z: z0 * VOXEL_SIZE },
     })
     const density = Math.max(0.2, material(mat).density)
-    body.createHull({ points: this.hullPoints(grid, sx, sy, sz), density })
+    const shape = body.createHull({ points: this.hullPoints(grid, sx, sy, sz), density })
+    shape.setFriction(0.85) // debris grips surfaces, doesn't skate away
+    shape.setRestitution(0.04) // barely bounces
     body.applyMassFromShapes()
+    body.setLinearDamping(LINEAR_DAMPING)
+    body.setAngularDamping(ANGULAR_DAMPING)
 
     const id = sim.allocEntityId()
     body.setUserData(id)
@@ -499,8 +530,12 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
     const av = body.getAngularVelocity()
     const density = Math.max(0.2, material(b.mat).density)
     const nb = this.world.createBody({ type: 'dynamic', position: p })
-    nb.createHull({ points: this.hullPoints(b.grid, b.sx, b.sy, b.sz), density })
+    const nshape = nb.createHull({ points: this.hullPoints(b.grid, b.sx, b.sy, b.sz), density })
+    nshape.setFriction(0.85)
+    nshape.setRestitution(0.04)
     nb.applyMassFromShapes()
+    nb.setLinearDamping(LINEAR_DAMPING)
+    nb.setAngularDamping(ANGULAR_DAMPING)
     nb.setTransform({ position: p, rotation: q })
     nb.setLinearVelocity(lv)
     nb.setAngularVelocity(av)

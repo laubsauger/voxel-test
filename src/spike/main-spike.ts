@@ -423,6 +423,14 @@ async function main(): Promise<void> {
       vz: Math.round((hit.z + fwd.z * 0.15) / VOXEL_SIZE),
     }
   }
+  // throttle blasts — a held [X] / mouse repeats every frame and over-spams the
+  // pipeline (heavy stutter). Min ~18 ticks (0.3s) between blasts = ~1/3 the rate.
+  let lastBlastTick = -999
+  function canBlast(): boolean {
+    if (sim.tick - lastBlastTick < 18) return false
+    lastBlastTick = sim.tick
+    return true
+  }
   function explodeAtAim(): void {
     const a = aimVoxel()
     if (a) explode(a.vx, a.vy, a.vz, 8, 8)
@@ -438,8 +446,8 @@ async function main(): Promise<void> {
   let showWorld = true // KeyV isolates the loose debris by hiding the welded world
   addEventListener('keydown', (e) => {
     switch (e.code) {
-      case 'KeyR': fireBarrage(); break
-      case 'KeyX': { const a = aimVoxel() ?? target; explode(a.vx, a.vy, a.vz, 12, 9); break }
+      case 'KeyR': if (canBlast()) fireBarrage(); break
+      case 'KeyX': { if (!canBlast()) break; const a = aimVoxel() ?? target; explode(a.vx, a.vy, a.vz, 12, 9); break }
       case 'KeyF': phys.freezeEnabled = !phys.freezeEnabled; break
       case 'KeyB':
         showBodies = !showBodies
@@ -452,7 +460,7 @@ async function main(): Promise<void> {
     }
   })
   renderer.domElement.addEventListener('mousedown', () => {
-    if (document.pointerLockElement === renderer.domElement) explodeAtAim()
+    if (document.pointerLockElement === renderer.domElement && canBlast()) explodeAtAim()
   })
 
   let acc = 0, last = 0, ticks = 0, renderMs = 0
