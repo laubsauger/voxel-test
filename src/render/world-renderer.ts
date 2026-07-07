@@ -246,14 +246,25 @@ export class WorldRenderer {
       maxRegionBuildsPerFrame: opts.maxRegionBuildsPerFrame,
       dirtySource: opts.dirtySource,
     })
-    // B37 — coarse LOD tier for the far field (reuses the chunk materials so it
+    // B37 — coarse LOD tier for the far field (clones the chunk materials so it
     // shades identically, just blocky). Full meshes now stop at ~120 m; the LOD
     // cells carry 120–340 m as a handful of big draws instead of ~1700.
+    // T91b — the clones carry a polygonOffset depth bias: while a coarse cell
+    // overlaps streaming full-detail meshes (held until FULLY meshed, T91), ALL
+    // its coplanar faces — walls included, which the P9 vertical sink cannot
+    // separate — lose the depth test to fine geometry instead of z-fighting.
+    const lodOpaque = this.chunks.material.clone()
+    const lodTransparent = this.chunks.transparentMaterial.clone()
+    for (const m of [lodOpaque, lodTransparent]) {
+      m.polygonOffset = true
+      m.polygonOffsetFactor = 2
+      m.polygonOffsetUnits = 4
+    }
     this.lod = new LodManager(
       opts.world,
       opts.scene,
-      this.chunks.material,
-      this.chunks.transparentMaterial,
+      lodOpaque,
+      lodTransparent,
       (x, z) => this.chunks.hasMeshAt(x, z), // B37 — hold coarse cells until full meshes exist
     )
     // B35 — no enqueueAll: view-distance streaming (ChunkMeshManager.update)
