@@ -114,11 +114,25 @@ export class LodManager {
     }
   }
 
-  /** are the full-detail meshes present across the cell (sampled at its centre)? */
+  /** are the full-detail meshes present across the WHOLE cell? T91 — the old
+   *  centre-only sample evicted the coarse mesh while EDGE regions were still
+   *  streaming in: a whole segment vanished, then popped back at full detail.
+   *  Centre AND all four (inset) corners must be meshed before the coarse
+   *  stand-in may go — replace-in-place, never vanish-first. */
   private cellMeshed(ci: number): boolean {
     const cx = ci % CELLS_X
     const cz = (ci / CELLS_X) | 0
-    return this.isMeshedAt((cx + 0.5) * CELL_M, (cz + 0.5) * CELL_M)
+    const x0 = cx * CELL_M
+    const z0 = cz * CELL_M
+    const in1 = CELL_M * 0.08 // sample just inside the border regions
+    const in2 = CELL_M - in1
+    return (
+      this.isMeshedAt(x0 + CELL_M / 2, z0 + CELL_M / 2) &&
+      this.isMeshedAt(x0 + in1, z0 + in1) &&
+      this.isMeshedAt(x0 + in2, z0 + in1) &&
+      this.isMeshedAt(x0 + in1, z0 + in2) &&
+      this.isMeshedAt(x0 + in2, z0 + in2)
+    )
   }
 
   /** decide which cells should have LOD meshes, evict the rest, queue new ones */

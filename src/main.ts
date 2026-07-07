@@ -108,6 +108,10 @@ function sfxPlay(name: string, opts?: PlayOptions): Promise<unknown> | null {
 // --- phase 2: preloader + game construction ----------------------------------
 // `game` is a let: an MP session start replaces the instance (see header).
 const pre = new Preloader(root, boot.seed)
+// T91 — give the browser two frames to PAINT the preloader before Game.create's
+// long synchronous stretches (world stamp ~9s) block the main thread; without
+// this the preloader div exists but never renders (grey tab until first yield).
+await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
 let game = await Game.create({
   seed: boot.seed,
   host: app,

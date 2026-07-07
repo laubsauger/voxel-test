@@ -41,6 +41,9 @@ export class Preloader {
     }
     this.bar = this.el.querySelector('.bb-pre-bar-fill') as HTMLElement
     root.appendChild(this.el)
+    // T91 — the static index.html splash covered script download/parse; the
+    // real preloader takes over from here
+    document.getElementById('boot-splash')?.remove()
   }
 
   /** mark a boot phase active (previous ones complete) */
