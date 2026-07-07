@@ -36,8 +36,18 @@ export interface WaterSurfaceData {
 const CY_STRIDE = WORLD_CX * WORLD_CZ
 /** columns deeper than this all render as "deep" — bounds the depth walk */
 const MAX_DEPTH_WALK = 64
-/** T92 — water chunks re-extracted per frame (big refreshes spread out) */
-const SURFACE_REBUILD_BUDGET = 8
+/** T94 — chunks per merged water-region edge (matches terrain REGION) */
+const WREGION = 4
+const WR_X = Math.ceil(WORLD_CX / WREGION)
+const WR_Z = Math.ceil(WORLD_CZ / WREGION)
+const regionOf = (ci: number): number => {
+  const cx = ci % WORLD_CX
+  const cz = ((ci / WORLD_CX) | 0) % WORLD_CZ
+  const cy = (ci / CY_STRIDE) | 0
+  return ((cx / WREGION) | 0) + ((cz / WREGION) | 0) * WR_X + ((cy / WREGION) | 0) * WR_X * WR_Z
+}
+/** T92 — water REGIONS re-extracted per frame (big refreshes spread out) */
+const SURFACE_REBUILD_BUDGET = 3
 
 interface Acc {
   positions: number[]
@@ -218,10 +228,14 @@ function expandDirty(dirty: number[]): Set<number> {
  * tint until the surface chunk itself changes. Sub-tint-level, render-only.
  */
 export class WaterSurface {
-  /** parent of all per-chunk water meshes — add THIS to the scene */
+  /** parent of all per-region water meshes — add THIS to the scene */
   readonly mesh = new Group()
   private readonly material: Material
-  private readonly chunks = new Map<number, Mesh>()
+  /** T94 — region key (WREGION³ chunks) → merged mesh. Per-CHUNK meshes put
+   *  1920 objects in the scene (draw census: the single biggest mesh count);
+   *  merging to terrain-REGION granularity cuts that up to 64× with IDENTICAL
+   *  vertices (extraction emits world-space coords — merge is pure concat). */
+  private readonly regions = new Map<number, Mesh>()
   private lastVersion = -1
 
   constructor(material: Material = createWaterMaterial()) {
@@ -230,53 +244,65 @@ export class WaterSurface {
     this.mesh.renderOrder = 1 // draw after opaque world geometry (transparency)
   }
 
-  /** number of live per-chunk meshes (tests/diagnostics) */
+  /** number of live merged region meshes (tests/diagnostics) */
   get chunkMeshCount(): number {
-    return this.chunks.size
+    return this.regions.size
   }
 
-  /** T92 — dirty chunks awaiting extraction beyond the per-frame budget */
+  /** T92 — dirty REGIONS awaiting extraction beyond the per-frame budget */
   private readonly pendingRebuilds = new Set<number>()
 
   /** returns true if any geometry was rebuilt */
   update(water: WaterSim, world: ChunkStore): boolean {
     if (water.version !== this.lastVersion) {
       this.lastVersion = water.version
-      for (const ci of expandDirty(water.drainRenderDirty())) this.pendingRebuilds.add(ci)
+      for (const ci of expandDirty(water.drainRenderDirty())) this.pendingRebuilds.add(regionOf(ci))
     }
     if (this.pendingRebuilds.size === 0) return false
     // T92 — budget the extraction: a full-water refresh (boot fill, breach
-    // flood) extracted EVERY water chunk in one frame (~1.2s stall). Small
-    // updates (a splash's few chunks) still land same-frame; big ones spread.
+    // flood) re-extracted EVERY water chunk in one frame (~1.2s stall). Small
+    // updates (a splash's region or two) still land same-frame; big ones spread.
     let rebuilt = false
     let n = 0
-    for (const ci of [...this.pendingRebuilds]) {
+    for (const rk of [...this.pendingRebuilds]) {
       if (n >= SURFACE_REBUILD_BUDGET) break
-      this.pendingRebuilds.delete(ci)
-      rebuilt = this.rebuildChunk(water, world, ci) || rebuilt
+      this.pendingRebuilds.delete(rk)
+      rebuilt = this.rebuildRegion(water, world, rk) || rebuilt
       n++
     }
     return rebuilt
   }
 
-  private rebuildChunk(water: WaterSim, world: ChunkStore, ci: number): boolean {
-    const data = extractWaterChunk(water, world, ci)
-    const existing = this.chunks.get(ci)
-    if (!data) {
+  private rebuildRegion(water: WaterSim, world: ChunkStore, rk: number): boolean {
+    // extract every water page in the region into ONE accumulator
+    const rx = rk % WR_X
+    const rz = ((rk / WR_X) | 0) % WR_Z
+    const ry = (rk / (WR_X * WR_Z)) | 0
+    const acc: Acc = { positions: [], normals: [], depths: [], flows: [], indices: [] }
+    for (let cy = ry * WREGION; cy < Math.min((ry + 1) * WREGION, WORLD_CY); cy++)
+      for (let cz = rz * WREGION; cz < Math.min((rz + 1) * WREGION, WORLD_CZ); cz++)
+        for (let cx = rx * WREGION; cx < Math.min((rx + 1) * WREGION, WORLD_CX); cx++) {
+          const ci = cx + cz * WORLD_CX + cy * CY_STRIDE
+          const page = water.pageAt(ci)
+          if (page) extractChunkInto(water, world, ci, page, acc)
+        }
+    const existing = this.regions.get(rk)
+    if (acc.indices.length === 0) {
       if (existing) {
         this.mesh.remove(existing)
         existing.geometry.dispose()
-        this.chunks.delete(ci)
+        this.regions.delete(rk)
         return true
       }
       return false
     }
+    const data = accToData(acc)
     let mesh = existing
     if (!mesh) {
       mesh = new Mesh(new BufferGeometry(), this.material)
-      mesh.name = `water-chunk-${ci}`
+      mesh.name = `water-region-${rk}`
       mesh.renderOrder = 1
-      this.chunks.set(ci, mesh)
+      this.regions.set(rk, mesh)
       this.mesh.add(mesh)
     }
     const g = mesh.geometry
@@ -290,10 +316,10 @@ export class WaterSurface {
   }
 
   dispose(): void {
-    for (const mesh of this.chunks.values()) {
+    for (const mesh of this.regions.values()) {
       this.mesh.remove(mesh)
       mesh.geometry.dispose()
     }
-    this.chunks.clear()
+    this.regions.clear()
   }
 }

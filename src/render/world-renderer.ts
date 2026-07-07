@@ -199,7 +199,11 @@ export class WorldRenderer {
     // a cascade removes a whole scene-traversal + shadow render each frame. The
     // 2048² map splits over 2 slices instead of 3 (slightly coarser mid-range
     // shadows) — a good trade for the per-frame object-processing saved.
-    this.csm = new CSMShadowNode(this.sun, { cascades: 2, maxFar: 110, mode: 'practical' })
+    // T94 — 2→1: attribution round showed world.render at a flat ~15ms CPU
+    // (draw submission), still pass-count-bound. One 2048² map over the full
+    // 110m ≈ 5.4cm texels — same order as the old far slice. Removes another
+    // whole scene traversal + shadow render per frame. Visual check pending.
+    this.csm = new CSMShadowNode(this.sun, { cascades: 1, maxFar: 110, mode: 'practical' })
     this.csm.fade = true
     // custom shadow node hook (not yet in @types/three)
     ;(this.sun.shadow as DirectionalLightShadow & { shadowNode?: CSMShadowNode }).shadowNode =

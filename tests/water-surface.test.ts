@@ -165,7 +165,12 @@ describe('water surface extraction (T16, V6)', () => {
       if (g) incrementalVerts += g.getAttribute('position').count
     })
     expect(incrementalVerts).toBe(full.positions.length / 3)
-    expect(surface.chunkMeshCount).toBeGreaterThan(1) // actually spanned chunks
+    // setup validity: the pond must actually span multiple water PAGES so the
+    // incremental path exercises cross-chunk seams (T94: meshes merge per
+    // region now — mesh count no longer proxies chunk span)
+    let pages = 0
+    w.forEachPage(() => pages++)
+    expect(pages).toBeGreaterThan(1)
     surface.dispose()
   })
 
