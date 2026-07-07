@@ -93,7 +93,7 @@ export class CoarseSupport {
    * Flood solid coarse cells from the ground (bottom layer); return the voxel
    * bounding region of everything NOT reached (floating), or null if all grounded.
    */
-  findFloating(): Region | null {
+  findFloating(seedBoundaries = false): Region | null {
     const { ncx, ncy, ncz, count, reached, stack } = this
     reached.fill(0)
     let top = 0
@@ -104,6 +104,18 @@ export class CoarseSupport {
         const i = cx + cz * ncx // cy=0
         if (count[i] > 0 && !reached[i]) { reached[i] = 1; stack[top++] = i }
       }
+    // per-edit regions (game): structure crossing a SIDE wall may be supported
+    // outside the region — conservatively seed side-wall solid cells as supported
+    // so a wide building is never falsely dropped by a too-small analysis box.
+    if (seedBoundaries) {
+      for (let cy = 0; cy < ncy; cy++)
+        for (let cz = 0; cz < ncz; cz++)
+          for (let cx = 0; cx < ncx; cx++) {
+            if (cx !== 0 && cx !== ncx - 1 && cz !== 0 && cz !== ncz - 1) continue
+            const i = cx + cz * ncx + cy * nxnz
+            if (count[i] > 0 && !reached[i]) { reached[i] = 1; stack[top++] = i }
+          }
+    }
     while (top > 0) {
       const i = stack[--top]
       const cy = (i / nxnz) | 0

@@ -87,7 +87,7 @@ describe('bomb projectile (T54, I.cmd, V1)', () => {
     // detonation happened where it lay (asphalt slab under the drop point)
     expect(Math.abs(exploded!.x - 6.4)).toBeLessThan(0.5)
     // rubble: the T55 ejecta spawned interactive bodies
-    expect(phys.bodies.size).toBeGreaterThan(0)
+    expect(phys.debris!.bodies.size).toBeGreaterThan(0) // T86: debris in local layer
     phys.dispose()
   }, 30000)
 

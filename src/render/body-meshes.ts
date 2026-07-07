@@ -53,7 +53,7 @@ export class BodyMeshes {
   }
 }
 
-function buildBodyGeometry(body: DynamicBody): BufferGeometry {
+export function buildBodyGeometry(body: DynamicBody): BufferGeometry {
   const { grid, sx, sy, sz } = body
   const sample = (x: number, y: number, z: number): number =>
     x >= 0 && y >= 0 && z >= 0 && x < sx && y < sy && z < sz

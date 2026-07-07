@@ -24,6 +24,9 @@ import {
   type ChunkStore,
 } from '../world/chunks'
 import { greedyBoxes, type Box } from './greedy-boxes'
+import { findStressCollapses } from './structure'
+import { CoarseSupport } from './coarse-support'
+import type { DebrisLayer } from './debris'
 import {
   CONNECTIVITY_MARGIN,
   findUnsupportedIslands,
@@ -275,6 +278,10 @@ export class PhysicsWorld implements IPhysicsWorld {
   /** sim back-reference for vehicle damage inside blast handling (set in createPhysics) */
   simRef: Sim | null = null
 
+  /** T86/V17 — LOCAL Box3D debris layer (islands + ejecta). Attached in
+   *  createPhysics; excluded from I.hash; never writes sim/world state. */
+  debris: DebrisLayer | null = null
+
   private readonly settings: Jolt.JoltSettings
   /** shared gravity vector for character updates (matches physics system gravity) */
   readonly gravity: Jolt.Vec3
@@ -434,11 +441,15 @@ export class PhysicsWorld implements IPhysicsWorld {
    * deterministically (V2).
    */
   structuralPass(sim: Sim): void {
+    // T86 — fine voxel AABB of THIS edit, captured before draining (stress and
+    // coarse-support trigger on the actual edited voxels, not the chunk union)
+    const editBounds = sim.world.peekDirtyBounds()
     const drained = sim.world.drainDirty()
     for (const ci of drained) {
       this.rebuildChunkBody(sim.world, ci)
       this.remesh.add(ci)
     }
+    this.debris?.invalidateChunks(sim.world, drained)
     const check = this.pendingConnectivity.concat(drained)
     this.pendingConnectivity = []
     if (check.length === 0) return
@@ -447,38 +458,81 @@ export class PhysicsWorld implements IPhysicsWorld {
     for (const island of findUnsupportedIslands(sim.world, region)) {
       this.extractIsland(sim, island)
     }
+
+    // T86/V17 — collapse DECISIONS are deterministic sim state: pure world
+    // inputs, fixed budgets, never gated by local debris counts (V17a).
+    if (editBounds) {
+      // (a) T56 weak-neck stress over the FULL ground→top column above the edit —
+      // a thin remnant holding a whole tower must see its true load.
+      const edit = {
+        x0: editBounds.x0 - 1, y0: editBounds.y0 - 1, z0: editBounds.z0 - 1,
+        x1: editBounds.x1 + 1, y1: editBounds.y1 + 1, z1: editBounds.z1 + 1,
+      }
+      const yScanTop = WORLD_CY * CHUNK - 1
+      let topY = edit.y1
+      for (let z = edit.z0; z <= edit.z1; z += 2)
+        for (let x = edit.x0; x <= edit.x1; x += 2)
+          for (let y = yScanTop; y > topY; y--)
+            if (sim.world.getVoxel(x, y, z) !== 0) { topY = y; break }
+      const analysis = { x0: edit.x0 - 6, y0: 0, z0: edit.z0 - 6, x1: edit.x1 + 6, y1: topY, z1: edit.z1 + 6 }
+      for (const island of findStressCollapses(sim.world, analysis, edit, { maxIslands: 96 })) {
+        this.extractIsland(sim, island)
+      }
+      // (b) coarse global support around the edit — a severed top far above the
+      // connectivity region must not float. Side-boundary cells seed as supported
+      // (a wide structure crossing the analysis box is never falsely dropped).
+      const ccx0 = Math.max(0, (edit.x0 >> 5) - 2)
+      const ccx1 = Math.min(WORLD_CX - 1, (edit.x1 >> 5) + 2)
+      const ccz0 = Math.max(0, (edit.z0 >> 5) - 2)
+      const ccz1 = Math.min(WORLD_CZ - 1, (edit.z1 >> 5) + 2)
+      const ccy1 = Math.min(WORLD_CY - 1, (topY >> 5) + 1)
+      const coarse = new CoarseSupport({ cx0: ccx0, cy0: 0, cz0: ccz0, cx1: ccx1, cy1: ccy1, cz1: ccz1 })
+      coarse.rebuild(sim.world)
+      const floating = coarse.findFloating(true)
+      if (floating) {
+        for (const island of findUnsupportedIslands(sim.world, floating)) this.extractIsland(sim, island)
+      }
+    }
+
     const dirtied = sim.world.drainDirty()
     for (const ci of dirtied) {
       this.rebuildChunkBody(sim.world, ci)
       this.remesh.add(ci)
       this.pendingConnectivity.push(ci)
     }
+    this.debris?.invalidateChunks(sim.world, dirtied)
   }
 
   /**
-   * T12: island voxels → dynamic body entity. Voxels leave the ChunkStore and
-   * live in the body's own mini grid; collider = greedy-box compound; mass =
-   * Σ voxel density × voxel volume. Entity id via sim.allocEntityId() (V8).
-   * Bodies stay dynamic after settling (V12) — sleep is allowed, re-weld is not.
+   * T12→T86: island voxels leave the ChunkStore DETERMINISTICALLY (hashed sim
+   * state); the freed voxels become LOCAL Box3D debris in the DebrisLayer
+   * (V17 — motion may diverge per machine, excluded from I.hash). Without a
+   * layer (headless tests), the voxels are removed and no body spawns.
    */
-  extractIsland(sim: Sim, island: Island): DynamicBody {
+  extractIsland(sim: Sim, island: Island): DynamicBody | null {
     for (const v of island.voxels) sim.world.setVoxel(v.x, v.y, v.z, 0)
-    return this.buildVoxelBody(sim, island.voxels)
+    return this.debris ? this.debris.spawnDebris(island.voxels) : null
   }
 
   /**
-   * T55 — ejecta clump → dynamic body. Voxels were already removed from the
-   * ChunkStore by the explosion scan; this only creates the body entity.
+   * T55→T86 — ejecta clump → LOCAL debris body (voxels already removed from
+   * the ChunkStore by the deterministic explosion scan).
    */
-  spawnDebrisBody(sim: Sim, voxels: IslandVoxel[]): DynamicBody {
-    return this.buildVoxelBody(sim, voxels)
+  spawnDebrisBody(sim: Sim, voxels: IslandVoxel[]): DynamicBody | null {
+    void sim
+    return this.debris ? this.debris.spawnDebris(voxels) : null
   }
 
   /**
    * T55 — set a fresh body's linear + angular velocity (clamped to the T40
-   * caps). Deterministic: called from op handlers only.
+   * caps). Debris-layer bodies delegate (local); Jolt bodies (vehicle wrecks)
+   * keep the deterministic path.
    */
   setBodyVelocity(b: DynamicBody, vx: number, vy: number, vz: number, wx: number, wy: number, wz: number): void {
+    if (this.debris?.owns(b)) {
+      this.debris.setVelocity(b, vx, vy, vz, wx, wy, wz)
+      return
+    }
     const api = this.api
     const vlen = Math.sqrt(vx * vx + vy * vy + vz * vz)
     if (vlen > MAX_BODY_LINEAR_VELOCITY) {
@@ -841,6 +895,15 @@ export class PhysicsWorld implements IPhysicsWorld {
    * yields null (the world DDA owns voxel hits). Deterministic: Jolt query
    * over deterministic body state (V2).
    */
+  /** V17b — LOCAL debris hits (visual/body damage only; never gates world edits) */
+  castRayDebris(
+    ox: number, oy: number, oz: number,
+    dx: number, dy: number, dz: number,
+    maxDist: number,
+  ): BodyRayHit | null {
+    return this.debris ? this.debris.castRayBody(ox, oy, oz, dx, dy, dz, maxDist) : null
+  }
+
   castRayBody(
     ox: number, oy: number, oz: number,
     dx: number, dy: number, dz: number,
@@ -880,6 +943,10 @@ export class PhysicsWorld implements IPhysicsWorld {
 
   /** B17 — impulse on a body at a world point (shot response). */
   impulseBodyAt(b: DynamicBody, ix: number, iy: number, iz: number, px: number, py: number, pz: number): void {
+    if (this.debris?.owns(b)) {
+      this.debris.impulseBodyAt(b, ix, iy, iz, px, py, pz)
+      return
+    }
     const api = this.api
     this.bodyInterface.ActivateBody((b.body as Jolt.Body).GetID())
     const imp = new api.Vec3(ix, iy, iz)
@@ -904,6 +971,10 @@ export class PhysicsWorld implements IPhysicsWorld {
     power: number,
     snapToVoxel = false,
   ): number {
+    if (this.debris?.owns(b)) {
+      void power; void snapToVoxel
+      return this.debris.damageBodySphere(b, wx, wy, wz, rMeters)
+    }
     // world → body-local (grid corner origin): l = R⁻¹ · (w − p)
     const tx = wx - b.px
     const ty = wy - b.py
@@ -987,6 +1058,8 @@ export class PhysicsWorld implements IPhysicsWorld {
       if (hx * hx + hy * hy + hz * hz > reach * reach) continue
       this.damageBodySphere(b, wx, wy, wz, rMeters, power)
     }
+    // T86 — blasts also chew LOCAL debris (fresh same-blast ejecta skipped inside)
+    this.debris?.damageBodiesSphere(wx, wy, wz, rMeters)
   }
 
   /** Remove a body from the sim + Jolt (emptied by damage). Hash-visible via removedBodies. */
@@ -999,6 +1072,7 @@ export class PhysicsWorld implements IPhysicsWorld {
 
   /** Radial impulse to dynamic bodies near a blast (T13). Deterministic id order. */
   applyRadialImpulse(cx: number, cy: number, cz: number, radius: number, strength: number): void {
+    this.debris?.applyRadialImpulse(cx, cy, cz, radius, strength) // local shockwave
     const api = this.api
     for (const b of this.bodies.values()) {
       const p = (b.body as Jolt.Body).GetPosition()
@@ -1037,6 +1111,8 @@ export class PhysicsWorld implements IPhysicsWorld {
   /** Free Jolt-side resources (tests). The WASM module itself stays loaded. */
   dispose(): void {
     const api = this.api
+    this.debris?.dispose() // T86 — local debris layer
+    this.debris = null
     disposeVehicles(this) // T64 — constraints/listeners must go before bodies
     disposeAircraft(this) // P17 — flyable aircraft bodies
     for (const body of this.chunkBodies.values()) {
@@ -1146,6 +1222,10 @@ export function hashPhysics(phys: PhysicsWorld): number {
 export async function createPhysics(sim: Sim): Promise<PhysicsWorld> {
   const api = await loadJolt()
   const phys = new PhysicsWorld(api)
+  // T86/V17 — local Box3D debris layer: islands + ejecta live here, stepped
+  // after the deterministic tick, excluded from hashing (motion may diverge).
+  const { DebrisLayer } = await import('./debris')
+  phys.debris = await DebrisLayer.create()
   registerDestructionOps(sim, phys)
   registerPlayerOps(sim, phys)
   registerProjectileOps(sim, phys) // T54 — 'throw' op; integration runs in phys.tick
@@ -1158,5 +1238,7 @@ export async function createPhysics(sim: Sim): Promise<PhysicsWorld> {
 
   phys.initStatic(sim.world)
   sim.addSystem(() => phys.tick(sim))
+  // debris steps AFTER the deterministic sim tick (local layer, fixed 60Hz)
+  sim.addSystem(() => phys.debris?.step(sim.world, DT))
   return phys
 }

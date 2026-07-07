@@ -198,12 +198,12 @@ describe('crash damage (T64.3)', () => {
     sim.queue.push(cmd(0, { kind: 'vehicle_spawn', archetype: 'sedan0', x: CM, y: GROUND_Y, z: CM + 2.6, yaw: 0 }))
     for (let i = 0; i < 30; i++) sim.step()
     const v = [...phys.vehicles.values()][0]
-    const bodies0 = phys.bodies.size
+    const bodies0 = phys.debris!.bodies.size // T86: debris in local layer
 
     expect(WHEEL_BREAK_HITS).toBeGreaterThan(1) // one tap must not cost a wheel
     breakWheel(sim, phys, v, 0) // front-left
     expect(v.wheels[0].broken).toBe(true)
-    expect(phys.bodies.size).toBe(bodies0 + 1) // the wheel flew off as debris
+    expect(phys.debris!.bodies.size).toBe(bodies0 + 1) // the wheel flew off as debris
 
     // broken wheel is dead physics-wise: no steering on that corner
     for (let i = 0; i < 30; i++) sim.step()
@@ -321,7 +321,7 @@ describe('momentum-scaled mutual damage: through fences, stopped by walls (T64.3
     sim.world.fillBox(CVX - 2, 8, CVX - 26, CVX + 1, 27, CVX - 24, 6) // pillar (wood)
     sim.world.fillBox(CVX - 10, 28, CVX - 30, CVX + 9, 30, CVX - 20, 5) // slab (brick), pillar-only support
     for (let i = 0; i < 20; i++) sim.step()
-    const bodies0 = phys.bodies.size
+    const bodies0 = phys.debris!.bodies.size // T86: debris in local layer
     sim.queue.push(cmd(sim.tick, { kind: 'vehicle_enter' }))
     sim.step()
     for (let i = 0; i < 240; i++) {
@@ -329,7 +329,7 @@ describe('momentum-scaled mutual damage: through fences, stopped by walls (T64.3
       sim.step()
     }
     // the unsupported slab became dynamic debris (same path as explosions)
-    expect(phys.bodies.size).toBeGreaterThan(bodies0)
+    expect(phys.debris!.bodies.size).toBeGreaterThan(bodies0)
     phys.dispose()
   }, 60000)
 })

@@ -24,8 +24,8 @@ function makeSim(): Sim {
   return sim
 }
 
-describe('island extraction → dynamic body (T12, V8, V12)', () => {
-  it('extractIsland moves voxels world → body grid with correct mass', async () => {
+describe('island extraction → LOCAL debris body (T12→T86, V17)', () => {
+  it('extractIsland moves voxels world → debris-layer body with correct mass', async () => {
     const sim = makeSim()
     const phys = await createPhysics(sim)
     // free-floating wood blob 3×2×2 = 12 voxels
@@ -35,10 +35,13 @@ describe('island extraction → dynamic body (T12, V8, V12)', () => {
 
     const idBefore = sim.nextEntityId
     const body = phys.extractIsland(sim, islands[0])
+    expect(body).not.toBeNull()
 
-    // entity id came from the sim counter (V8)
-    expect(body.id).toBe(idBefore)
-    expect(sim.nextEntityId).toBe(idBefore + 1)
+    // V17c — debris ids are LOCAL: the deterministic sim entity counter is
+    // untouched (local body counts must never influence hashed sim state)
+    expect(sim.nextEntityId).toBe(idBefore)
+    expect(phys.debris!.bodies.size).toBe(1)
+    expect(phys.bodies.size).toBe(0) // no Jolt body — debris is layer-side
 
     // voxels removed from the world…
     for (let y = 20; y <= 21; y++)
@@ -46,16 +49,16 @@ describe('island extraction → dynamic body (T12, V8, V12)', () => {
         for (let x = 20; x <= 22; x++) expect(sim.world.getVoxel(x, y, z)).toBe(0)
 
     // …and present in the body's mini grid (3×2×2, all wood)
-    expect([body.sx, body.sy, body.sz]).toEqual([3, 2, 2])
-    expect(body.count).toBe(12)
-    expect([...body.grid].filter((v) => v === WOOD).length).toBe(12)
+    expect([body!.sx, body!.sy, body!.sz]).toEqual([3, 2, 2])
+    expect(body!.count).toBe(12)
+    expect([...body!.grid].filter((v) => v === WOOD).length).toBe(12)
 
     // mass = voxel count × wood density × voxel volume
-    expect(body.mass).toBeCloseTo(12 * material(WOOD).density * VOXEL_VOLUME, 10)
+    expect(body!.mass).toBeCloseTo(12 * material(WOOD).density * VOXEL_VOLUME, 10)
 
     // spawn transform = grid origin corner, in meters
-    expect(body.px).toBeCloseTo(2.0, 6)
-    expect(body.py).toBeCloseTo(2.0, 6)
+    expect(body!.px).toBeCloseTo(2.0, 6)
+    expect(body!.py).toBeCloseTo(2.0, 6)
     phys.dispose()
   }, 30000)
 
@@ -73,15 +76,17 @@ describe('island extraction → dynamic body (T12, V8, V12)', () => {
     sim.queue.push({ tick: 1, playerId: 1, seq: 0, op: { kind: 'dig', x: 33, y: 15, z: 30, r: 2 } })
     sim.step() // tick 1: dig applied, structural pass extracts the island
 
-    expect(phys.bodies.size).toBe(1)
-    const body = [...phys.bodies.values()][0]
+    // T86 — the freed beam is a LOCAL debris-layer body, not a Jolt body
+    expect(phys.bodies.size).toBe(0)
+    expect(phys.debris!.bodies.size).toBeGreaterThanOrEqual(1)
+    const body = [...phys.debris!.bodies.values()][0]
     expect(body.count).toBeGreaterThan(0)
     expect(body.mass).toBeCloseTo(body.count * material(WOOD).density * VOXEL_VOLUME, 10)
     // far end of the beam is no longer world voxels
     expect(sim.world.getVoxel(40, 15, 30)).toBe(0)
     expect(sim.world.getVoxel(40, 14, 31)).toBe(0)
 
-    // body is dynamic: it falls under gravity over subsequent ticks (V12)
+    // body is dynamic: it falls under gravity over subsequent ticks
     const y0 = body.py
     for (let i = 0; i < 30; i++) sim.step()
     expect(body.py).toBeLessThan(y0)
@@ -97,6 +102,7 @@ describe('island extraction → dynamic body (T12, V8, V12)', () => {
     sim.queue.push({ tick: 1, playerId: 1, seq: 0, op: { kind: 'dig', x: 40, y: 20, z: 40, r: 3 } })
     for (let i = 0; i < 5; i++) sim.step()
     expect(phys.bodies.size).toBe(0)
+    expect(phys.debris!.bodies.size).toBe(0)
     phys.dispose()
   }, 30000)
 })

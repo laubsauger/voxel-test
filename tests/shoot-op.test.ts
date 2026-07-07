@@ -96,7 +96,7 @@ describe('shoot op (T28, I.cmd, V1)', () => {
     })
     sim.step()
 
-    expect(phys.bodies.size).toBe(1) // upper section became a dynamic island
+    expect(phys.debris!.bodies.size).toBe(1) // T86: upper section became a LOCAL debris body
     phys.dispose()
   }, 30000)
 

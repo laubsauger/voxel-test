@@ -1372,10 +1372,11 @@ export function breakWheel(sim: Sim, phys: PhysicsWorld, v: VehicleEntity, index
     for (let z = 0; z < 2; z++)
       for (let x = 0; x < 2; x++) voxels.push({ x: cx + x, y: cy + y + 2, z: cz + z, mat: MAT_METAL })
   const debris = phys.spawnDebrisBody(sim, voxels)
-  // side fling: outward from the vehicle center line
+  // side fling: outward from the vehicle center line (debris layer may decline
+  // the spawn under its local cap, V17a — no PRNG draws depend on this branch)
   const side = w.x < (v.sx * VOXEL_SIZE) / 2 ? -1 : 1
   const [fx, , fz] = quatRotate(v.qx, v.qy, v.qz, v.qw, side, 0, 0)
-  phys.setBodyVelocity(debris, v.vx + fx * 4, 3, v.vz + fz * 4, 6, 2, 6)
+  if (debris) phys.setBodyVelocity(debris, v.vx + fx * 4, 3, v.vz + fz * 4, 6, 2, 6)
 
   sim.emit(asSimEvent({ kind: 'vehicle_wheel_loss', vehicleId: v.id, x: v.px + rx, y: v.py + ry, z: v.pz + rz }))
 }

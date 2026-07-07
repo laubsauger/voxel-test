@@ -71,10 +71,23 @@ export interface IPhysicsWorld {
   initStatic(world: ChunkStore): void
   tick(sim: Sim): void
   structuralPass(sim: Sim): void
-  extractIsland(sim: Sim, island: Island): DynamicBody
-  spawnDebrisBody(sim: Sim, voxels: IslandVoxel[]): DynamicBody
+  /** may return null: the LOCAL debris layer can decline a spawn under its cap
+   *  (V17a) — the voxels have already left the world deterministically. */
+  extractIsland(sim: Sim, island: Island): DynamicBody | null
+  spawnDebrisBody(sim: Sim, voxels: IslandVoxel[]): DynamicBody | null
   setBodyVelocity(b: DynamicBody, vx: number, vy: number, vz: number, wx: number, wy: number, wz: number): void
   castRayBody(
+    ox: number,
+    oy: number,
+    oz: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    maxDist: number,
+  ): BodyRayHit | null
+  /** V17b — LOCAL debris raycast (visual/body-damage only, never gates world
+   *  edits). Optional: backends without a separate debris layer omit it. */
+  castRayDebris?(
     ox: number,
     oy: number,
     oz: number,

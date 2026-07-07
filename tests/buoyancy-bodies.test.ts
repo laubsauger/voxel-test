@@ -43,8 +43,9 @@ async function poolWorld(): Promise<{ sim: Sim; phys: PhysicsWorld; water: Water
 function dropBlob(sim: Sim, phys: PhysicsWorld, mat: number) {
   sim.world.fillBox(28, 20, 28, 31, 23, 31, mat)
   sim.step()
-  expect(phys.bodies.size).toBe(1)
-  return [...phys.bodies.values()][0]
+  // T86: islands are LOCAL debris-layer bodies now (V17)
+  expect(phys.debris!.bodies.size).toBe(1)
+  return [...phys.debris!.bodies.values()][0]
 }
 
 const WATERLINE = 16 * 0.1 // 1.6 m

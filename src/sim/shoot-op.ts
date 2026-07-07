@@ -137,8 +137,9 @@ export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1
     const nx = dx / len, ny = dy / len, nz = dz / len
 
-    // B17 — the ray also tests dynamic island bodies; nearest hit wins.
-    // Ray length is capped at the world hit, so a returned body hit is
+    // B17 — the ray also tests Jolt dynamic bodies (vehicle wrecks). Those are
+    // DETERMINISTIC sim state, so a wreck hit may gate the world edit exactly as
+    // before. Ray length is capped at the world hit, so a returned body hit is
     // strictly in front of any voxel surface.
     const rayLenM = (hit ? hit.dist : SHOOT_RANGE_VOX) * VOXEL_SIZE
     const bodyHit = phys.castRayBody(ox, oy, oz, nx, ny, nz, rayLenM)
@@ -170,6 +171,29 @@ export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
         true,
       )
       return
+    }
+
+    // T86/V17b — LOCAL debris hits are an ADDITIONAL effect and never gate the
+    // deterministic world edit below: debris positions may diverge per machine,
+    // so a shot "blocked" by rubble on one peer must still edit the world
+    // identically on all peers. (Side effect: shooting rubble stacked against a
+    // wall also marks the wall — accepted, documented in V17.)
+    const debrisHit = phys.castRayDebris?.(ox, oy, oz, nx, ny, nz, rayLenM)
+    if (debrisHit) {
+      phys.impulseBodyAt(
+        debrisHit.body,
+        nx * SHOOT_BODY_IMPULSE, ny * SHOOT_BODY_IMPULSE, nz * SHOOT_BODY_IMPULSE,
+        debrisHit.px, debrisHit.py, debrisHit.pz,
+      )
+      phys.damageBodySphere(
+        debrisHit.body,
+        debrisHit.px + nx * VOXEL_SIZE * 0.6,
+        debrisHit.py + ny * VOXEL_SIZE * 0.6,
+        debrisHit.pz + nz * VOXEL_SIZE * 0.6,
+        SHOOT_RADIUS * VOXEL_SIZE,
+        SHOOT_POWER,
+        true,
+      )
     }
 
     if (!hit) {

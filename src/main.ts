@@ -1006,6 +1006,24 @@ async function joinFlow(): Promise<void> {
   }
 }
 
+// --- T86 dev handle (CDP single-player probes): sanctioned op injection via the
+// SAME pushOp path __bbNet uses, + debris-layer counters. Dev-gated (I.boot). ---
+if (boot.dev) {
+  ;(window as unknown as { __bbDev: unknown }).__bbDev = {
+    submitOp: (op: Op) => game.pushOp(op),
+    get tick() {
+      return game.sim.tick
+    },
+    get debris() {
+      return {
+        bodies: game.phys.debris?.bodies.size ?? 0,
+        frozen: game.phys.debris?.frozen.size ?? 0,
+        active: game.phys.debris?.activeCount ?? 0,
+      }
+    },
+  }
+}
+
 // --- T52 debug handle (CDP audio verification — read-side state only) ---------
 ;(window as unknown as { __bbAudio: unknown }).__bbAudio = {
   engine: audio,

@@ -66,7 +66,7 @@ describe('rocket launcher (P19, I.cmd, V1)', () => {
     // crater: wall voxels at the near face are gone
     expect(sim.world.getVoxel(100, 20, 64)).toBe(0)
     // rubble: T55 ejecta spawned interactive bodies
-    expect(phys.bodies.size).toBeGreaterThan(0)
+    expect(phys.debris!.bodies.size).toBeGreaterThan(0) // T86: debris in local layer
     phys.dispose()
   }, 30000)
 

@@ -39,7 +39,12 @@ export interface StressOpts {
 }
 
 const DEF: Required<StressOpts> = {
-  capPerVoxel: 9,
+  // 50 ⇒ a strength-3 brick column holds ~150 voxels (15 m) of itself: uniform
+  // walls/towers STAND when poked; carved thin necks under a big mass still
+  // break (e.g. 4 slender columns under a full tower ⇒ ratio > 1). The spike's
+  // original 9 made ANY wall taller than ~2.7 m self-overstressed — every fresh
+  // building crumbled on first touch (caught by the aircraft crash test).
+  capPerVoxel: 50,
   threshold: 1,
   fragment: 6, // chunkier debris = far fewer bodies for the same collapsed volume
   maxIslands: 96,

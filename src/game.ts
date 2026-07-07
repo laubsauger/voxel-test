@@ -19,6 +19,7 @@ import { PlayerVisuals } from './render/player-visuals'
 import { SpectatorCam } from './render/spectator-cam'
 import { WaterSurface } from './render/water/surface'
 import { BodyMeshes } from './render/body-meshes'
+import { DebrisMeshes } from './render/debris-meshes'
 import { VehicleMeshes } from './render/vehicle-meshes'
 import { Birds } from './render/birds'
 import { Flashlight } from './render/flashlight'
@@ -133,6 +134,8 @@ export class Game {
   private readonly onResize: () => void
   private readonly waterSurface: WaterSurface
   private readonly bodyMeshes: BodyMeshes
+  /** T86 — local Box3D debris render: active pieces individual, frozen batched */
+  private readonly debrisMeshes: DebrisMeshes
   /** P17 — flyable aircraft render from their voxel grid (BodyMeshes pattern;
    *  a wrecked plane moves into phys.bodies and the main bodyMeshes takes over) */
   private readonly aircraftMeshes: BodyMeshes
@@ -181,6 +184,7 @@ export class Game {
     this.waterSurface = new WaterSurface()
     this.scene.add(this.waterSurface.mesh)
     this.bodyMeshes = new BodyMeshes(this.scene, this.world.chunks.material)
+    this.debrisMeshes = new DebrisMeshes(this.scene, this.world.chunks.material) // T86 — local Box3D debris (V17)
     this.aircraftMeshes = new BodyMeshes(this.scene, this.world.chunks.material) // P17
     // T64 — vehicle rendering (chassis via chunk materials, spinning wheels)
     this.vehicleMeshes = new VehicleMeshes(
@@ -500,6 +504,7 @@ export class Game {
       this.sim.world.compactStep(6, 9000) // B37 — lighter scan (was 8/40000 → ~3.6% CPU); still drains the cold set over a few seconds
       this.world.update(dt, this.sim.tick) // remesh budget, debris, CSM, day cycle (V7/T58)
       this.bodyMeshes.update(this.phys.bodies)
+      if (this.phys.debris) this.debrisMeshes.update(this.phys.debris) // T86
       this.vehicleMeshes.update(this.phys.vehicles)
       this.aircraftMeshes.update(this.phys.aircraft) // P17
       this.fx.update(dt, fxEvents, this.cam.camera)
@@ -525,7 +530,7 @@ export class Game {
             `${Math.round((frames * 1000) / (now - fpsAt))} fps  |  tick ${this.sim.tick}` +
             `  |  meshes ${this.world.chunks.chunkMeshCount} pending ${this.world.chunks.pendingCount}` +
             `  |  draws/f ${drawsPerFrame} tris/f ${trisPerFrame}` +
-            `  |  bodies ${this.phys.bodies.size}`
+            `  |  bodies ${this.phys.bodies.size}+${this.phys.debris?.bodies.size ?? 0}d(${this.phys.debris?.frozen.size ?? 0}f)`
         }
         frames = 0
         fpsAt = now

@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Sim } from '../src/sim/loop'
+import { hashSim } from '../src/sim/hash'
 import { registerEditOps } from '../src/sim/edit-ops'
 import { createPhysics, hashPhysics, loadJolt, type PhysicsWorld } from '../src/sim/physics'
 import { TNT_POWER } from '../src/sim/tnt'
@@ -60,7 +61,7 @@ describe('remote TNT (P19, I.cmd, V1)', () => {
     expect(sim.world.getVoxel(64, 11, 64)).toBe(0)
     expect(sim.world.getVoxel(88, 11, 64)).toBe(0)
     // rubble from the chained blasts
-    expect(phys.bodies.size).toBeGreaterThan(0)
+    expect(phys.debris!.bodies.size).toBeGreaterThan(0) // T86: debris in local layer
     phys.dispose()
   }, 30000)
 
@@ -82,17 +83,22 @@ describe('remote TNT (P19, I.cmd, V1)', () => {
       sim.step()
       sim.queue.push({ tick: sim.tick, playerId: 1, seq: 0, op: detonate() })
       const hashes: number[] = []
+      const simHashes: number[] = []
       for (let i = 0; i < 30; i++) {
         sim.step()
         hashes.push(hashPhysics(phys))
+        simHashes.push(hashSim(sim))
       }
       phys.dispose()
-      return hashes
+      return { hashes, simHashes }
     }
     const a = await run()
     const b = await run()
-    expect(b).toEqual(a)
-    // sanity: detonation actually mutated hashed state across the run
-    expect(a.some((h, i) => i > 0 && h !== a[i - 1])).toBe(true)
+    expect(b.hashes).toEqual(a.hashes)
+    expect(b.simHashes).toEqual(a.simHashes)
+    // sanity: detonation actually mutated hashed state across the run. T86/V17:
+    // debris is a LOCAL layer excluded from hashPhysics, so the ongoing mutation
+    // shows in the WORLD hash (craters + structural cascade), not physics.
+    expect(a.simHashes.some((h, i) => i > 0 && h !== a.simHashes[i - 1])).toBe(true)
   }, 60000)
 })

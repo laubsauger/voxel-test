@@ -132,5 +132,8 @@ export function applyBuoyancy(phys: PhysicsWorld, water: WaterSim): void {
  */
 export function attachBuoyancy(sim: Sim, phys: PhysicsWorld, water: WaterSim): void {
   phys.water = water
-  sim.addSystem(() => applyBuoyancy(phys, water))
+  sim.addSystem(() => {
+    applyBuoyancy(phys, water) // Jolt bodies (vehicle wrecks) — deterministic
+    phys.debris?.applyBuoyancy(water) // T86 — LOCAL debris floats too (V17)
+  })
 }

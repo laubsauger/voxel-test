@@ -277,22 +277,27 @@ function spawnEjecta(
     } else {
       dx /= len; dy /= len; dz /= len
     }
-    const density = material(body.mat).density
+    // dominant clump material from the CLUMP, not the body: the debris layer may
+    // decline the spawn under its LOCAL cap (V17a) and every PRNG draw below must
+    // still happen identically on all machines.
+    let matBest = 0
+    {
+      const counts = new Map<number, number>()
+      for (const v of clump) counts.set(v.mat, (counts.get(v.mat) ?? 0) + 1)
+      let best = -1
+      for (const [m, n] of counts) if (n > best || (n === best && m < matBest)) { best = n; matBest = m }
+    }
+    const density = material(matBest).density
     const speed =
       (4 + 4 * sim.prng.next()) *
       clamp(1.7 - len / r, 0.6, 1.7) *
       clamp(Math.sqrt(1200 / density), 0.55, 1.5) *
       clamp(power / 4, 0.6, 2)
     const vy = dy * speed + 1.5 + 2 * sim.prng.next()
-    phys.setBodyVelocity(
-      body,
-      dx * speed,
-      vy,
-      dz * speed,
-      (sim.prng.next() - 0.5) * 10,
-      (sim.prng.next() - 0.5) * 10,
-      (sim.prng.next() - 0.5) * 10,
-    )
+    const wvx = (sim.prng.next() - 0.5) * 10
+    const wvy = (sim.prng.next() - 0.5) * 10
+    const wvz = (sim.prng.next() - 0.5) * 10
+    if (body) phys.setBodyVelocity(body, dx * speed, vy, dz * speed, wvx, wvy, wvz)
     bodies++
     voxels += clump.length
   }

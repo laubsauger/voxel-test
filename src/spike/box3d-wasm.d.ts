@@ -53,6 +53,9 @@ declare module 'box3d-wasm/standard' {
     setAngularDamping(d: number): void
     applyLinearImpulseToCenter(impulse: B3Vec3, wake?: boolean): void
     applyLinearImpulse(impulse: B3Vec3, point: B3Vec3, wake?: boolean): void
+    applyForceToCenter(force: B3Vec3, wake?: boolean): void
+    applyTorque(torque: B3Vec3, wake?: boolean): void
+    getWorldCenterOfMass(): B3Vec3
     setUserData(v: number): void
     getUserData(): number
     getShapeCount(): number
