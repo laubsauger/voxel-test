@@ -119,7 +119,30 @@ export function findStressCollapses(world: ChunkStore, region: Region, editRegio
         // `boundary` does NOT disqualify a grounded component: the ground slab
         // always extends past the region, but the building's own neck is still
         // judged from the weakest cross-section, which the ground never is.
-        void boundary
+        // T92 — ZERO-SUPPORT catch: a component in this ground→top analysis box
+        // that reaches NEITHER the ground NOR the box boundary has no possible
+        // support path at all — collapse it outright, fragmented. This is the
+        // "any theoretical chance of standing?" test: region-limited fine
+        // connectivity (boundary escape) and the coarse grid (D=4 aliases thin
+        // gaps) both missed fully-severed slim towers; this box spans the full
+        // column, so an isolated component here is PROVABLY floating.
+        // Locality intact: only edit-touched components are judged.
+        if (touched && !grounded && !boundary && comp.length >= 2) {
+          const F = o.fragment
+          const frags = new Map<number, IslandVoxel[]>()
+          for (const p of comp) {
+            const lx = p & 0xff, lz = (p >> 8) & 0xff, ly = p >> 16
+            const key = ((lx / F) | 0) | (((lz / F) | 0) << 10) | (((ly / F) | 0) << 20)
+            let arr = frags.get(key)
+            if (!arr) { arr = []; frags.set(key, arr) }
+            arr.push({ x: R.x0 + lx, y: R.y0 + ly, z: R.z0 + lz, mat: at(lx, ly, lz) })
+          }
+          for (const arr of frags.values()) {
+            if (out.length >= o.maxIslands) break
+            out.push({ voxels: arr })
+          }
+          continue
+        }
         // untouched = not overlapping this edit → leave it standing (locality).
         if (!touched || !grounded || comp.length < o.minComponent) continue
 

@@ -36,6 +36,8 @@ export interface WaterSurfaceData {
 const CY_STRIDE = WORLD_CX * WORLD_CZ
 /** columns deeper than this all render as "deep" — bounds the depth walk */
 const MAX_DEPTH_WALK = 64
+/** T92 — water chunks re-extracted per frame (big refreshes spread out) */
+const SURFACE_REBUILD_BUDGET = 8
 
 interface Acc {
   positions: number[]
@@ -233,15 +235,26 @@ export class WaterSurface {
     return this.chunks.size
   }
 
+  /** T92 — dirty chunks awaiting extraction beyond the per-frame budget */
+  private readonly pendingRebuilds = new Set<number>()
+
   /** returns true if any geometry was rebuilt */
   update(water: WaterSim, world: ChunkStore): boolean {
-    if (water.version === this.lastVersion) return false
-    this.lastVersion = water.version
-    const dirty = water.drainRenderDirty()
-    if (dirty.length === 0) return false
+    if (water.version !== this.lastVersion) {
+      this.lastVersion = water.version
+      for (const ci of expandDirty(water.drainRenderDirty())) this.pendingRebuilds.add(ci)
+    }
+    if (this.pendingRebuilds.size === 0) return false
+    // T92 — budget the extraction: a full-water refresh (boot fill, breach
+    // flood) extracted EVERY water chunk in one frame (~1.2s stall). Small
+    // updates (a splash's few chunks) still land same-frame; big ones spread.
     let rebuilt = false
-    for (const ci of expandDirty(dirty)) {
+    let n = 0
+    for (const ci of [...this.pendingRebuilds]) {
+      if (n >= SURFACE_REBUILD_BUDGET) break
+      this.pendingRebuilds.delete(ci)
       rebuilt = this.rebuildChunk(water, world, ci) || rebuilt
+      n++
     }
     return rebuilt
   }

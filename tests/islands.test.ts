@@ -110,3 +110,29 @@ describe('island extraction → LOCAL debris body (T12→T86, V17)', () => {
     phys.dispose()
   }, 30000)
 })
+
+describe('zero-support catch (T92, B33): fully severed structure MUST fall', () => {
+  // The bug: region-limited connectivity (boundary escape) and the D=4 coarse
+  // grid (thin gaps alias away) both missed fully-severed slim towers — upper
+  // floors floated forever. findStressCollapses spans the full ground→top
+  // column: a component grounded NOWHERE and clipped by NO boundary is
+  // provably floating and must collapse regardless of stress ratios.
+  it('slim tower severed by a thin cut collapses (coarse-grid aliasing case)', async () => {
+    const sim = makeSim()
+    sim.world.fillBox(0, 0, 0, 63, 3, 63, 3) // terrain slab
+    sim.world.fillBox(30, 4, 30, 32, 60, 32, BRICK) // 3x3 slim tower
+    const phys = await createPhysics(sim)
+    sim.step()
+    // r=2 dig = ~3-voxel gap: too thin for an empty D=4 coarse layer
+    sim.queue.push({ tick: 1, playerId: 1, seq: 0, op: { kind: 'dig', x: 31, y: 10, z: 31, r: 2 } })
+    for (let i = 0; i < 30; i++) sim.step()
+    // everything above the cut must be GONE from the world (debris now)
+    let topmost = -1
+    for (let y = 70; y >= 12; y--)
+      for (let z = 30; z <= 32; z++)
+        for (let x = 30; x <= 32; x++) if (sim.world.getVoxel(x, y, z) !== 0) topmost = Math.max(topmost, y)
+    expect(topmost).toBe(-1)
+    expect(phys.debris!.bodies.size).toBeGreaterThan(0)
+    phys.dispose()
+  }, 30000)
+})

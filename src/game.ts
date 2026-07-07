@@ -524,7 +524,7 @@ export class Game {
       this.birds.update(dt, this.world.dayFactor)
       this.flashlight.update(dt)
       this.underwater.update(this.cam.camera.position, this.water)
-      this.waterSurface.update(this.water, this.sim.world)
+      { const __w0 = performance.now(); this.waterSurface.update(this.water, this.sim.world); const __d = performance.now() - __w0; if (__d > 4) console.warn("[perf] waterSurface.update " + __d.toFixed(1) + "ms") }
 
       frames++
       if (now - fpsAt > 500) {

@@ -76,6 +76,10 @@ interface PassResult {
 
 /** steps a chunk stays awake after its last change: one per lateral phase */
 const WAKE_TTL = 4
+/** T92 — max wake chunks processed per CA step (~0.5ms each → ≤8ms/step,
+ *  ≤16ms/tick at 2 steps). Small disturbances fit entirely (unchanged
+ *  behaviour); only mega-wakes (boot fill, breach floods) throttle. */
+export const WAKE_BUDGET = 16
 
 export class WaterSim {
   /** water pages by chunk index — allocated only where water exists */
@@ -239,7 +243,21 @@ export class WaterSim {
    */
   step(): void {
     if (this.wake.size === 0) return
-    const active = [...this.wake.keys()].sort((a, b) => a - b)
+    // T92 — budget the processed wake set: an unbounded wake (boot fill, big
+    // breach floods) cost ~0.5ms PER CHUNK — a full 2048-chunk wake was a
+    // 1-SECOND sim tick. Small wakes (splashes, ripples — the common case) fit
+    // inside the budget and behave exactly as before; mega-wakes settle over
+    // more steps instead of stalling the frame. Deterministic (V2): sorted
+    // order, fixed budget, stepCount-rotated window so a throttled wake drains
+    // fairly. Unprocessed chunks keep their TTL untouched (the TTL loop below
+    // walks only the processed subset) and mass stays conserved (V9): expand()
+    // still closes every processed chunk over its neighbours.
+    const sortedWake = [...this.wake.keys()].sort((a, b) => a - b)
+    const throttled = sortedWake.length > WAKE_BUDGET
+    const start = throttled ? (this.stepCount * WAKE_BUDGET) % sortedWake.length : 0
+    const active = throttled
+      ? Array.from({ length: WAKE_BUDGET }, (_, i) => sortedWake[(start + i) % sortedWake.length]).sort((a, b) => a - b)
+      : sortedWake
     const changed = new Set<number>()
     this.runPass(this.expand(active), 'vertical', 0, 0, changed)
     // lateral must also cover chunks that changed during the vertical pass
