@@ -136,3 +136,49 @@ describe('zero-support catch (T92, B33): fully severed structure MUST fall', () 
     phys.dispose()
   }, 30000)
 })
+
+describe('ground-reachability check (T93, B34): no welded path to ground = fall', () => {
+  // B34: every prior detector was locality-bounded — components crossing the
+  // analysis region were ASSUMED supported ("boundary escape"), and the D=4
+  // coarse grid aliased thin gaps. findGroundlessComponents floods the actual
+  // component with no region boundary: terrain contact (early exit) or
+  // provably floating. Runs on edit-adjacent candidates in the stress slot.
+  it('wide slab severed from a tiny-footprint column falls (boundary-escape case)', async () => {
+    const sim = makeSim()
+    sim.world.fillBox(0, 0, 0, 63, 3, 63, 3) // terrain
+    sim.world.fillBox(30, 4, 30, 31, 20, 31, BRICK) // 2x2 column
+    sim.world.fillBox(14, 21, 14, 47, 23, 47, BRICK) // 34x34 slab on top — FAR wider than the ±6 stress box
+    const phys = await createPhysics(sim)
+    sim.step()
+    // sever the column below the slab
+    sim.queue.push({ tick: 1, playerId: 1, seq: 0, op: { kind: 'dig', x: 30, y: 12, z: 30, r: 3 } })
+    for (let i = 0; i < 30; i++) sim.step()
+    // the slab must be gone from the world (extracted to debris)
+    let slabLeft = 0
+    for (let y = 21; y <= 23; y++)
+      for (let z = 14; z <= 47; z++)
+        for (let x = 14; x <= 47; x++) if (sim.world.getVoxel(x, y, z) !== 0) slabLeft++
+    expect(slabLeft).toBe(0)
+    expect(phys.debris!.bodies.size).toBeGreaterThan(0)
+    phys.dispose()
+  }, 30000)
+
+  it('grounded structure with the same shape stays standing (early-exit path)', async () => {
+    const sim = makeSim()
+    sim.world.fillBox(0, 0, 0, 63, 3, 63, 3)
+    sim.world.fillBox(30, 4, 30, 31, 20, 31, BRICK)
+    sim.world.fillBox(14, 21, 14, 47, 23, 47, BRICK)
+    sim.world.fillBox(45, 4, 45, 46, 20, 46, BRICK) // SECOND leg under the slab corner
+    const phys = await createPhysics(sim)
+    sim.step()
+    // sever only the first column — slab still welded to ground via leg 2
+    sim.queue.push({ tick: 1, playerId: 1, seq: 0, op: { kind: 'dig', x: 30, y: 12, z: 30, r: 3 } })
+    for (let i = 0; i < 30; i++) sim.step()
+    let slabLeft = 0
+    for (let y = 21; y <= 23; y++)
+      for (let z = 14; z <= 47; z++)
+        for (let x = 14; x <= 47; x++) if (sim.world.getVoxel(x, y, z) !== 0) slabLeft++
+    expect(slabLeft).toBeGreaterThan(3000) // slab (34*34*3=3468 minus blast nicks) stands
+    phys.dispose()
+  }, 30000)
+})

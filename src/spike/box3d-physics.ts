@@ -28,6 +28,7 @@ import {
 import { greedyBoxes } from '../sim/greedy-boxes'
 import { findUnsupportedIslands, type Island, type IslandVoxel } from '../sim/connectivity'
 import { findStressCollapses } from '../sim/structure'
+import { harvestSeeds, findGroundlessComponents } from '../sim/ground-check'
 import { CoarseSupport } from '../sim/coarse-support'
 import { material, VOXEL_VOLUME } from '../sim/materials'
 import { registerDestructionOps } from '../sim/destruction'
@@ -306,6 +307,11 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
       const analysis = { x0: edit.x0 - 6, y0: gy, z0: edit.z0 - 6, x1: edit.x1 + 6, y1: topY, z1: edit.z1 + 6 }
       const budget = BODY_CAP - this.activeCount
       for (const island of findStressCollapses(sim.world, analysis, edit, { maxIslands: budget })) this.extractIsland(sim, island)
+      // T93/B34 — direct ground-reachability (no region boundary): catches
+      // floaters both the stress pass (boundary escape) and the coarse grid
+      // (thin-gap aliasing) miss. Same primitive as the game backend.
+      const seeds = harvestSeeds(sim.world, edit)
+      for (const island of findGroundlessComponents(sim.world, seeds)) this.extractIsland(sim, island)
     }
     const dirtied = sim.world.drainDirty()
     for (const ci of dirtied) {

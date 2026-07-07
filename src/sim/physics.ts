@@ -26,6 +26,7 @@ import {
 import { greedyBoxes, type Box } from './greedy-boxes'
 import { findStressCollapses } from './structure'
 import { CoarseSupport } from './coarse-support'
+import { harvestSeeds, findGroundlessComponents } from './ground-check'
 import type { DebrisLayer } from './debris'
 import {
   CONNECTIVITY_MARGIN,
@@ -714,6 +715,14 @@ export class PhysicsWorld implements IPhysicsWorld {
     if (floating) {
       for (const island of findUnsupportedIslands(sim.world, floating)) this.extractIsland(sim, island)
     }
+    // (c) T93/B34 — direct ground-reachability on the survivors: flood each
+    // edit-adjacent component with NO region boundary (the hole in (a)/(b):
+    // both must assume boundary-crossers are supported; coarse also aliases
+    // gaps thinner than 4 voxels). Down-biased with terrain early-exit —
+    // supported structures cost ~height pops; only provable floaters pay
+    // their component size. Candidates only, in this deferred stress slot.
+    const seeds = harvestSeeds(sim.world, edit)
+    for (const island of findGroundlessComponents(sim.world, seeds)) this.extractIsland(sim, island)
   }
 
   /**
