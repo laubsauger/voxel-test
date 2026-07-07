@@ -8,7 +8,21 @@
  * reweld so the exact perf cost of repeated destruction is visible. [R] fires a
  * rocket barrage (repro), [F] toggles freeze (perf A/B). No Jolt, no net.
  */
-import { Scene, WebGPURenderer, DirectionalLight, HemisphereLight, Color, Group, Vector3 } from 'three/webgpu'
+import {
+  Scene,
+  WebGPURenderer,
+  DirectionalLight,
+  HemisphereLight,
+  Color,
+  Group,
+  Vector3,
+  Matrix3,
+  Sphere,
+  Mesh,
+  BufferGeometry,
+  BufferAttribute,
+  MeshStandardMaterial,
+} from 'three/webgpu'
 import { FlyCam } from '../render/flycam'
 import { clusterToGroup } from './houses'
 import { createBox3DPhysics, type Box3DPhysicsWorld } from './box3d-physics'
@@ -118,6 +132,103 @@ const HOTKEYS = [
   '[R] rocket barrage at aim  [X] big blast at aim  [F] freeze on/off',
   '[B] hide loose bodies  [V] hide welded world (isolate loose)',
 ].join('\n')
+
+/**
+ * Frozen rubble batch — settled debris keeps its exact shape but its baked mesh
+ * is merged into ONE geometry (one draw call, one frustum-cull object) so render
+ * cost decouples from body count. Without this, every frozen piece is a separate
+ * three.js object and the per-object cull iteration dies past ~8k. Fresh/active
+ * debris stays individual (moving, shootable); on freeze it bakes in here, on
+ * unfreeze (shot) it degenerates out and goes back to an individual mesh.
+ */
+const _bv = new Vector3()
+const _bn = new Vector3()
+const _bnm = new Matrix3()
+class RubbleBatch {
+  private readonly pos: Float32Array
+  private readonly col: Float32Array
+  private readonly nor: Float32Array
+  private readonly idx: Uint32Array
+  private vHead = 0
+  private iHead = 0
+  private readonly ranges = new Map<number, { i0: number; ic: number }>()
+  private readonly geom = new BufferGeometry()
+  readonly mesh: Mesh
+  full = false
+  constructor(private readonly capV = 900000, private readonly capI = 1600000, center = new Vector3(), radius = 400) {
+    this.pos = new Float32Array(capV * 3)
+    this.col = new Float32Array(capV * 3)
+    this.nor = new Float32Array(capV * 3)
+    this.idx = new Uint32Array(capI)
+    this.geom.setAttribute('position', new BufferAttribute(this.pos, 3))
+    this.geom.setAttribute('color', new BufferAttribute(this.col, 3))
+    this.geom.setAttribute('normal', new BufferAttribute(this.nor, 3))
+    this.geom.setIndex(new BufferAttribute(this.idx, 1))
+    this.geom.setDrawRange(0, 0)
+    this.geom.boundingSphere = new Sphere(center, radius) // manual — never recompute
+    this.mesh = new Mesh(this.geom, new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 }))
+    this.mesh.frustumCulled = false
+    this.mesh.castShadow = true
+    this.mesh.receiveShadow = true
+  }
+  /** bake a world-transformed opaque mesh into the batch; false if capacity hit */
+  add(id: number, m: Mesh): boolean {
+    if (this.ranges.has(id)) return true
+    const g = m.geometry
+    const p = g.getAttribute('position') as BufferAttribute | undefined
+    const c = g.getAttribute('color') as BufferAttribute | undefined
+    const na = g.getAttribute('normal') as BufferAttribute | undefined
+    const index = g.getIndex()
+    if (!p || !index) return true
+    const vc = p.count, ic = index.count
+    if (this.vHead + vc > this.capV || this.iHead + ic > this.capI) { this.full = true; return false }
+    const wm = m.matrixWorld
+    _bnm.getNormalMatrix(wm)
+    const v0 = this.vHead
+    for (let i = 0; i < vc; i++) {
+      _bv.set(p.getX(i), p.getY(i), p.getZ(i)).applyMatrix4(wm)
+      const o = (v0 + i) * 3
+      this.pos[o] = _bv.x; this.pos[o + 1] = _bv.y; this.pos[o + 2] = _bv.z
+      if (c) { this.col[o] = c.getX(i); this.col[o + 1] = c.getY(i); this.col[o + 2] = c.getZ(i) }
+      if (na) { _bn.set(na.getX(i), na.getY(i), na.getZ(i)).applyMatrix3(_bnm).normalize(); this.nor[o] = _bn.x; this.nor[o + 1] = _bn.y; this.nor[o + 2] = _bn.z }
+    }
+    const i0 = this.iHead
+    for (let i = 0; i < ic; i++) this.idx[i0 + i] = v0 + index.getX(i)
+    this.markUpdate(v0, vc, i0, ic)
+    this.vHead += vc; this.iHead += ic
+    this.ranges.set(id, { i0, ic })
+    this.geom.setDrawRange(0, this.iHead)
+    return true
+  }
+  /** collapse a piece's triangles to zero-area (removed from view), keep capacity slot */
+  remove(id: number): void {
+    const r = this.ranges.get(id)
+    if (!r) return
+    for (let k = 0; k < r.ic; k++) this.idx[r.i0 + k] = 0
+    ;(this.geom.getIndex() as BufferAttribute).addUpdateRange(r.i0, r.ic)
+    ;(this.geom.getIndex() as BufferAttribute).needsUpdate = true
+    this.ranges.delete(id)
+  }
+  has(id: number): boolean {
+    return this.ranges.has(id)
+  }
+  idList(): number[] {
+    return [...this.ranges.keys()]
+  }
+  get count(): number {
+    return this.ranges.size
+  }
+  private markUpdate(v0: number, vc: number, i0: number, ic: number): void {
+    for (const name of ['position', 'color', 'normal']) {
+      const a = this.geom.getAttribute(name) as BufferAttribute
+      a.addUpdateRange(v0 * 3, vc * 3)
+      a.needsUpdate = true
+    }
+    const ia = this.geom.getIndex() as BufferAttribute
+    ia.addUpdateRange(i0, ic)
+    ia.needsUpdate = true
+  }
+}
 
 function chunkGrid(sim: Sim, cx: number, cy: number, cz: number): { grid: Uint8Array; any: boolean } {
   const grid = new Uint8Array(CHUNK * CHUNK * CHUNK)
@@ -233,29 +344,61 @@ async function main(): Promise<void> {
 
   const bodyGroups = new Map<number, { group: Group; version: number }>()
   let showBodies = true
-  function syncBodies(): void {
-    for (const [id, rec] of bodyGroups) {
-      if (!phys.bodies.has(id)) {
-        scene.remove(rec.group)
-        rec.group.traverse((o) => (o as { geometry?: { dispose(): void } }).geometry?.dispose())
-        bodyGroups.delete(id)
-      }
+  const rubble = new RubbleBatch(900000, 1600000, new Vector3(CENTER_VX * VOXEL_SIZE, 25, CENTER_VZ * VOXEL_SIZE), 500)
+  scene.add(rubble.mesh)
+
+  const disposeGroup = (g: Group): void => {
+    scene.remove(g)
+    g.traverse((o) => (o as { geometry?: { dispose(): void } }).geometry?.dispose())
+  }
+  const opaqueMesh = (g: Group): Mesh | null => {
+    for (const c of g.children) {
+      const m = c as Mesh
+      if (m.isMesh && !(m.material as { transparent?: boolean }).transparent) return m
     }
+    return null
+  }
+  const makeGroup = (b: { grid: Uint8Array; sx: number; sy: number; sz: number; px: number; py: number; pz: number; qx: number; qy: number; qz: number; qw: number }): Group => {
+    const g = clusterToGroup({ grid: b.grid, sx: b.sx, sy: b.sy, sz: b.sz, origin: { x: 0, y: 0, z: 0 }, label: 'body' })
+    g.position.set(b.px, b.py, b.pz)
+    g.quaternion.set(b.qx, b.qy, b.qz, b.qw)
+    return g
+  }
+
+  function syncBodies(): void {
+    // despawned bodies → drop from wherever they live
+    for (const [id, rec] of bodyGroups) if (!phys.bodies.has(id)) { disposeGroup(rec.group); bodyGroups.delete(id) }
+    for (const id of rubble.idList()) if (!phys.bodies.has(id)) rubble.remove(id)
+
     for (const b of phys.bodies.values()) {
+      if (phys.frozen.has(b.id)) {
+        if (rubble.has(b.id)) continue // already baked, static — nothing to do
+        // freeze transition: build/refresh a transformed group, bake it, drop the group
+        let rec = bodyGroups.get(b.id)
+        if (rec && rec.version === b.version) scene.remove(rec.group)
+        else { if (rec) disposeGroup(rec.group); rec = { group: makeGroup(b), version: b.version } }
+        rec.group.updateWorldMatrix(true, true)
+        const op = opaqueMesh(rec.group)
+        const baked = op ? rubble.add(b.id, op) : false
+        bodyGroups.delete(b.id)
+        if (baked) disposeGroup(rec.group)
+        else { rec.group.visible = showBodies; scene.add(rec.group); bodyGroups.set(b.id, rec) } // batch full / pure-glass → keep individual
+        continue
+      }
+      // active (moving) body → individual mesh; pull it out of the batch if it was frozen
+      if (rubble.has(b.id)) rubble.remove(b.id)
       let rec = bodyGroups.get(b.id)
       if (!rec || rec.version !== b.version) {
-        if (rec) {
-          scene.remove(rec.group)
-          rec.group.traverse((o) => (o as { geometry?: { dispose(): void } }).geometry?.dispose())
-        }
-        const group = clusterToGroup({ grid: b.grid, sx: b.sx, sy: b.sy, sz: b.sz, origin: { x: 0, y: 0, z: 0 }, label: 'body' })
+        if (rec) disposeGroup(rec.group)
+        const group = makeGroup(b)
         group.visible = showBodies
         scene.add(group)
         rec = { group, version: b.version }
         bodyGroups.set(b.id, rec)
+      } else {
+        rec.group.position.set(b.px, b.py, b.pz)
+        rec.group.quaternion.set(b.qx, b.qy, b.qz, b.qw)
       }
-      rec.group.position.set(b.px, b.py, b.pz)
-      rec.group.quaternion.set(b.qx, b.qy, b.qz, b.qw)
     }
   }
 
@@ -347,13 +490,13 @@ async function main(): Promise<void> {
       `BOX3D SPIKE — freestanding highrises · REAL pipeline\n${HOTKEYS}\n` +
       `tick ${sim.tick}  bodies ${p.bodies}  chunks ${chunkGroups.size}  freeze ${phys.freezeEnabled ? 'ON' : 'off'} (frozen/t ${p.weldedThisTick})\n` +
       `PHYS  structural ${p.structuralMs.toFixed(2)}  step ${p.stepMs.toFixed(2)}  readback ${p.readbackMs.toFixed(2)}  freeze ${p.reweldMs.toFixed(2)} ms\n` +
-      `RENDER ${renderMs.toFixed(2)} ms  (chunk remesh + ${bodyGroups.size} body meshes)`
+      `RENDER ${renderMs.toFixed(2)} ms  (${bodyGroups.size} active meshes + ${rubble.count} rubble in 1 batch)`
   })
 
   ;(globalThis as unknown as { __spike: unknown }).__spike = {
     sim, phys, scene, cam: cam.camera, target,
     fireBarrage, explode,
-    prof: () => ({ ...phys.prof, renderMs, bodyMeshes: bodyGroups.size, chunks: chunkGroups.size }),
+    prof: () => ({ ...phys.prof, renderMs, bodyMeshes: bodyGroups.size, rubble: rubble.count, chunks: chunkGroups.size }),
     setFreeze: (on: boolean) => { phys.freezeEnabled = on },
   }
 }

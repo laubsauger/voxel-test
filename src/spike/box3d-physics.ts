@@ -95,8 +95,8 @@ export class Box3DPhysicsWorld implements IPhysicsWorld {
   freezeEnabled = true
   /** T56 weak-neck stress collapse toggle */
   stressEnabled = true
-  /** ids of settled bodies frozen to static (kept in `bodies` + mesh, skip readback) */
-  private readonly frozen = new Set<number>()
+  /** ids of settled bodies frozen to static (skip readback; render batches them) */
+  readonly frozen = new Set<number>()
   readonly prof: PhysProfile = { structuralMs: 0, stepMs: 0, readbackMs: 0, reweldMs: 0, bodies: 0, awake: 0, weldedThisTick: 0 }
 
   private constructor(world: B3World) {
