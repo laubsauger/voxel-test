@@ -25,6 +25,8 @@ export interface CombatHudCtx {
   name: (pid: number) => string
   /** camera yaw (rad) — rotates damage-direction arrows into screen space */
   camYaw: () => number
+  /** false in menu/orbit — the whole combat overlay hides */
+  inPlay: () => boolean
 }
 
 const FEED_TTL_MS = 4500
@@ -102,6 +104,10 @@ export class CombatHud {
 
   /** once per rendered frame */
   frame(): void {
+    // menu/orbit backdrop: no combat overlay (T95 fix — HP bar showed in menu)
+    const inPlay = this.ctx.inPlay()
+    this.el.style.display = inPlay ? 'block' : 'none'
+    if (!inPlay) return
     const me = this.ctx.players().find((p) => p.id === this.ctx.localId())
     // HP bar
     const hp = me ? me.hp : 100

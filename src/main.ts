@@ -354,6 +354,7 @@ const combatHud = new CombatHud(root, {
     })),
   name: (pid) => (pid === game.localPlayerId ? 'You' : playerName(pid)),
   camYaw: () => game.cam.camera.rotation.y,
+  inPlay: () => game.state === 'play',
 })
 const tools = new ToolController(game, hud, (e) => {
   // T52 — tool feedback → material-aware impact/explosion sounds

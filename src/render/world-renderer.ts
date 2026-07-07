@@ -818,9 +818,19 @@ export class WorldRenderer {
     // constant normalBias leaves acne/leaks at distance).
     if (!this.csmBiasTuned && this.csm.lights.length > 0) {
       this.csmBiasTuned = true
-      const base = this.sun.shadow.normalBias
-      this.csm.lights.forEach((l, i) => {
-        if (l.shadow) l.shadow.normalBias = base * (i + 1)
+      // T96b — normalBias derived from the ACTUAL texel size of each cascade
+      // (ortho span / map resolution) instead of a flat 0.03×(i+1): the T94
+      // 2→1 cascade drop gave near geometry ~5.4cm texels while the bias
+      // stayed tuned for the old fine near-cascade → severe acne striping on
+      // walls/roads at grazing sun. 1.5× texel covers slope; the floor keeps
+      // the old feel on fine maps. Adapts to the cascade/mapSize gfx dials
+      // (csmBiasTuned resets on every CSM rebuild).
+      const mapSize = this.sun.shadow.mapSize.x
+      this.csm.lights.forEach((l) => {
+        if (!l.shadow) return
+        const cam = l.shadow.camera as { right?: number; left?: number }
+        const span = cam.right !== undefined && cam.left !== undefined ? cam.right - cam.left : 110
+        l.shadow.normalBias = Math.max(0.03, (span / mapSize) * 1.5)
       })
     }
   }
