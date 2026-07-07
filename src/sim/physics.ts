@@ -179,7 +179,13 @@ const COLLIDER_BODY_RADIUS = 30 // m — around each vehicle / debris island
 const COLLIDER_AIRCRAFT_RADIUS = 48 // m — planes move fast; keep more world solid ahead
 const COLLIDER_KEEP_MARGIN = 20 // m — evict only beyond radius+margin (hysteresis)
 /** per-tick build/evict caps (steady state) — the burst at load is unbudgeted */
-const COLLIDER_BUILD_BUDGET = 64
+/** T90 — streamed collider builds per tick AFTER the load burst: ~1-2ms each,
+ *  6/tick ≈ ≤10ms spread across ticks instead of 64-in-one at boundary cross.
+ *  A plane at 60 m/s needs ~1-2/tick average — 6 keeps solid ground ahead. */
+const STREAM_BUILD_BUDGET = 6
+/** T90 — drain rate while the initial load burst empties (~1s instead of a 1.2s
+ *  single-tick freeze at spawn; nearest-first keeps the spawn chunk solid) */
+const STREAM_BURST_BUDGET = 24
 const COLLIDER_EVICT_BUDGET = 64
 
 /**
@@ -602,6 +608,45 @@ export class PhysicsWorld implements IPhysicsWorld {
   private readonly staleColliders = new Set<number>()
   /** B23/T88 — connectivity floods at most once per tick (see structuralPass) */
   private lastFloodTick = -1
+
+  /** T90 — streamed colliders awaiting build (boundary-cross spillover) */
+  private readonly pendingBuilds = new Set<number>()
+  /** raised drain budget until the initial post-spawn fill empties once */
+  private streamWarmup = true
+
+  /** build up to STREAM_BUILD_BUDGET pending streamed colliders, nearest sim
+   *  anchor first (deterministic: sim-state anchors, ci tie-break) */
+  private drainPendingBuilds(world: ChunkStore): void {
+    if (this.pendingBuilds.size === 0) return
+    const chunkM = CHUNK * VOXEL_SIZE
+    const anchors: Array<{ x: number; z: number }> = []
+    for (const p of this.players.values()) anchors.push({ x: p.px, z: p.pz })
+    for (const v of this.vehicles.values()) anchors.push({ x: v.px, z: v.pz })
+    for (const a of this.aircraft.values()) anchors.push({ x: a.px, z: a.pz })
+    const dist2 = (ci: number): number => {
+      if (anchors.length === 0) return 0
+      const cx = ((ci % WORLD_CX) + 0.5) * chunkM
+      const cz = ((((ci / WORLD_CX) | 0) % WORLD_CZ) + 0.5) * chunkM
+      let best = Infinity
+      for (const a of anchors) {
+        const dx = cx - a.x
+        const dz = cz - a.z
+        const d = dx * dx + dz * dz
+        if (d < best) best = d
+      }
+      return best
+    }
+    const order = [...this.pendingBuilds].sort((a, b) => dist2(a) - dist2(b) || a - b)
+    // raised budget while the initial load fill drains (nearest chunks first —
+    // the ground under spawn lands in drain #1), steady trickle afterwards
+    const n = Math.min(this.streamWarmup ? STREAM_BURST_BUDGET : STREAM_BUILD_BUDGET, order.length)
+    for (let i = 0; i < n; i++) {
+      const ci = order[i]
+      this.pendingBuilds.delete(ci)
+      this.rebuildChunkBody(world, ci)
+    }
+    if (this.streamWarmup && this.pendingBuilds.size === 0) this.streamWarmup = false
+  }
   /** T89 — tick of the last BIG edit; that tick skips flood + stale flushes */
   private bigEditTick = -1
 
@@ -874,6 +919,11 @@ export class PhysicsWorld implements IPhysicsWorld {
    * built/evicted in ascending-ci order (budgeted; the load burst is unbudgeted).
    */
   private streamColliders(sim: Sim): void {
+    const __s0 = performance.now()
+    this.__streamInner(sim)
+    if (performance.now() - __s0 > 15) console.warn("[perf] streamColliders " + (performance.now() - __s0).toFixed(0) + "ms")
+  }
+  private __streamInner(sim: Sim): void {
     const world = sim.world
     const chunkM = CHUNK * VOXEL_SIZE
     // B36 — throttle: the bubble rasterise + set-diff is the single biggest CPU
@@ -889,7 +939,15 @@ export class PhysicsWorld implements IPhysicsWorld {
     for (const v of this.vehicles.values()) stamp(v.px, v.pz)
     for (const a of this.aircraft.values()) stamp(a.px, a.pz)
     for (const b of this.bodies.values()) stamp(b.px, b.pz)
-    if (sig === this.lastAnchorSig && !this.colliderBurst) return // nothing crossed a chunk
+    if (sig === this.lastAnchorSig && !this.colliderBurst) {
+      // T90 — no boundary crossed: still drain the pending build queue so a
+      // boundary-cross burst spreads over the following ticks (was: 64 compound
+      // Creates in ONE tick = the 60-130ms hitch when driving/flying across
+      // chunk boundaries). Nearest-anchor first — contact-critical chunks land
+      // before distant bubble fringe. Deterministic (sim-state anchors).
+      this.drainPendingBuilds(world)
+      return
+    }
     this.lastAnchorSig = sig
 
     const targets = this.colliderTargets
@@ -917,13 +975,20 @@ export class PhysicsWorld implements IPhysicsWorld {
     for (const a of this.aircraft.values()) addBubble(a.px, a.pz, COLLIDER_AIRCRAFT_RADIUS)
     for (const b of this.bodies.values()) addBubble(b.px, b.pz, COLLIDER_BODY_RADIUS)
 
-    // build in-range chunks not yet built (ascending ci; unbudgeted at load)
-    const toBuild: number[] = []
-    for (const ci of targets) if (!this.chunkBodies.has(ci)) toBuild.push(ci)
-    toBuild.sort((a, b) => a - b)
-    const buildCap = this.colliderBurst ? toBuild.length : COLLIDER_BUILD_BUDGET
-    for (let i = 0; i < toBuild.length && i < buildCap; i++) this.rebuildChunkBody(world, toBuild[i])
-    if (this.colliderBurst && toBuild.length <= buildCap) this.colliderBurst = false
+    // T90 — in-range chunks not yet built go into a persistent pending queue,
+    // drained per tick nearest-anchor-first (the old path built up to 64
+    // compound shapes in the boundary-cross tick, and the unbudgeted load
+    // burst was a 1.2s freeze at spawn). The burst now drains at a raised
+    // budget: the chunk under the player's feet builds in the FIRST drain
+    // (nearest-first), so spawn stays safe while the bubble fills over ~1s.
+    this.pendingBuilds.clear()
+    for (const ci of targets) if (!this.chunkBodies.has(ci)) this.pendingBuilds.add(ci)
+    // clear the burst flag right after the FIRST recompute — leaving it set
+    // bypasses the B36 sig-throttle and re-rasterises the bubble EVERY tick
+    // (~20ms/tick while moving). Warmup keeps the raised drain budget until the
+    // initial fill has emptied once.
+    this.colliderBurst = false
+    this.drainPendingBuilds(world)
 
     // evict built chunks now beyond radius+margin of every anchor (hysteresis)
     const toEvict: number[] = []

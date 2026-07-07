@@ -23,8 +23,8 @@ import {
   type Material,
   type Object3D,
 } from 'three'
-import { CHUNK, VOXEL_SIZE, WORLD_CX, WORLD_CY, WORLD_CZ, type ChunkStore } from '../world/chunks'
-import { meshCoarse } from './mesh-coarse'
+import { CHUNK, VOXEL_SIZE, WORLD_CX, WORLD_CY, WORLD_CZ, chunkIndex, type ChunkStore } from '../world/chunks'
+import type { LodMeshRequest, LodMeshResponse } from './lod-worker'
 import type { ChunkMesh } from './mesher'
 
 const CELL_CHUNKS = 16 // cell = 16×16 chunks in x/z → 51.2 m
@@ -54,6 +54,8 @@ interface Vec3Like {
 interface Cell {
   opaque?: Mesh
   transparent?: Mesh
+  /** T90 — generation of the in-flight/applied worker build */
+  gen?: number
 }
 
 export class LodManager {
@@ -61,6 +63,9 @@ export class LodManager {
   private lastCamCellX = Infinity
   private lastCamCellZ = Infinity
   private buildQueue: number[] = []
+  /** T90 — meshCoarse runs in a worker; gen guards evict/rebuild races */
+  private readonly worker: Worker
+  private gen = 0
 
   constructor(
     private readonly world: ChunkStore,
@@ -70,7 +75,18 @@ export class LodManager {
     /** B37 — true once the full-detail meshes for world (x,z) exist; a near
      *  coarse cell is held until then so the building never vanishes mid-approach */
     private readonly isMeshedAt: (x: number, z: number) => boolean,
-  ) {}
+  ) {
+    this.worker = new Worker(new URL('./lod-worker.ts', import.meta.url), { type: 'module' })
+    this.worker.onmessage = (e: MessageEvent<LodMeshResponse>) => {
+      const { ci, gen, opaque, transparent } = e.data
+      const cell = this.cells.get(ci)
+      if (!cell || cell.gen !== gen) return // evicted or rebuilt meanwhile
+      const cellX = ci % CELLS_X
+      const cellZ = (ci / CELLS_X) | 0
+      cell.opaque = this.makeMesh(opaque, cellX * CELL_VX, cellZ * CELL_VX, this.material)
+      cell.transparent = this.makeMesh(transparent, cellX * CELL_VX, cellZ * CELL_VX, this.transparentMaterial)
+    }
+  }
 
   /** stream coarse LOD cells around the camera (call once per frame) */
   update(cam: Vec3Like): void {
@@ -145,6 +161,7 @@ export class LodManager {
 
   /** downsample the cell's voxels, coarse-mesh them, add the meshes to the scene */
   private buildCell(ci: number): void {
+    const __t0 = performance.now()
     const cellX = ci % CELLS_X
     const cellZ = (ci / CELLS_X) | 0
     const vx0 = cellX * CELL_VX
@@ -153,27 +170,59 @@ export class LodManager {
     const grid = new Uint8Array(GRID * gridY * GRID)
     const half = STRIDE >> 1
     let any = false
-    for (let by = 0; by < gridY; by++) {
-      const wy = by * STRIDE + half
-      if (wy >= WORLD_VY) break
-      for (let bz = 0; bz < GRID; bz++) {
-        const wz = vz0 + bz * STRIDE + half
-        for (let bx = 0; bx < GRID; bx++) {
-          const wx = vx0 + bx * STRIDE + half
-          const v = this.world.getVoxel(wx, wy, wz)
-          if (v !== 0) {
-            grid[bx + bz * GRID + by * GRID * GRID] = v
+    // T90 — chunk-wise scan, IDENTICAL sample positions/output as the naive
+    // per-voxel loop, which touched 3.1M positions per cell (~50-100ms — THE
+    // boundary-cross hitch). Most chunks are Empty (skip 8³ samples at once)
+    // or Uniform (bulk-fill); only mixed surface chunks pay per-sample reads.
+    const perChunk = CHUNK / STRIDE
+    const chunksY = Math.ceil(WORLD_VY / CHUNK)
+    let maxBy = 0 // highest occupied sample row + 1 — meshCoarse skips empty sky
+    for (let ccy = 0; ccy < chunksY; ccy++) {
+      for (let ccz = 0; ccz < CELL_CHUNKS; ccz++) {
+        for (let ccx = 0; ccx < CELL_CHUNKS; ccx++) {
+          const probe = this.world.probeChunk(chunkIndex((vx0 >> 5) + ccx, ccy, (vz0 >> 5) + ccz))
+          if (probe.kind === 'empty') continue
+          const bx0 = ccx * perChunk
+          const by0 = ccy * perChunk
+          const bz0 = ccz * perChunk
+          if (by0 + perChunk > maxBy) maxBy = by0 + perChunk
+          if (probe.kind === 'uniform') {
+            for (let dy = 0; dy < perChunk; dy++)
+              for (let dz = 0; dz < perChunk; dz++)
+                for (let dx = 0; dx < perChunk; dx++)
+                  grid[bx0 + dx + (bz0 + dz) * GRID + (by0 + dy) * GRID * GRID] = probe.mat
             any = true
+            continue
+          }
+          for (let dy = 0; dy < perChunk; dy++) {
+            const wy = (by0 + dy) * STRIDE + half
+            if (wy >= WORLD_VY) break
+            for (let dz = 0; dz < perChunk; dz++) {
+              const wz = vz0 + (bz0 + dz) * STRIDE + half
+              for (let dx = 0; dx < perChunk; dx++) {
+                const wx = vx0 + (bx0 + dx) * STRIDE + half
+                const v = this.world.getVoxel(wx, wy, wz)
+                if (v !== 0) {
+                  grid[bx0 + dx + (bz0 + dz) * GRID + (by0 + dy) * GRID * GRID] = v
+                  any = true
+                }
+              }
+            }
           }
         }
       }
     }
-    const cell: Cell = {}
+    const cell: Cell = { gen: ++this.gen }
     this.cells.set(ci, cell)
     if (!any) return // empty cell (open sky/water gap) — occupies the slot, no mesh
-    const { opaque, transparent } = meshCoarse(grid, GRID, gridY, GRID)
-    cell.opaque = this.makeMesh(opaque, vx0, vz0, this.material)
-    cell.transparent = this.makeMesh(transparent, vx0, vz0, this.transparentMaterial)
+    // T90 — greedy meshing runs in the LOD worker (the main-thread pass was
+    // 36-82ms per cell = the boundary-cross hitch). Height-trimmed to the
+    // occupied rows (identical output — the sky rows are all air); the mesh
+    // arrives async and pops in a few frames later, same as chunk meshes.
+    const gy = Math.min(maxBy, gridY)
+    const req: LodMeshRequest = { ci, gen: cell.gen!, grid: grid.buffer as ArrayBuffer, gxz: GRID, gy }
+    this.worker.postMessage(req, [grid.buffer as ArrayBuffer])
+    if (performance.now() - __t0 > 15) console.warn("[perf] lod buildCell " + (performance.now() - __t0).toFixed(0) + "ms")
   }
 
   private makeMesh(m: ChunkMesh, vx0: number, vz0: number, material: Material): Mesh | undefined {
@@ -215,6 +264,7 @@ export class LodManager {
   }
 
   dispose(): void {
+    this.worker.terminate() // T90
     for (const ci of [...this.cells.keys()]) this.evictCell(ci)
     this.buildQueue.length = 0
   }

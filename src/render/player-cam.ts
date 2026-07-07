@@ -107,7 +107,9 @@ export class PlayerCam {
    * fp/tp mode on the first call; the next update() (player on foot again)
    * restores it. Call once per rendered frame while the player is seated.
    */
-  updateVehicle(v: ChaseTarget, world: ChunkStore, dt: number, player?: PlayerEntity): void {
+  /** @param boom chase-boom multiplier (T90: aircraft need a much longer boom
+   *  than cars to be steerable from outside — pilots pass ~2.2) */
+  updateVehicle(v: ChaseTarget, world: ChunkStore, dt: number, player?: PlayerEntity, boom = 1): void {
     if (this.savedMode === null) {
       // P12 — save the on-foot fp/tp mode (restored on exit) and always board
       // in the chase cam; KeyV then toggles to the in-vehicle first person.
@@ -158,9 +160,9 @@ export class PlayerCam {
     // B37 — scale the boom modestly by vehicle size so big craft sit a bit
     // further out (but not way back — 0.35, tuned so the plane stays readable)
     const sizeM = Math.max(v.sx, v.sz) * VOXEL_SIZE
-    const dist = CHASE_DISTANCE + sizeM * 0.35
+    const dist = (CHASE_DISTANCE + sizeM * 0.35) * boom
     let tx = cx - hx * dist
-    let ty = cy + CHASE_HEIGHT + sizeM * 0.12
+    let ty = cy + (CHASE_HEIGHT + sizeM * 0.12) * boom
     let tz = cz - hz * dist
     // clearance: pull the boom in if a wall sits between car and camera
     const bx = tx - cx

@@ -124,6 +124,16 @@ export class ChunkStore {
     return this.chunks[index]
   }
 
+  /** T90 — chunk kind + uniform material WITHOUT inflating (Palette reports as
+   *  Dense-equivalent 'mixed'). Lets bulk scanners skip Empty and fill Uniform
+   *  chunks wholesale instead of sampling voxel-by-voxel. */
+  probeChunk(ci: number): { kind: 'empty' | 'uniform' | 'mixed'; mat: number } {
+    const c = this.chunks[ci]
+    if (c.kind === ChunkKind.Empty) return { kind: 'empty', mat: 0 }
+    if (c.kind === ChunkKind.Uniform) return c.mat === 0 ? { kind: 'empty', mat: 0 } : { kind: 'uniform', mat: c.mat }
+    return { kind: 'mixed', mat: 0 }
+  }
+
   getVoxel(x: number, y: number, z: number): number {
     if (!inBounds(x, y, z)) return 0
     const c = this.chunks[chunkIndex(x >> 5, y >> 5, z >> 5)]

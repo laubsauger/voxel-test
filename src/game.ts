@@ -96,9 +96,13 @@ const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()
 /** B31 — heading (world yaw, rad) of a vehicle from its quaternion, using the
  * same forward = -z convention as the player. Roll/pitch on hills are ignored;
  * the seated body only needs to face the car's heading. */
-function vehicleYaw(v: VehicleEntity): number {
+function vehicleYaw(v: { qx: number; qy: number; qz: number; qw: number }): number {
   return Math.atan2(2 * (v.qx * v.qz + v.qw * v.qy), 1 - 2 * (v.qx * v.qx + v.qy * v.qy))
 }
+
+/** T90 — aircraft chase boom multiplier: a plane needs the camera much further
+ *  back than a car to be steerable from outside */
+const AIRCRAFT_CHASE_BOOM = 2.2
 
 export class Game {
   readonly seed: number
@@ -464,11 +468,17 @@ export class Game {
       // T64 — seated players get the chase cam; on-foot restores fp/tp
       const seatedV =
         player && player.seatedVehicle !== 0 ? this.phys.vehicles.get(player.seatedVehicle) : undefined
-      const seatYaw = seatedV ? vehicleYaw(seatedV) : null
+      // T90 — piloting was never wired to the camera: the plane fell back to the
+      // on-foot cam glued to the seat. Pilots get the same chase/FP system with a
+      // much longer boom (a plane is unsteerable from a car-length chase cam).
+      const seatedA =
+        player && player.seatedAircraft !== 0 ? this.phys.aircraft.get(player.seatedAircraft) : undefined
+      const seatYaw = seatedV ? vehicleYaw(seatedV) : seatedA ? vehicleYaw(seatedA) : null
       this.playerVisuals.update(dt, player, camMode, this.equippedTool?.() ?? 'dig', seatYaw)
       if (player) {
         if (this.state === 'play') {
           if (seatedV) this.cam.updateVehicle(seatedV, this.sim.world, dt, player)
+          else if (seatedA) this.cam.updateVehicle(seatedA, this.sim.world, dt, player, AIRCRAFT_CHASE_BOOM)
           else this.cam.update(player, this.sim.world)
         }
 
