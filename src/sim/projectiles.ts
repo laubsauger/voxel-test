@@ -11,7 +11,7 @@
  * (reads the map, writes nothing — V6).
  */
 import { DT, type Sim } from './loop'
-import { VOXEL_SIZE } from '../world/chunks'
+import { VOXEL_SIZE, WORLD_CX, WORLD_CY, WORLD_CZ, chunkIndex } from '../world/chunks'
 import { ddaRaycast } from './shoot-op'
 import { BOMB_POWER, BOMB_RADIUS, runExplosion } from './destruction'
 import { GRAVITY_Y, KILL_PLANE_Y, type PhysicsWorld } from './physics'
@@ -61,6 +61,24 @@ export function tickProjectiles(sim: Sim, phys: PhysicsWorld): void {
   // map iteration = insertion = entity-id allocation order (deterministic)
   for (const p of phys.projectiles.values()) {
     integrate(sim, p)
+    // B23/T89 — pre-inflate P18 palette chunks around the projectile while it
+    // flies: spreads decompression over flight ticks instead of paying it all
+    // inside the detonation scan. chunkAt() inflates lazily, ~free when hot;
+    // inflation is a REPRESENTATION change only (logical no-op, same category
+    // as game.ts compactStep) — hash-neutral.
+    const pcx = Math.floor(p.x / VOXEL_SIZE) >> 5
+    const pcy = Math.floor(p.y / VOXEL_SIZE) >> 5
+    const pcz = Math.floor(p.z / VOXEL_SIZE) >> 5
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dz = -1; dz <= 1; dz++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const ccx = pcx + dx, ccy = pcy + dy, ccz = pcz + dz
+          if (ccx < 0 || ccy < 0 || ccz < 0 || ccx >= WORLD_CX || ccy >= WORLD_CY || ccz >= WORLD_CZ) continue
+          sim.world.chunkAt(chunkIndex(ccx, ccy, ccz))
+        }
+    // T89 — also pre-build the LOCAL debris layer's colliders under the bomb
+    // (budgeted per tick of flight) so detonation debris lands on warm ground
+    phys.debris?.prewarm(sim.world, Math.floor(p.x / VOXEL_SIZE), Math.floor(p.y / VOXEL_SIZE), Math.floor(p.z / VOXEL_SIZE), 2)
     p.fuse--
     if (p.fuse <= 0) (detonate ??= []).push(p)
     else if (p.y < KILL_PLANE_Y) (dead ??= []).push(p.id)

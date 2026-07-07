@@ -84,6 +84,13 @@ export const COLLIDER_REBUILD_BUDGET = 4
  *  Bounds the per-tick region flood; cascades were already multi-tick. */
 export const CONNECTIVITY_CHUNKS_PER_PASS = 9
 
+/** T89 — edits bigger than this (voxel AABB volume) defer flood/colliders/stress
+ *  off their own tick entirely (bomb-scale; shots/digs stay same-tick) */
+export const BIG_EDIT_VOL = 6000
+
+/** T89 — max island voxels extracted per tick (≥1 island always) */
+export const EXTRACT_VOX_BUDGET = 4000
+
 // ---------------------------------------------------------------------------
 // T40 — destruction feel tuning
 // ---------------------------------------------------------------------------
@@ -384,8 +391,9 @@ export class PhysicsWorld implements IPhysicsWorld {
     tickVehiclesPlow(sim, this) // T64 — carve weak materials BEFORE collider rebuild
     this.structuralPass(sim)
     // B23/T88 — budgeted stale-collider rebuilds BEFORE the Jolt step: anchor-
-    // nearest first, so plow carves land same-tick while bomb batches spread out
-    this.flushStaleColliders(sim.world, COLLIDER_REBUILD_BUDGET)
+    // nearest first, so plow carves land same-tick while bomb batches spread out.
+    // T89: a big-edit tick skips even this — players can wait one tick.
+    if (this.bigEditTick !== sim.tick) this.flushStaleColliders(sim.world, COLLIDER_REBUILD_BUDGET)
     tickVehiclesPreStep(this) // T64 — driver input → Jolt controller
     tickAircraftPreStep(this) // P17 — pilot input → arcade flight velocity
     this.joltInterface.Step(DT, 1)
@@ -478,8 +486,21 @@ export class PhysicsWorld implements IPhysicsWorld {
     // spill waits for the NEXT tick (structuralPass runs again from the op
     // handler AND phys.tick in the same tick — without the once-guard the spill
     // would just re-flood immediately and the cap would bound nothing).
+    // T89 — a BIG edit (bomb-scale) defers ALL secondary work off its own tick:
+    // the edit tick pays only the blast scan + world writes; flood/extraction,
+    // stale colliders and stress follow on the next ticks. Deterministic: the
+    // threshold reads only the edit's voxel volume (pure sim state).
+    if (editBounds) {
+      const vol =
+        (editBounds.x1 - editBounds.x0 + 1) *
+        (editBounds.y1 - editBounds.y0 + 1) *
+        (editBounds.z1 - editBounds.z0 + 1)
+      if (vol > BIG_EDIT_VOL) this.bigEditTick = sim.tick
+    }
+    const bigEditNow = this.bigEditTick === sim.tick
+
     let check: number[] = []
-    if (queued.length > 0 && this.lastFloodTick !== sim.tick) {
+    if (queued.length > 0 && this.lastFloodTick !== sim.tick && !bigEditNow) {
       this.lastFloodTick = sim.tick
       if (queued.length > CONNECTIVITY_CHUNKS_PER_PASS) {
         queued.sort((a, b) => a - b)
@@ -494,9 +515,20 @@ export class PhysicsWorld implements IPhysicsWorld {
 
     if (check.length > 0) {
       const region = chunkUnionRegion(check, CONNECTIVITY_MARGIN)
-      for (const island of findUnsupportedIslands(sim.world, region)) {
+      const islands = findUnsupportedIslands(sim.world, region)
+      // T89 — budget extraction by VOXELS per tick (always ≥1 island so huge
+      // pieces still move): a big severed section spreads its world writes over
+      // ticks instead of one giant setVoxel burst. Unextracted islands are
+      // re-found next tick (the check chunks re-queue) — deterministic order.
+      let vox = 0
+      let extracted = 0
+      for (const island of islands) {
+        if (extracted > 0 && vox + island.voxels.length > EXTRACT_VOX_BUDGET) break
         this.extractIsland(sim, island)
+        vox += island.voxels.length
+        extracted++
       }
+      if (extracted < islands.length) this.pendingConnectivity.push(...check)
     }
 
     // T86/V17 — collapse DECISIONS are deterministic sim state: pure world
@@ -549,6 +581,8 @@ export class PhysicsWorld implements IPhysicsWorld {
   private readonly staleColliders = new Set<number>()
   /** B23/T88 — connectivity floods at most once per tick (see structuralPass) */
   private lastFloodTick = -1
+  /** T89 — tick of the last BIG edit; that tick skips flood + stale flushes */
+  private bigEditTick = -1
 
   /** rebuild up to `budget` stale chunk colliders, nearest sim anchors first —
    *  a plowing vehicle must not bounce off the fence it just carved */
@@ -638,6 +672,18 @@ export class PhysicsWorld implements IPhysicsWorld {
   spawnDebrisBody(sim: Sim, voxels: IslandVoxel[]): DynamicBody | null {
     void sim
     return this.debris ? this.debris.spawnDebris(voxels) : null
+  }
+
+  /** T89 — ejecta clump queued with launch velocity attached; the hull
+   *  materializes in the layer's budgeted step, not in the blast tick. */
+  spawnDebrisWithVelocity(
+    sim: Sim,
+    voxels: IslandVoxel[],
+    vx: number, vy: number, vz: number,
+    wx: number, wy: number, wz: number,
+  ): void {
+    void sim
+    this.debris?.spawnDeferred(voxels, { vx, vy, vz, wx, wy, wz })
   }
 
   /**

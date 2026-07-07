@@ -75,6 +75,19 @@ export interface IPhysicsWorld {
    *  (V17a) — the voxels have already left the world deterministically. */
   extractIsland(sim: Sim, island: Island): DynamicBody | null
   spawnDebrisBody(sim: Sim, voxels: IslandVoxel[]): DynamicBody | null
+  /** T89 — spawn an ejecta clump DEFERRED with its launch velocity attached
+   *  (no hull creation in the blast tick). Optional: backends without a
+   *  deferred layer fall back to spawnDebrisBody + setBodyVelocity. */
+  spawnDebrisWithVelocity?(
+    sim: Sim,
+    voxels: IslandVoxel[],
+    vx: number,
+    vy: number,
+    vz: number,
+    wx: number,
+    wy: number,
+    wz: number,
+  ): void
   setBodyVelocity(b: DynamicBody, vx: number, vy: number, vz: number, wx: number, wy: number, wz: number): void
   castRayBody(
     ox: number,

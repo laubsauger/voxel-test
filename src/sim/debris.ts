@@ -81,8 +81,12 @@ export class DebrisLayer {
    *  step END, so last tick's spawns ARE damageable by this tick's ops. */
   private readonly spawnedAt = new Map<number, number>()
   private batch = 0
-  /** B23/T88 — voxel sets awaiting budgeted hull creation (islands) */
-  private readonly pendingSpawns: IslandVoxel[][] = []
+  /** B23/T88 — voxel sets awaiting budgeted hull creation (islands + ejecta);
+   *  optional launch velocity applies on materialization (ejecta, T89) */
+  private readonly pendingSpawns: Array<{
+    voxels: IslandVoxel[]
+    vel?: { vx: number; vy: number; vz: number; wx: number; wy: number; wz: number }
+  }> = []
 
   static async create(): Promise<DebrisLayer> {
     const layer = new DebrisLayer()
@@ -121,15 +125,18 @@ export class DebrisLayer {
   }
 
   /** B23/T88 — deferred spawn: pieces queue and materialize ≤ SPAWN_BUDGET per
-   *  step (hull creation off the edit tick's critical path). For islands — no
-   *  caller needs the body handle back (ejecta use spawnDebris for velocity). */
-  spawnDeferred(voxels: IslandVoxel[]): void {
+   *  step (hull creation off the edit tick's critical path). Optional `vel` =
+   *  launch velocity applied on materialization (ejecta clumps, T89). */
+  spawnDeferred(
+    voxels: IslandVoxel[],
+    vel?: { vx: number; vy: number; vz: number; wx: number; wy: number; wz: number },
+  ): void {
     if (voxels.length === 0) return
     if (voxels.length <= MONOLITH_MAX) {
-      this.pendingSpawns.push(voxels)
+      this.pendingSpawns.push({ voxels, vel })
       return
     }
-    for (const a of this.fragment(voxels)) this.pendingSpawns.push(a)
+    for (const a of this.fragment(voxels)) this.pendingSpawns.push({ voxels: a, vel })
   }
 
   private fragment(voxels: IslandVoxel[]): IslandVoxel[][] {
@@ -374,11 +381,13 @@ export class DebrisLayer {
   /** step the local world; call once per sim tick AFTER the deterministic sim */
   step(world: ChunkStore, dt: number): void {
     this.tickNo++
-    // budgeted deferred spawns (island pieces) — hulls come up over a few ticks
+    // budgeted deferred spawns (island + ejecta pieces) — hulls come up over a
+    // few ticks; ejecta apply their stored launch velocity on materialization
     let spawned = 0
     while (this.pendingSpawns.length > 0 && spawned < SPAWN_BUDGET) {
-      const vs = this.pendingSpawns.shift()!
-      this.spawnPiece(vs)
+      const { voxels, vel } = this.pendingSpawns.shift()!
+      const b = this.spawnPiece(voxels)
+      if (b && vel) this.setVelocity(b, vel.vx, vel.vy, vel.vz, vel.wx, vel.wy, vel.wz)
       spawned++
     }
     this.streamColliders(world)
@@ -440,6 +449,26 @@ export class DebrisLayer {
   /** world chunks changed (deterministic side notifies) — rebuild if built */
   invalidateChunks(world: ChunkStore, chunkIndices: number[]): void {
     for (const ci of chunkIndices) if (this.chunkBodies.has(ci)) this.rebuildChunk(world, ci)
+  }
+
+  /** T89 — pre-build colliders around an incoming projectile (budgeted): the
+   *  detonation's debris then lands on warm colliders instead of paying the
+   *  build burst on the blast tick. LOCAL layer — no determinism concerns. */
+  prewarm(world: ChunkStore, vx: number, vy: number, vz: number, budget: number): void {
+    const pcx = vx >> 5, pcy = vy >> 5, pcz = vz >> 5
+    let built = 0
+    for (let dy = -1; dy <= 1 && built < budget; dy++)
+      for (let dz = -1; dz <= 1 && built < budget; dz++)
+        for (let dx = -1; dx <= 1 && built < budget; dx++) {
+          const cx = pcx + dx, cy = pcy + dy, cz = pcz + dz
+          if (cx < 0 || cy < 0 || cz < 0 || cx >= WORLD_CX || cz >= WORLD_CZ) continue
+          const ci = chunkIndex(cx, cy, cz)
+          this.chunkLastNeeded.set(ci, this.tickNo)
+          if (!this.chunkBodies.has(ci)) {
+            this.rebuildChunk(world, ci)
+            built++
+          }
+        }
   }
 
   private streamColliders(world: ChunkStore): void {

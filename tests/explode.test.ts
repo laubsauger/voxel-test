@@ -169,13 +169,15 @@ describe('explosion falloff zones (T55, B14, B16)', () => {
     sim.world.fillBox(90, 8, 100, 120, 30, 102, BRICK)
     sim.step()
     explodeSphere(sim, phys, 105, 18, 99, 14, 5) // blast in front of the wall
+    // T89 — ejecta hulls materialize via the layer's budgeted queue: step until
+    // drained (≤24/step), then read velocities right away (damping + contacts
+    // change them over later ticks; direction survives a tick of gravity).
+    sim.step()
+    sim.step()
     expect(phys.debris!.bodies.size).toBeGreaterThan(3)
     const cx = 105 * 0.1, cy = 18 * 0.1, cz = 99 * 0.1
     let outward = 0
     let total = 0
-    // read velocities IMMEDIATELY after the explode (damping + contacts change
-    // them in later ticks). Heavy clumps launch slower (T86 mass scaling) but
-    // the direction is preserved.
     for (const b of phys.debris!.bodies.values()) {
       const v = (b.body as B3Body).getLinearVelocity()
       const rx = b.px - cx, ry = b.py - cy, rz = b.pz - cz
@@ -196,6 +198,9 @@ describe('explosion falloff zones (T55, B14, B16)', () => {
     // deterministic clump cap (destruction.ts). The layer's local ACTIVE_CAP
     // (500) is far above this and never triggers here.
     expect(stats.ejectaBodies).toBe(MAX_EJECTA_BODIES)
+    // T89 — deferred hulls: drain the spawn queue (≤24/step), then all exist
+    sim.step()
+    sim.step()
     expect(phys.debris!.bodies.size).toBe(MAX_EJECTA_BODIES)
     phys.dispose()
   }, 30000)

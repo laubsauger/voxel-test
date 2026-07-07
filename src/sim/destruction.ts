@@ -23,8 +23,9 @@
  * sim → render outbox (see events.ts).
  */
 import type { Sim } from './loop'
-import { VOXEL_SIZE, WORLD_VX, WORLD_VZ } from '../world/chunks'
+import { VOXEL_SIZE, WORLD_VX, WORLD_VY, WORLD_VZ } from '../world/chunks'
 import { material } from './materials'
+import { snapshotRegion } from './connectivity'
 import { damagePlayersSphere } from './player'
 import type { IPhysicsWorld } from './iphysics'
 
@@ -129,39 +130,77 @@ export function explodeSphere(
   const loose: RemovedVoxel[] = []
   let vaporized = 0
 
-  // fixed scan order y→z→x (V2). Exposure checks read the store mid-scan:
+  // B23/T89 — the scan reads a LOCAL chunk-aware snapshot (one bulk copy) instead
+  // of ~30k per-voxel getVoxel calls (each a chunk lookup, with first-touch P18
+  // palette inflation and 6-way exposure probes at the rim — the scan dominated
+  // the bomb tick). Removals are mirrored into the snapshot, so the mid-scan
+  // exposure semantics ("earlier removals expose deeper voxels") stay
+  // bit-identical to the per-voxel version (V2/V3). Snapshot spans the box ±1
+  // for the rim's exposure probes; out-of-snapshot reads are world-bounds air.
+  const sx0 = Math.max(0, x0 - 1), sy0 = Math.max(0, y0 - 1), sz0 = Math.max(0, z0 - 1)
+  const snx = Math.min(WORLD_VX - 1, x1 + 1) - sx0 + 1
+  const sny = Math.min(WORLD_VY - 1, y1 + 1) - sy0 + 1
+  const snz = Math.min(WORLD_VZ - 1, z1 + 1) - sz0 + 1
+  if (snx <= 0 || sny <= 0 || snz <= 0) {
+    // blast box entirely outside the world (e.g. bomb fell past the kill plane
+    // and detonated below y=0) — nothing to remove, zero PRNG draws (matches
+    // the old per-voxel path: every getVoxel would have been out-of-bounds air)
+    sim.emit({
+      kind: 'explosion',
+      x: cx * VOXEL_SIZE,
+      y: cy * VOXEL_SIZE,
+      z: cz * VOXEL_SIZE,
+      r: r * VOXEL_SIZE,
+      power,
+      removedByMat: [],
+      sample: [],
+    })
+    return { removed: 0, vaporized: 0, ejectaBodies: 0, ejectaVoxels: 0 }
+  }
+  const snap = snapshotRegion(sim.world, sx0, sy0, sz0, snx, sny, snz)
+  const at = (x: number, y: number, z: number): number => {
+    const lx = x - sx0, ly = y - sy0, lz = z - sz0
+    if (lx < 0 || ly < 0 || lz < 0 || lx >= snx || ly >= sny || lz >= snz) return 0
+    return snap[lx + lz * snx + ly * snx * snz]
+  }
+  const clear = (x: number, y: number, z: number): void => {
+    snap[(x - sx0) + (z - sz0) * snx + (y - sy0) * snx * snz] = 0
+    sim.world.setVoxel(x, y, z, 0)
+  }
+
+  // fixed scan order y→z→x (V2). Exposure checks read the snapshot mid-scan:
   // earlier removals expose deeper voxels — deterministic, and exactly the
   // crumble-inward look we want at the crater rim.
   for (let y = y0; y <= y1; y++) {
     for (let z = z0; z <= z1; z++) {
       for (let x = x0; x <= x1; x++) {
-        const mat = sim.world.getVoxel(x, y, z)
+        const mat = at(x, y, z)
         if (mat === 0) continue
         const dx = x + 0.5 - cx, dy = y + 0.5 - cy, dz = z + 0.5 - cz
         const d2 = dx * dx + dy * dy + dz * dz
         if (d2 > r2) continue
         const q = ((1 - Math.sqrt(d2) / r) * power) / material(mat).strength
         if (q >= VAPORIZE_RATIO) {
-          sim.world.setVoxel(x, y, z, 0)
+          clear(x, y, z)
           removedByMat[mat]++
           vaporized++
         } else if (q >= 1) {
-          sim.world.setVoxel(x, y, z, 0)
+          clear(x, y, z)
           removedByMat[mat]++
           mid.push({ x, y, z, mat })
         } else if (q >= LOOSEN_RATIO) {
           // OUTER: knock exposed voxels loose with distance-tapered probability
           const exposed =
-            sim.world.getVoxel(x - 1, y, z) === 0 ||
-            sim.world.getVoxel(x + 1, y, z) === 0 ||
-            sim.world.getVoxel(x, y - 1, z) === 0 ||
-            sim.world.getVoxel(x, y + 1, z) === 0 ||
-            sim.world.getVoxel(x, y, z - 1) === 0 ||
-            sim.world.getVoxel(x, y, z + 1) === 0
+            at(x - 1, y, z) === 0 ||
+            at(x + 1, y, z) === 0 ||
+            at(x, y - 1, z) === 0 ||
+            at(x, y + 1, z) === 0 ||
+            at(x, y, z - 1) === 0 ||
+            at(x, y, z + 1) === 0
           if (!exposed) continue
           const p = (LOOSEN_MAX_P * (q - LOOSEN_RATIO)) / (1 - LOOSEN_RATIO)
           if (sim.prng.next() < p) {
-            sim.world.setVoxel(x, y, z, 0)
+            clear(x, y, z)
             removedByMat[mat]++
             loose.push({ x, y, z, mat })
           }
@@ -257,7 +296,10 @@ function spawnEjecta(
       }
     }
 
-    const body = phys.spawnDebrisBody(sim, clump)
+    // T89 — DEFERRED spawn with velocity when the backend supports it (no hull
+    // creation in the blast tick); legacy backends spawn immediately below.
+    const deferred = phys.spawnDebrisWithVelocity !== undefined
+    const body = deferred ? null : phys.spawnDebrisBody(sim, clump)
     // radial velocity FROM the blast center at the clump centroid, upward
     // bias, density-scaled (heavy lobs, light flies) — B13's fix for
     // "particles rain up/down instead of radiating from the blast".
@@ -297,7 +339,8 @@ function spawnEjecta(
     const wvx = (sim.prng.next() - 0.5) * 10
     const wvy = (sim.prng.next() - 0.5) * 10
     const wvz = (sim.prng.next() - 0.5) * 10
-    if (body) phys.setBodyVelocity(body, dx * speed, vy, dz * speed, wvx, wvy, wvz)
+    if (deferred) phys.spawnDebrisWithVelocity!(sim, clump, dx * speed, vy, dz * speed, wvx, wvy, wvz)
+    else if (body) phys.setBodyVelocity(body, dx * speed, vy, dz * speed, wvx, wvy, wvz)
     bodies++
     voxels += clump.length
   }
