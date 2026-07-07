@@ -50,7 +50,7 @@ export class CombatHud {
     this.el = document.createElement('div')
     this.el.className = 'bb-combat'
     this.el.innerHTML = `
-      <div class="bb-hp"><div class="bb-hp-fill"></div><span class="bb-hp-text">100</span></div>
+      <div class="bb-hp"><div class="bb-hp-track"><div class="bb-hp-fill"></div></div><span class="bb-hp-text">100</span></div>
       <div class="bb-killfeed"></div>
       <div class="bb-dmg-arrows"></div>
       <div class="bb-death" style="display:none">

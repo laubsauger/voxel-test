@@ -1347,10 +1347,11 @@ body.bb-cinematic .three-inspector {
 
 /* T95 — combat HUD --------------------------------------------------------- */
 .bb-combat { position: absolute; inset: 0; pointer-events: none; font-family: 'Chakra Petch', ui-monospace, monospace; }
-.bb-hp { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); width: 220px; height: 10px; background: rgba(10,13,18,.72); border: 1px solid #2a303c; border-radius: 3px; }
-.bb-hp-fill { height: 100%; width: 100%; background: #d7dee9; border-radius: 2px; transition: width .15s ease; }
+.bb-hp { position: fixed; left: 12px; bottom: 88px; width: 116px; box-sizing: border-box; display: flex; align-items: center; gap: 7px; padding: 5px 8px; background: rgba(11, 15, 21, 0.48); border: 1px solid var(--stroke-soft); border-radius: 9px; }
+.bb-hp-track { flex: 1; height: 6px; background: rgba(255, 255, 255, 0.12); border-radius: 3px; overflow: hidden; }
+.bb-hp-fill { height: 100%; width: 100%; background: #d7dee9; border-radius: 3px; transition: width .15s ease; }
 .bb-hp-fill.bb-hp-low { background: #e04b3a; }
-.bb-hp-text { position: absolute; right: -34px; top: -5px; font-size: 13px; color: #d7dee9; text-shadow: 0 1px 2px #000; }
+.bb-hp-text { min-width: 22px; text-align: right; font-size: 10px; font-weight: 600; color: #d7dee9; letter-spacing: 0.05em; }
 .bb-killfeed { position: absolute; top: 64px; right: 18px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
 .bb-feed-line { background: rgba(10,13,18,.72); border: 1px solid #2a303c; border-radius: 3px; padding: 3px 8px; font-size: 12px; color: #aeb7c4; transition: opacity .4s; }
 .bb-feed-me { color: #ffb020; border-color: #6b5210; }
