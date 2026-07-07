@@ -161,7 +161,6 @@ export class LodManager {
 
   /** downsample the cell's voxels, coarse-mesh them, add the meshes to the scene */
   private buildCell(ci: number): void {
-    const __t0 = performance.now()
     const cellX = ci % CELLS_X
     const cellZ = (ci / CELLS_X) | 0
     const vx0 = cellX * CELL_VX
@@ -222,7 +221,6 @@ export class LodManager {
     const gy = Math.min(maxBy, gridY)
     const req: LodMeshRequest = { ci, gen: cell.gen!, grid: grid.buffer as ArrayBuffer, gxz: GRID, gy }
     this.worker.postMessage(req, [grid.buffer as ArrayBuffer])
-    if (performance.now() - __t0 > 15) console.warn("[perf] lod buildCell " + (performance.now() - __t0).toFixed(0) + "ms")
   }
 
   private makeMesh(m: ChunkMesh, vx0: number, vz0: number, material: Material): Mesh | undefined {

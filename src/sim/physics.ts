@@ -919,11 +919,6 @@ export class PhysicsWorld implements IPhysicsWorld {
    * built/evicted in ascending-ci order (budgeted; the load burst is unbudgeted).
    */
   private streamColliders(sim: Sim): void {
-    const __s0 = performance.now()
-    this.__streamInner(sim)
-    if (performance.now() - __s0 > 15) console.warn("[perf] streamColliders " + (performance.now() - __s0).toFixed(0) + "ms")
-  }
-  private __streamInner(sim: Sim): void {
     const world = sim.world
     const chunkM = CHUNK * VOXEL_SIZE
     // B36 — throttle: the bubble rasterise + set-diff is the single biggest CPU
