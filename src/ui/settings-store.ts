@@ -19,6 +19,35 @@ export interface Settings {
     /** vertical fov, degrees */
     fov: number
   }
+  /**
+   * Advanced per-pass graphics dials (pipeline isolation/debugging).
+   * Defaults reproduce the quality-preset visuals EXACTLY. Booleans AND with
+   * the preset: they can disable a pass the preset enables, never force one
+   * on. Live-applied by WorldRenderer via its window.__bbGfx handle (the
+   * panel forwards gfx.* writes there); `textures` applies on next boot.
+   */
+  gfx: {
+    /** sun/moon CSM shadows */
+    shadows: boolean
+    /** CSM shadow map resolution; 'auto' = leave the preset's map alone */
+    shadowMapSize: 'auto' | '1024' | '2048' | '4096'
+    /** CSM cascade count (current default 1, see T94) */
+    cascades: '1' | '2' | '3'
+    /** GTAO pass */
+    ao: boolean
+    /** GTAO blend strength, % of the stock 0.85 blend (0..200, ≥118 = full) */
+    aoIntensity: number
+    /** GTAO sample radius, % of the stock 0.55 m (25..200) */
+    aoRadius: number
+    bloom: boolean
+    /** P27 final FXAA pass */
+    fxaa: boolean
+    clouds: boolean
+    /** render resolution, % of the preset pixel-ratio cap (50..200) */
+    renderScale: number
+    /** T29 PBR texture arrays — material is baked, applies on next boot */
+    textures: boolean
+  }
   audio: {
     master: number
     music: number
@@ -47,6 +76,19 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   graphics: { quality: 'high', fov: 75 },
+  gfx: {
+    shadows: true,
+    shadowMapSize: 'auto',
+    cascades: '1',
+    ao: true,
+    aoIntensity: 100,
+    aoRadius: 100,
+    bloom: true,
+    fxaa: true,
+    clouds: true,
+    renderScale: 100,
+    textures: true,
+  },
   audio: { master: 80, music: 60, sfx: 80, muted: false },
   controls: { sensitivity: 1.0, invertY: false },
   gameplay: { camera: 'fp' },

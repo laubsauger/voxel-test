@@ -21,7 +21,7 @@ import {
   type Scene,
   type WebGPURenderer,
 } from 'three/webgpu'
-import { float, mix, mrt, normalView, output, pass, renderOutput, vec3, vec4 } from 'three/tsl'
+import { float, mix, mrt, normalView, output, pass, renderOutput, uniform, vec3, vec4 } from 'three/tsl'
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { ao } from 'three/addons/tsl/display/GTAONode.js'
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js'
@@ -45,6 +45,13 @@ import {
 import { createChunkTextures, type ChunkTextures } from './texture-arrays'
 import { DebrisParticles } from './particles'
 import { MATERIALS } from './materials'
+// gfx dials — the store module is DOM-free plain data; reading persisted
+// settings.gfx.* here follows the documented cross-track localStorage
+// contract (settings-store header). Render layer only — no sim state (V6).
+import { SettingsStore, type Settings } from '../ui/settings-store'
+
+/** advanced per-pass pipeline dials, persisted as settings.gfx.* (settings-store) */
+export type GfxSettings = Settings['gfx']
 
 export interface WorldRendererOptions {
   renderer: WebGPURenderer
@@ -110,7 +117,12 @@ const FOCUS_MAX_LEAD = 12.8
 export class WorldRenderer {
   readonly chunks: ChunkMeshManager
   private readonly lod: LodManager
-  readonly sun: DirectionalLight
+  /** the sun/moon light — REPLACED wholesale on CSM rebuilds (gfx dials), so
+   *  always read through this getter, never cache the instance */
+  get sun(): DirectionalLight {
+    return this._sun
+  }
+  private _sun: DirectionalLight
   /** T14: debris/dust bursts, render-only (V6) */
   readonly particles: DebrisParticles
   /**
@@ -147,11 +159,38 @@ export class WorldRenderer {
   private lampScanCursor = 0
   private readonly lampClusters = new Map<number, { x: number; y: number; z: number; n: number }>()
   private lampPickTimer = 0
-  private readonly csm: CSMShadowNode
-  private readonly pipeline: RenderPipeline | null
+  private csm!: CSMShadowNode
+  private pipeline: RenderPipeline | null = null
   private readonly atmosphere: ReturnType<typeof createAtmosphere> | null
   private readonly clouds: BlockyClouds | null
   private aoPass: ReturnType<typeof ao> | null = null
+  // --- gfx dials (settings.gfx.*) — live per-pass toggles/dials ------------
+  /** current dial values; defaults reproduce the preset visuals exactly */
+  private readonly gfx: GfxSettings
+  /** preset-granted passes — gfx booleans AND with these, never force on */
+  private readonly presetAo: boolean
+  private readonly presetBloom: boolean
+  /** preset had any post pipeline at all (fxaa rides it) */
+  private readonly postAvailable: boolean
+  /** false = bypass the post pipeline (direct renderer.render) */
+  private postEnabled = false
+  // Persistent pass nodes + per-combination wiring cache. Pass nodes are
+  // NEVER recreated on dial changes: three's PassNode/GTAONode/BloomNode
+  // disposal does not release everything (measured ~9 leaked textures per
+  // ao off/on cycle via the CDP probe), so toggles re-wire the pipeline
+  // output from cached graphs instead. An unreferenced pass node never
+  // renders (no GPU cost) and its targets just idle — bounded by the 8
+  // possible combinations instead of growing per toggle.
+  private scenePass: ReturnType<typeof pass> | null = null
+  private readonly bloomPasses = new Map<string, ReturnType<typeof bloom>>()
+  private readonly postConfigs = new Map<string, { node: Node; fxaa: boolean }>()
+  /** GTAO blend factor as a uniform so the intensity dial is recompile-free */
+  private readonly aoBlend = uniform(0.85)
+  /** pixelRatio the quality preset chose — renderScale is a % of this */
+  private basePixelRatio = 1
+  /** shadow map size 'auto' resolves to (the preset's/boot value) — kept
+   *  separately because a manual size override mutates the base shadow */
+  private autoShadowMapSize = 2048
   private readonly renderer: WebGPURenderer
   private readonly scene: Scene
   private readonly camera: PerspectiveCamera
@@ -169,6 +208,29 @@ export class WorldRenderer {
     this.camera = opts.camera
     this.world = opts.world
 
+    // gfx dials — persisted values via the settings-store contract (defaults
+    // when nothing is stored ⇒ identical visuals). Live changes arrive through
+    // the __bbGfx handle below (the settings panel forwards gfx.* writes).
+    const stored = new SettingsStore()
+    this.gfx = {
+      shadows: stored.get('gfx.shadows'),
+      shadowMapSize: stored.get('gfx.shadowMapSize'),
+      cascades: stored.get('gfx.cascades'),
+      ao: stored.get('gfx.ao'),
+      aoIntensity: stored.get('gfx.aoIntensity'),
+      aoRadius: stored.get('gfx.aoRadius'),
+      bloom: stored.get('gfx.bloom'),
+      fxaa: stored.get('gfx.fxaa'),
+      clouds: stored.get('gfx.clouds'),
+      renderScale: stored.get('gfx.renderScale'),
+      textures: stored.get('gfx.textures'),
+    }
+    this.presetAo = opts.ao !== false
+    this.presetBloom = opts.bloom !== false
+    this.postAvailable = this.presetAo || this.presetBloom
+    // preset pixelRatio was applied by game.ts before construction
+    this.basePixelRatio = this.renderer.getPixelRatio()
+
     // T58: initial cycle state at tick 0 (default 15:00 golden afternoon —
     // ~the old static (85,62,38) sun) — lights and sky boot coherent.
     this.smoothedHours = this.cycle.hoursAt(0)
@@ -179,11 +241,12 @@ export class WorldRenderer {
     // plays both bodies: sun by day, moon by night (dim, blue-ish); the
     // direction swap happens while intensity ≈ 0 at twilight, so it is never
     // visible and shadow-pass cost stays identical to the static build.
-    this.sun = new DirectionalLight(this.cycleState.lightColor, this.cycleState.lightIntensity)
+    this._sun = new DirectionalLight(this.cycleState.lightColor, this.cycleState.lightIntensity)
     this.committedLightDir.copy(this.cycleState.lightDir)
     this.sun.position.copy(this.cycleState.lightDir).multiplyScalar(LIGHT_DIST)
-    this.sun.castShadow = true
-    this.sun.shadow.mapSize.set(2048, 2048)
+    this.sun.castShadow = this.gfx.shadows // gfx dial (default true)
+    const mapSize = this.gfx.shadowMapSize === 'auto' ? 2048 : Number(this.gfx.shadowMapSize)
+    this.sun.shadow.mapSize.set(mapSize, mapSize)
     // B4: chunk material renders front faces into the shadow map (see
     // chunk-material.ts) — depth bias stays tiny (CSMShadowNode scales it
     // ×(i+1) per cascade), acne is handled by normalBias instead, which we
@@ -203,11 +266,9 @@ export class WorldRenderer {
     // (draw submission), still pass-count-bound. One 2048² map over the full
     // 110m ≈ 5.4cm texels — same order as the old far slice. Removes another
     // whole scene traversal + shadow render per frame. Visual check pending.
-    this.csm = new CSMShadowNode(this.sun, { cascades: 1, maxFar: 110, mode: 'practical' })
-    this.csm.fade = true
-    // custom shadow node hook (not yet in @types/three)
-    ;(this.sun.shadow as DirectionalLightShadow & { shadowNode?: CSMShadowNode }).shadowNode =
-      this.csm
+    // gfx dials: cascade count is a live setting now (default '1' = T94);
+    // live map-size/cascade changes go through rebuildSunAndCsm().
+    this.buildCsm()
     opts.scene.add(this.sun)
     opts.scene.add(this.sun.target)
     // sky/ground bounce — slightly warm ground for the afternoon mood (T30).
@@ -235,7 +296,7 @@ export class WorldRenderer {
     // loudly (unhandled → pageerror → smoke fails) instead of a silent
     // flat look.
     const textures: ChunkTextures | undefined =
-      opts.textures !== false ? createChunkTextures() : undefined
+      opts.textures !== false && this.gfx.textures ? createChunkTextures() : undefined
 
     // chunk meshing pipeline (T6/T7/T9)
     this.chunks = new ChunkMeshManager({
@@ -299,6 +360,7 @@ export class WorldRenderer {
     if (opts.clouds !== false) {
       this.clouds = new BlockyClouds()
       this.clouds.apply(this.cycleState)
+      this.clouds.group.visible = this.gfx.clouds // gfx dial (default true)
       opts.scene.add(this.clouds.group)
     } else {
       this.clouds = null
@@ -328,53 +390,230 @@ export class WorldRenderer {
       info: this.renderer.info,
       lampCount: () => this.lampPositions.length,
       regionCount: () => this.chunks.regionMeshCount,
-      sun: this.sun,
+      // live getter — the sun light is REPLACED on gfx CSM rebuilds
+      get sun(): DirectionalLight {
+        return self.sun
+      },
     }
 
-    // post stack (T8 bloom, T30 GTAO): scene → AO → bloom → tonemap.
-    // RenderPipeline applies renderer.toneMapping (ACES) + output color
-    // space once on the final node — HDR is preserved through AO and bloom.
-    const wantAo = opts.ao !== false
-    if (opts.bloom !== false || wantAo) {
-      const scenePass = pass(opts.scene, opts.camera)
-      const sceneColor = scenePass.getTextureNode('output')
-      let lit: Node<'vec4'> = sceneColor
-      if (wantAo) {
+    // post stack (T8 bloom, T30 GTAO, P27 FXAA) — built (and live-rebuilt on
+    // gfx dial changes) by buildPost()
+    this.buildPost()
+    if (this.gfx.renderScale !== 100) this.applyRenderScale()
+
+    // gfx dials live-apply handle: the settings panel (and CDP probes) call
+    // __bbGfx.apply({ ao: false, ... }) — same debug-handle pattern as
+    // __bbCycle. Render-layer only (V6); persistence stays in SettingsStore.
+    ;(globalThis as { __bbGfx?: unknown }).__bbGfx = {
+      apply: (patch: Partial<GfxSettings>) => this.applyGfx(patch),
+      state: () => ({ ...this.gfx }),
+    }
+  }
+
+  /**
+   * gfx dials: live shadow map-size / cascade change. CSM clones the sun's
+   * shadow per cascade at its lazy _init, so both changes need a fresh
+   * CSMShadowNode — and the SUN LIGHT ITSELF is replaced along with it.
+   * Merely swapping shadow.shadowNode is racy: the lighting cacheKey (light
+   * id + castShadow, see LightsNode.customCacheKey) would return to an
+   * already-seen value and cached compiled pipelines that still bind the
+   * DISPOSED old node get reused. A new light id forces a never-seen
+   * cacheKey → every lit material deterministically rebuilds against the
+   * new node. One full recompile per manual dial change — acceptable.
+   */
+  private rebuildSunAndCsm(): void {
+    const old = this._sun
+    // CSMShadowNode.dispose() detaches its cascade lights but leaves their
+    // cloned shadow maps alive — dispose them or every rebuild leaks maps
+    for (const l of this.csm.lights) {
+      l.shadow?.map?.dispose()
+      if (l.shadow) l.shadow.map = null
+    }
+    this.csm.dispose()
+    this.scene.remove(old.target)
+    this.scene.remove(old)
+    old.dispose() // frees the base shadow map + fires lighting-node cleanup
+
+    const size =
+      this.gfx.shadowMapSize === 'auto' ? this.autoShadowMapSize : Number(this.gfx.shadowMapSize)
+    this._sun = new DirectionalLight(old.color, old.intensity)
+    this._sun.position.copy(old.position)
+    this._sun.castShadow = this.gfx.shadows
+    this._sun.shadow.mapSize.set(size, size)
+    // same bias tuning as construction (B4) — normalBias rescales per
+    // cascade in render() once the new CSM node initializes
+    this._sun.shadow.bias = -0.00005
+    this._sun.shadow.normalBias = 0.03
+    this.scene.add(this._sun)
+    this.scene.add(this._sun.target)
+    this.buildCsm()
+  }
+
+  /** build the CSMShadowNode for the current gfx dials (cascade count) */
+  private buildCsm(): void {
+    this.csm = new CSMShadowNode(this.sun, {
+      cascades: Number(this.gfx.cascades),
+      maxFar: 110,
+      mode: 'practical',
+    })
+    this.csm.fade = true
+    // custom shadow node hook (not yet in @types/three)
+    ;(this.sun.shadow as DirectionalLightShadow & { shadowNode?: CSMShadowNode }).shadowNode =
+      this.csm
+    this.csmBiasTuned = false
+  }
+
+  /**
+   * (Re)wire the post chain for the current gfx dials: scene → AO → bloom →
+   * tonemap → FXAA. RenderPipeline applies renderer.toneMapping (ACES) +
+   * output color space once on the final node — HDR is preserved through AO
+   * and bloom. gfx booleans AND with the quality preset (a pass the preset
+   * disabled stays off). With every pass off the pipeline is bypassed
+   * entirely (direct renderer.render, which uses the renderer's MSAA).
+   * Pass nodes persist across changes (see postConfigs) — a toggle swaps
+   * the pipeline outputNode, never disposes/recreates GPU targets.
+   */
+  private buildPost(): void {
+    const wantAo = this.presetAo && this.gfx.ao
+    const wantBloom = this.presetBloom && this.gfx.bloom
+    // fxaa rides the post pipeline — never creates one on a preset without it
+    const wantFxaa = this.postAvailable && this.gfx.fxaa
+    // AO dials are uniforms — live regardless of wiring
+    this.aoBlend.value = Math.min(1, 0.85 * (this.gfx.aoIntensity / 100))
+    if (this.aoPass) this.aoPass.radius.value = 0.55 * (this.gfx.aoRadius / 100)
+    if (!wantAo && !wantBloom && !wantFxaa) {
+      this.postEnabled = false
+      return
+    }
+    if (!this.pipeline) this.pipeline = new RenderPipeline(this.renderer)
+    const key = `${wantAo}|${wantBloom}|${wantFxaa}`
+    let cfg = this.postConfigs.get(key)
+    if (!cfg) {
+      cfg = this.wirePost(wantAo, wantBloom, wantFxaa)
+      this.postConfigs.set(key, cfg)
+    }
+    this.pipeline.outputColorTransform = !cfg.fxaa
+    this.pipeline.outputNode = cfg.node
+    this.pipeline.needsUpdate = true
+    this.postEnabled = true
+  }
+
+  /** build one output-node graph for a pass combination (cached by caller) */
+  private wirePost(
+    wantAo: boolean,
+    wantBloom: boolean,
+    wantFxaa: boolean,
+  ): { node: Node; fxaa: boolean } {
+    if (!this.scenePass) {
+      this.scenePass = pass(this.scene, this.camera)
+      if (this.presetAo) {
         // half-res GTAO from depth + MRT view normals (see SSAO skill notes:
         // radius in meters and well above one voxel per B8, blend kept
-        // partial so direct sun is never crushed to grey)
-        scenePass.setMRT(mrt({ output, normal: normalView }))
+        // partial so direct sun is never crushed to grey). MRT stays attached
+        // while the ao dial is off (pass graph stays stable) — the GTAO node
+        // itself only renders when a wiring references it.
+        this.scenePass.setMRT(mrt({ output, normal: normalView }))
         const aoPass = ao(
-          scenePass.getTextureNode('depth'),
-          scenePass.getTextureNode('normal'),
-          opts.camera,
+          this.scenePass.getTextureNode('depth'),
+          this.scenePass.getTextureNode('normal'),
+          this.camera,
         )
         // B37 — FULL-res GTAO (was 0.5). Half-res AO upscaled onto high-frequency
         // voxel geometry was a prime source of the shimmering moiré at distance.
         // The frame is CPU-bound (three.js object processing), so the GPU has
         // ample headroom for the full-res AO pass — no fps cost on the target.
         aoPass.resolutionScale = 1.0
-        aoPass.radius.value = 0.55
+        aoPass.radius.value = 0.55 * (this.gfx.aoRadius / 100)
         aoPass.thickness.value = 0.5
         aoPass.scale.value = 1.1
         this.aoPass = aoPass
-        const visibility = mix(float(1), aoPass.getTextureNode().r, float(0.85))
-        lit = vec4(sceneColor.rgb.mul(vec3(visibility)), sceneColor.a)
       }
-      this.pipeline = new RenderPipeline(opts.renderer)
-      // threshold 1.0: only true HDR sources bloom (sun disc, lamps,
-      // specular hits) — keeps white plaster from glowing
-      const litHdr = opts.bloom !== false ? lit.add(bloom(lit, 0.35, 0.35, 1.0)) : lit
+    }
+    const sceneColor = this.scenePass.getTextureNode('output')
+    let lit: Node<'vec4'> = sceneColor
+    if (wantAo && this.aoPass) {
+      // blend factor is a uniform (aoBlend): intensity dial needs no rewiring.
+      // Clamped ≤ 1 in buildPost (>1 would push visibility negative and
+      // break the tonemap).
+      const visibility = mix(float(1), this.aoPass.getTextureNode().r, this.aoBlend)
+      lit = vec4(sceneColor.rgb.mul(vec3(visibility)), sceneColor.a)
+    }
+    // threshold 1.0: only true HDR sources bloom (sun disc, lamps,
+    // specular hits) — keeps white plaster from glowing. One bloom chain per
+    // input variant (with/without AO), reused across re-toggles.
+    let litHdr = lit
+    if (wantBloom) {
+      const bloomKey = wantAo ? 'ao' : 'plain'
+      let bloomPass = this.bloomPasses.get(bloomKey)
+      if (!bloomPass) {
+        bloomPass = bloom(lit, 0.35, 0.35, 1.0)
+        this.bloomPasses.set(bloomKey, bloomPass)
+      }
+      litHdr = lit.add(bloomPass)
+    }
+    if (wantFxaa) {
       // P27 — final FXAA anti-alias pass. The scene renders WITHOUT MSAA (the
       // post pipeline bypasses the renderer's antialias), so voxel/road edges
       // and the thin tower spandrels aliased + shimmered (moiré). FXAA needs the
       // LDR image, so tone-map manually via renderOutput here and turn OFF the
       // pipeline's own output transform to avoid double tone-mapping. GPU-cheap
       // and the frame is CPU-bound, so it's effectively free.
-      this.pipeline.outputColorTransform = false
-      this.pipeline.outputNode = fxaa(renderOutput(litHdr))
-    } else {
-      this.pipeline = null
+      return { node: fxaa(renderOutput(litHdr)), fxaa: true }
+    }
+    return { node: litHdr, fxaa: false }
+  }
+
+  /** renderScale dial: % of the pixelRatio the quality preset chose */
+  private applyRenderScale(): void {
+    this.renderer.setPixelRatio(this.basePixelRatio * (this.gfx.renderScale / 100))
+    this.renderer.setSize(window.innerWidth, window.innerHeight)
+  }
+
+  /**
+   * Live-apply gfx dial changes (window.__bbGfx.apply / settings panel).
+   * ao/bloom/fxaa rebuild the post chain; shadowMapSize/cascades schedule the
+   * two-phase CSM rebuild; the rest are uniform/visibility/pixelRatio updates.
+   * `textures` is baked into the chunk material — applies on next boot.
+   */
+  applyGfx(patch: Partial<GfxSettings>): void {
+    const prev = { ...this.gfx }
+    Object.assign(this.gfx, patch)
+    const g = this.gfx
+    if (g.shadowMapSize !== prev.shadowMapSize || g.cascades !== prev.cascades) {
+      this.rebuildSunAndCsm() // also applies g.shadows via castShadow
+    } else if (g.shadows !== prev.shadows) {
+      // LightsNode hashes castShadow — flipping it recompiles lighting.
+      // (Re-enabling reuses the same CSM node, so pipeline-cache reuse of
+      // the returning cacheKey is correct here, unlike the rebuild case.)
+      this.sun.castShadow = g.shadows
+    }
+    if (g.ao !== prev.ao || g.bloom !== prev.bloom || g.fxaa !== prev.fxaa) {
+      this.buildPost()
+    } else if (this.aoPass) {
+      // dial-only updates — no rebuild needed
+      this.aoBlend.value = Math.min(1, 0.85 * (g.aoIntensity / 100))
+      this.aoPass.radius.value = 0.55 * (g.aoRadius / 100)
+    }
+    if (this.clouds) this.clouds.group.visible = g.clouds
+    if (g.renderScale !== prev.renderScale) this.applyRenderScale()
+  }
+
+  /**
+   * Re-assert gfx dials after Game.applyGraphics applies a quality preset
+   * (which stomps pixelRatio and the base shadow map size). Called by
+   * game.ts at the end of applyGraphics — keeps preset/fov changes from
+   * silently resetting the advanced dials.
+   */
+  reapplyGfxOverrides(): void {
+    this.basePixelRatio = this.renderer.getPixelRatio()
+    if (this.gfx.renderScale !== 100) this.applyRenderScale()
+    // the preset just wrote its size into the base shadow — that's what
+    // 'auto' means from here on (a manual override mutates the base)
+    this.autoShadowMapSize = this.sun.shadow.mapSize.x
+    if (this.gfx.shadowMapSize !== 'auto') {
+      const size = Number(this.gfx.shadowMapSize)
+      const current = this.csm.lights[0]?.shadow?.mapSize.x ?? this.sun.shadow.mapSize.x
+      if (current !== size) this.rebuildSunAndCsm()
     }
   }
 
@@ -569,9 +808,9 @@ export class WorldRenderer {
     }
   }
 
-  /** renders the scene (through the bloom pipeline when enabled) */
+  /** renders the scene (through the post pipeline when enabled) */
   render(): void {
-    if (this.pipeline) this.pipeline.render()
+    if (this.postEnabled && this.pipeline) this.pipeline.render()
     else this.renderer.render(this.scene, this.camera)
     // B4: CSMShadowNode clones the sun shadow per cascade lazily on first
     // render and only scales `bias` ×(i+1) — scale normalBias to match once
@@ -597,9 +836,16 @@ export class WorldRenderer {
     this.csm.dispose()
     this.clouds?.dispose()
     this.aoPass?.dispose()
+    this.scenePass?.dispose()
+    for (const b of this.bloomPasses.values()) b.dispose()
+    this.bloomPasses.clear()
+    this.postConfigs.clear()
     for (const l of this.lampLights) l.removeFromParent()
     if ((globalThis as { __bbCycle?: unknown }).__bbCycle) {
       delete (globalThis as { __bbCycle?: unknown }).__bbCycle
+    }
+    if ((globalThis as { __bbGfx?: unknown }).__bbGfx) {
+      delete (globalThis as { __bbGfx?: unknown }).__bbGfx
     }
   }
 }

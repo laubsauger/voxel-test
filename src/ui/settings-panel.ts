@@ -71,6 +71,15 @@ export class SettingsPanel {
     this.body = this.el.querySelector('.bb-set-body') as HTMLElement
     closeBtn.addEventListener('click', () => this.onClose?.())
     root.appendChild(this.el)
+    // gfx.* dials live-apply through the renderer's __bbGfx debug handle:
+    // the panel has no Game reference and main.ts wiring is preset-only.
+    // store.set (persistence) happens in the control as usual; this forwards
+    // the change to the live WorldRenderer when one exists.
+    store.subscribe('*', (path, value) => {
+      if (!path.startsWith('gfx.')) return
+      const gfx = (globalThis as { __bbGfx?: { apply(p: Record<string, unknown>): void } }).__bbGfx
+      gfx?.apply({ [path.slice('gfx.'.length)]: value })
+    })
     this.showTab('graphics')
   }
 
@@ -206,9 +215,47 @@ export class SettingsPanel {
       sync()
       this.row('Fullscreen', b)
     }
+    // ---- advanced per-pass dials (settings.gfx.*, live via __bbGfx) --------
+    this.section('Advanced — per-pass dials')
+    this.row('Shadows', this.toggle('gfx.shadows'))
+    this.row(
+      'Shadow map',
+      this.seg(
+        [
+          ['auto', 'Auto'],
+          ['1024', '1k'],
+          ['2048', '2k'],
+          ['4096', '4k'],
+        ],
+        'gfx.shadowMapSize',
+      ),
+    )
+    this.row(
+      'Cascades',
+      this.seg(
+        [
+          ['1', '1'],
+          ['2', '2'],
+          ['3', '3'],
+        ],
+        'gfx.cascades',
+      ),
+    )
+    this.row('Ambient occlusion', this.toggle('gfx.ao'))
+    const [aoI, aoIV] = this.slider('gfx.aoIntensity', 0, 200, 5, (v) => `${v}%`)
+    this.row('AO intensity', aoI, aoIV)
+    const [aoR, aoRV] = this.slider('gfx.aoRadius', 25, 200, 5, (v) => `${v}%`)
+    this.row('AO radius', aoR, aoRV)
+    this.row('Bloom', this.toggle('gfx.bloom'))
+    this.row('FXAA', this.toggle('gfx.fxaa'))
+    this.row('Clouds', this.toggle('gfx.clouds'))
+    const [rs, rsV] = this.slider('gfx.renderScale', 50, 200, 5, (v) => `${v}%`)
+    this.row('Render scale', rs, rsV)
+    this.row('Textures', this.toggle('gfx.textures'))
     const note = document.createElement('div')
     note.className = 'bb-set-section-title'
-    note.textContent = 'Preset maps resolution + shadows live · post/texture/cloud changes apply on next boot'
+    note.textContent =
+      'Preset maps resolution + shadows live · advanced dials apply live within the preset (textures on next boot)'
     this.body.appendChild(note)
   }
 

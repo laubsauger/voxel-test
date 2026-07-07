@@ -329,6 +329,9 @@ export class Game {
     }
     // NOTE: bloom on/off is baked into the WorldRenderer pipeline at creation
     // (render pipeline is owned by the perf track) — applies on next boot.
+    // gfx dials (settings.gfx.*) re-assert after the preset stomps
+    // pixelRatio / shadow map size — see WorldRenderer.reapplyGfxOverrides.
+    this.world.reapplyGfxOverrides()
   }
 
   /**
