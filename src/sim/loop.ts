@@ -23,6 +23,11 @@ const EMPTY_EVENTS: SimEvent[] = []
 export class Sim {
   tick = 0
   nextEntityId = 1
+  /** T86/V17 — true in lockstep MP sessions, set identically on every peer
+   *  BEFORE tick 0 (so branching on it is deterministic). Ops use it to pick
+   *  SP-only behaviour that would desync under MP — e.g. LOCAL rubble may
+   *  occlude shots' world edits only when no peers exist. */
+  lockstep = false
   readonly prng: Prng
   readonly world = new ChunkStore()
   readonly queue = new CommandQueue()

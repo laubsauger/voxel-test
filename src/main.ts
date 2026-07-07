@@ -664,6 +664,7 @@ async function buildMpGame(seed: number): Promise<Game> {
     graphics: { quality: store.get('graphics.quality'), fov: store.get('graphics.fov') },
     holdTicks: true, // sim stays pristine at tick 0 until attachNet (V2)
   }).catch((e: unknown) => die(`mp boot failed: ${e instanceof Error ? e.message : String(e)}`))
+  g.sim.lockstep = true // T86/V17 — every peer sets this before tick 0 (deterministic)
   wireGame(g)
   await mpPre.done()
   return g

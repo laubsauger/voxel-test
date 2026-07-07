@@ -70,6 +70,11 @@ const NUM_BP_LAYERS = 2
 
 export const GRAVITY_Y = -9.81
 
+/** B32/T87 — stress/coarse collapse analysis flushes every N ticks (fixed,
+ *  deterministic schedule): a machine gun pays the analysis once per window,
+ *  not per shot. ~6 ticks = 100ms collapse latency, imperceptible. */
+export const STRESS_INTERVAL = 6
+
 // ---------------------------------------------------------------------------
 // T40 — destruction feel tuning
 // ---------------------------------------------------------------------------
@@ -452,46 +457,40 @@ export class PhysicsWorld implements IPhysicsWorld {
     this.debris?.invalidateChunks(sim.world, drained)
     const check = this.pendingConnectivity.concat(drained)
     this.pendingConnectivity = []
-    if (check.length === 0) return
+    // NOTE: no early return on empty `check` — a queued stress/coarse flush must
+    // still fire on its scheduled tick even when no chunk went dirty this tick.
+    if (check.length === 0 && this.pendingStress.length === 0) return
 
-    const region = chunkUnionRegion(check, CONNECTIVITY_MARGIN)
-    for (const island of findUnsupportedIslands(sim.world, region)) {
-      this.extractIsland(sim, island)
+    if (check.length > 0) {
+      const region = chunkUnionRegion(check, CONNECTIVITY_MARGIN)
+      for (const island of findUnsupportedIslands(sim.world, region)) {
+        this.extractIsland(sim, island)
+      }
     }
 
     // T86/V17 — collapse DECISIONS are deterministic sim state: pure world
     // inputs, fixed budgets, never gated by local debris counts (V17a).
+    // B32/T87 — edits only QUEUE the stress/coarse analysis; the flush runs on a
+    // fixed tick schedule (deterministic) so a machine gun pays the cost once per
+    // window, not per shot. ~100ms collapse latency is imperceptible.
     if (editBounds) {
-      // (a) T56 weak-neck stress over the FULL ground→top column above the edit —
-      // a thin remnant holding a whole tower must see its true load.
-      const edit = {
+      this.pendingStress.push({
         x0: editBounds.x0 - 1, y0: editBounds.y0 - 1, z0: editBounds.z0 - 1,
         x1: editBounds.x1 + 1, y1: editBounds.y1 + 1, z1: editBounds.z1 + 1,
+      })
+      if (this.pendingStress.length > 8) {
+        // overflow → merge everything into one union box (bounded work per flush)
+        const u = this.pendingStress.reduce((a, b) => ({
+          x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), z0: Math.min(a.z0, b.z0),
+          x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), z1: Math.max(a.z1, b.z1),
+        }))
+        this.pendingStress.length = 0
+        this.pendingStress.push(u)
       }
-      const yScanTop = WORLD_CY * CHUNK - 1
-      let topY = edit.y1
-      for (let z = edit.z0; z <= edit.z1; z += 2)
-        for (let x = edit.x0; x <= edit.x1; x += 2)
-          for (let y = yScanTop; y > topY; y--)
-            if (sim.world.getVoxel(x, y, z) !== 0) { topY = y; break }
-      const analysis = { x0: edit.x0 - 6, y0: 0, z0: edit.z0 - 6, x1: edit.x1 + 6, y1: topY, z1: edit.z1 + 6 }
-      for (const island of findStressCollapses(sim.world, analysis, edit, { maxIslands: 96 })) {
-        this.extractIsland(sim, island)
-      }
-      // (b) coarse global support around the edit — a severed top far above the
-      // connectivity region must not float. Side-boundary cells seed as supported
-      // (a wide structure crossing the analysis box is never falsely dropped).
-      const ccx0 = Math.max(0, (edit.x0 >> 5) - 2)
-      const ccx1 = Math.min(WORLD_CX - 1, (edit.x1 >> 5) + 2)
-      const ccz0 = Math.max(0, (edit.z0 >> 5) - 2)
-      const ccz1 = Math.min(WORLD_CZ - 1, (edit.z1 >> 5) + 2)
-      const ccy1 = Math.min(WORLD_CY - 1, (topY >> 5) + 1)
-      const coarse = new CoarseSupport({ cx0: ccx0, cy0: 0, cz0: ccz0, cx1: ccx1, cy1: ccy1, cz1: ccz1 })
-      coarse.rebuild(sim.world)
-      const floating = coarse.findFloating(true)
-      if (floating) {
-        for (const island of findUnsupportedIslands(sim.world, floating)) this.extractIsland(sim, island)
-      }
+    }
+    if (this.pendingStress.length > 0 && sim.tick % STRESS_INTERVAL === 0) {
+      const boxes = this.pendingStress.splice(0)
+      for (const edit of boxes) this.runStressAndCoarse(sim, edit)
     }
 
     const dirtied = sim.world.drainDirty()
@@ -501,6 +500,44 @@ export class PhysicsWorld implements IPhysicsWorld {
       this.pendingConnectivity.push(ci)
     }
     this.debris?.invalidateChunks(sim.world, dirtied)
+  }
+
+  /** B32/T87 — edit boxes awaiting the scheduled stress/coarse flush */
+  private readonly pendingStress: Array<{ x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }> = []
+
+  /** T86 — one queued edit box → full-column stress + coarse floating support.
+   *  Deterministic: pure world inputs, fixed budgets. Fast-skips when nothing
+   *  stands above the edit (ground digs — the common case). */
+  private runStressAndCoarse(sim: Sim, edit: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }): void {
+    // structure top above the edit footprint (sparse 2-voxel sampling)
+    const yScanTop = WORLD_CY * CHUNK - 1
+    let topY = edit.y1
+    for (let z = edit.z0; z <= edit.z1; z += 2)
+      for (let x = edit.x0; x <= edit.x1; x += 2)
+        for (let y = yScanTop; y > topY; y--)
+          if (sim.world.getVoxel(x, y, z) !== 0) { topY = y; break }
+    if (topY <= edit.y1 + 1) return // nothing above — no neck, no float possible
+
+    // (a) T56 weak-neck stress over the FULL ground→top column above the edit —
+    // a thin remnant holding a whole tower must see its true load.
+    const analysis = { x0: edit.x0 - 6, y0: 0, z0: edit.z0 - 6, x1: edit.x1 + 6, y1: topY, z1: edit.z1 + 6 }
+    for (const island of findStressCollapses(sim.world, analysis, edit, { maxIslands: 96 })) {
+      this.extractIsland(sim, island)
+    }
+    // (b) coarse global support around the edit — a severed top far above the
+    // connectivity region must not float. Side-boundary cells seed as supported
+    // (a wide structure crossing the analysis box is never falsely dropped).
+    const ccx0 = Math.max(0, (edit.x0 >> 5) - 2)
+    const ccx1 = Math.min(WORLD_CX - 1, (edit.x1 >> 5) + 2)
+    const ccz0 = Math.max(0, (edit.z0 >> 5) - 2)
+    const ccz1 = Math.min(WORLD_CZ - 1, (edit.z1 >> 5) + 2)
+    const ccy1 = Math.min(WORLD_CY - 1, (topY >> 5) + 1)
+    const coarse = new CoarseSupport({ cx0: ccx0, cy0: 0, cz0: ccz0, cx1: ccx1, cy1: ccy1, cz1: ccz1 })
+    coarse.rebuild(sim.world)
+    const floating = coarse.findFloating(true)
+    if (floating) {
+      for (const island of findUnsupportedIslands(sim.world, floating)) this.extractIsland(sim, island)
+    }
   }
 
   /**

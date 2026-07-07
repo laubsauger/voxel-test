@@ -11,7 +11,7 @@
  * ~1ms flood, vs an 82M-voxel fine flood. Engine-agnostic (sim layer).
  */
 import { CHUNK, ChunkKind, chunkIndex, WORLD_CX, WORLD_CZ, type ChunkStore } from '../world/chunks'
-import { snapshotRegion, type Region } from './connectivity'
+import type { Region } from './connectivity'
 
 const D = 4 // coarse cell edge (voxels); divides CHUNK(32) → 8 cells/chunk/axis.
 // D=4 so a typical blast gap (≥~8 voxels) yields a fully-empty cell layer that
@@ -60,16 +60,30 @@ export class CoarseSupport {
   }
 
   private addChunk(world: ChunkStore, cx: number, cy: number, cz: number): void {
-    const ox = cx * CHUNK, oy = cy * CHUNK, oz = cz * CHUNK
-    const g = snapshotRegion(world, ox, oy, oz, CHUNK, CHUNK, CHUNK)
     const per = CHUNK / D
     const bcx = (cx - this.cx0) * per, bcy = (cy - this.cy0) * per, bcz = (cz - this.cz0) * per
+    const c = world.chunkAt(chunkIndex(cx, cy, cz))
+    if (c.kind === ChunkKind.Uniform) {
+      // uniform solid: every coarse cell is trivially full (D³ voxels)
+      if (c.mat === 0) return
+      for (let dy = 0; dy < per; dy++)
+        for (let dz = 0; dz < per; dz++)
+          for (let dx = 0; dx < per; dx++) this.count[this.cell(bcx + dx, bcy + dy, bcz + dz)] += D * D * D
+      return
+    }
+    // Dense (chunkAt inflates Palette): read chunk data directly — no snapshot
+    // copy. Layout: index = x + z*32 + y*1024 (world/chunks.ts).
+    const data = c.data
+    if (!data) return
     for (let ly = 0; ly < CHUNK; ly++)
-      for (let lz = 0; lz < CHUNK; lz++)
+      for (let lz = 0; lz < CHUNK; lz++) {
+        const row = lz * CHUNK + ly * CHUNK * CHUNK
+        const cellBase = this.cell(bcx, bcy + ((ly / D) | 0), bcz + ((lz / D) | 0))
         for (let lx = 0; lx < CHUNK; lx++) {
-          if (g[lx + lz * CHUNK + ly * CHUNK * CHUNK] === 0) continue
-          this.count[this.cell(bcx + ((lx / D) | 0), bcy + ((ly / D) | 0), bcz + ((lz / D) | 0))]++
+          if (data[row + lx] === 0) continue
+          this.count[cellBase + ((lx / D) | 0)]++
         }
+      }
   }
 
   /** dirty chunks changed → reset their coarse cells + recount */

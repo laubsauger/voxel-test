@@ -173,13 +173,24 @@ export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
       return
     }
 
-    // T86/V17b — LOCAL debris hits are an ADDITIONAL effect and never gate the
-    // deterministic world edit below: debris positions may diverge per machine,
-    // so a shot "blocked" by rubble on one peer must still edit the world
-    // identically on all peers. (Side effect: shooting rubble stacked against a
-    // wall also marks the wall — accepted, documented in V17.)
+    // T86/V17b — LOCAL debris hit. Emits the impact FX event (spark/tracer stop
+    // at the rubble — events are render-only, V6, so divergent FX are fine) and
+    // damages/impulses the piece. World-edit gating splits by mode:
+    //   SP (sim.lockstep=false): rubble OCCLUDES the shot — no wall marking
+    //     behind it (old feel). Safe: no peers to diverge from.
+    //   MP (lockstep=true on every peer): the deterministic world edit still
+    //     applies — local debris may never gate a hashed world mutation (V17b).
     const debrisHit = phys.castRayDebris?.(ox, oy, oz, nx, ny, nz, rayLenM)
     if (debrisHit) {
+      s.emit({
+        kind: 'shot',
+        ox, oy, oz,
+        dx: nx, dy: ny, dz: nz,
+        hit: 1,
+        x: debrisHit.px, y: debrisHit.py, z: debrisHit.pz,
+        nx: debrisHit.nx, ny: debrisHit.ny, nz: debrisHit.nz,
+        mat: debrisHit.body.mat,
+      })
       phys.impulseBodyAt(
         debrisHit.body,
         nx * SHOOT_BODY_IMPULSE, ny * SHOOT_BODY_IMPULSE, nz * SHOOT_BODY_IMPULSE,
@@ -194,9 +205,12 @@ export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
         SHOOT_POWER,
         true,
       )
+      if (!s.lockstep) return // SP: rubble blocks the shot entirely
     }
 
     if (!hit) {
+      if (debrisHit) return // spark already emitted at the rubble
+
       const range = SHOOT_RANGE_VOX * VOXEL_SIZE
       s.emit({
         kind: 'shot',
@@ -212,15 +226,19 @@ export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
     const cx = hit.x + 0.5
     const cy = hit.y + 0.5
     const cz = hit.z + 0.5
-    s.emit({
-      kind: 'shot',
-      ox, oy, oz,
-      dx: nx, dy: ny, dz: nz,
-      hit: 1,
-      x: cx * VOXEL_SIZE, y: cy * VOXEL_SIZE, z: cz * VOXEL_SIZE,
-      nx: hit.nx, ny: hit.ny, nz: hit.nz,
-      mat: hit.mat,
-    })
+    if (!debrisHit) {
+      // one impact FX per shot — when rubble sparked (MP fall-through), the
+      // world edit below still applies but silently (no second tracer/impact)
+      s.emit({
+        kind: 'shot',
+        ox, oy, oz,
+        dx: nx, dy: ny, dz: nz,
+        hit: 1,
+        x: cx * VOXEL_SIZE, y: cy * VOXEL_SIZE, z: cz * VOXEL_SIZE,
+        nx: hit.nx, ny: hit.ny, nz: hit.nz,
+        mat: hit.mat,
+      })
+    }
     destroySphere(s, cx, cy, cz, SHOOT_RADIUS, SHOOT_POWER)
     damagePlayersSphere(phys, cx, cy, cz, SHOOT_RADIUS, SHOOT_POWER)
     // same connectivity/island path explode uses (T11/T12)

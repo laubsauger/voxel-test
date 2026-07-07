@@ -313,15 +313,14 @@ describe('bodies react to tools (B17)', () => {
     return { sim, phys }
   }
 
-  it('shooting debris: impulse + voxels shot out; world edit behind still applies (V17b)', async () => {
+  it('shooting debris SP: rubble occludes the shot — spark on debris, wall behind intact', async () => {
+    // sim.lockstep = false (default) → single-player: local rubble may gate the
+    // world edit (no peers to diverge from). Spark event lands on the rubble.
     const { sim, phys } = await setupBody()
     const body = [...phys.debris!.bodies.values()][0]
     const count0 = body.count
     const version0 = body.version
-    // dirt wall BEHIND the blob (ground-supported, stays static): the shot ray
-    // passes through the debris and must still edit the world behind it
-    sim.world.fillBox(80, 8, 58, 80, 50, 66, DIRT)
-    // shoot from -x, straight at the blob center (world meters)
+    sim.world.fillBox(80, 8, 58, 80, 50, 66, DIRT) // wall BEHIND the blob
     sim.queue.push({
       tick: sim.tick, playerId: 1, seq: 0,
       op: { kind: 'shoot', ox: 3.0, oy: body.py + 0.2, oz: body.pz + 0.2, dx: 1, dy: 0, dz: 0 },
@@ -331,17 +330,32 @@ describe('bodies react to tools (B17)', () => {
     expect(body.version).toBeGreaterThan(version0) // render rebuild trigger
     const v = (body.body as B3Body).getLinearVelocity()
     expect(v.x).toBeGreaterThan(0.05) // shoved along the shot
-    // T86/V17b port note: debris hits are a LOCAL side effect — they no longer
-    // gate the deterministic world raycast, and no body-hit shot event is
-    // emitted. The shot event now reports the WORLD hit behind the debris
-    // (the dirt wall), and the world edit lands there too.
     const shot = sim.drainEvents().find((e) => e.kind === 'shot')
     expect(shot && shot.hit).toBe(1)
-    if (shot?.kind === 'shot') {
-      expect(shot.mat).toBe(DIRT) // the wall, not the debris (V17b)
-      expect(shot.nx).toBeLessThan(0) // -x face of the wall
-    }
-    expect(sim.world.getVoxel(80, 42, 62)).toBe(0) // world edit applied behind the debris
+    if (shot?.kind === 'shot') expect(shot.mat).toBe(body.mat) // spark on the DEBRIS
+    expect(sim.world.getVoxel(80, 42, 62)).toBe(DIRT) // wall untouched (occluded)
+    phys.dispose()
+  }, 30000)
+
+  it('shooting debris MP (lockstep): spark on debris, world edit behind STILL applies (V17b)', async () => {
+    // sim.lockstep = true → local rubble must NEVER gate a hashed world edit:
+    // debris positions diverge per peer, so the wall edit must land identically
+    // on every machine. Exactly ONE impact FX event (at the rubble).
+    const { sim, phys } = await setupBody()
+    sim.lockstep = true
+    const body = [...phys.debris!.bodies.values()][0]
+    const count0 = body.count
+    sim.world.fillBox(80, 8, 58, 80, 50, 66, DIRT) // wall BEHIND the blob
+    sim.queue.push({
+      tick: sim.tick, playerId: 1, seq: 0,
+      op: { kind: 'shoot', ox: 3.0, oy: body.py + 0.2, oz: body.pz + 0.2, dx: 1, dy: 0, dz: 0 },
+    })
+    sim.step()
+    expect(body.count).toBeLessThan(count0) // debris still takes the hit locally
+    const shots = sim.drainEvents().filter((e) => e.kind === 'shot')
+    expect(shots.length).toBe(1) // ONE impact FX per shot (at the rubble)
+    if (shots[0]?.kind === 'shot') expect(shots[0].mat).toBe(body.mat)
+    expect(sim.world.getVoxel(80, 42, 62)).toBe(0) // deterministic wall edit applied
     phys.dispose()
   }, 30000)
 
