@@ -96,6 +96,12 @@ export const BIG_EDIT_VOL = 6000
 /** T89 — max island voxels extracted per tick (≥1 island always) */
 export const EXTRACT_VOX_BUDGET = 2200
 
+/** B38 — max floating voxels the coarse-support pass extracts per stress flush
+ *  (every STRESS_INTERVAL ticks). Building-scale: a severed tower top comes down
+ *  in bottom-up slices of this size — a ~150k-voxel highrise clears in ~1.3s,
+ *  reading as a demolition cascade rather than one monolithic clear. */
+export const COARSE_EXTRACT_BUDGET = 12000
+
 // ---------------------------------------------------------------------------
 // T40 — destruction feel tuning
 // ---------------------------------------------------------------------------
@@ -605,6 +611,7 @@ export class PhysicsWorld implements IPhysicsWorld {
           tick: Math.min(a.tick, b.tick),
           x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), z0: Math.min(a.z0, b.z0),
           x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), z1: Math.max(a.z1, b.z1),
+          cascade: a.cascade || b.cascade,
         }))
         this.pendingStress.length = 0
         this.pendingStress.push(u)
@@ -629,6 +636,7 @@ export class PhysicsWorld implements IPhysicsWorld {
           ) {
             m.x0 = Math.min(m.x0, b.x0); m.y0 = Math.min(m.y0, b.y0); m.z0 = Math.min(m.z0, b.z0)
             m.x1 = Math.max(m.x1, b.x1); m.y1 = Math.max(m.y1, b.y1); m.z1 = Math.max(m.z1, b.z1)
+            m.cascade = m.cascade || b.cascade
             joined = true
             break
           }
@@ -647,8 +655,11 @@ export class PhysicsWorld implements IPhysicsWorld {
     this.debris?.invalidateChunks(sim.world, dirtied)
   }
 
-  /** B32/T87 — edit boxes awaiting the scheduled stress/coarse flush */
-  private readonly pendingStress: Array<{ tick: number; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }> = []
+  /** B32/T87 — edit boxes awaiting the scheduled stress/coarse flush.
+   *  B38 — `cascade` marks a partial-collapse continuation box (bbox of the
+   *  floating remainder): it skips the nothing-above early-out, because a wide
+   *  floater's remainder sits BESIDE the extracted slice, not above it. */
+  private readonly pendingStress: Array<{ tick: number; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; cascade?: boolean }> = []
 
   /** B23/T88 — dirtied chunks whose Jolt collider awaits its budgeted rebuild.
    *  StaticCompoundShape.Create is the edit tick's dominant cost (~1-2ms/chunk,
@@ -735,7 +746,7 @@ export class PhysicsWorld implements IPhysicsWorld {
   /** T86 — one queued edit box → full-column stress + coarse floating support.
    *  Deterministic: pure world inputs, fixed budgets. Fast-skips when nothing
    *  stands above the edit (ground digs — the common case). */
-  private runStressAndCoarse(sim: Sim, edit: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }): void {
+  private runStressAndCoarse(sim: Sim, edit: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; cascade?: boolean }): void {
     // structure top above the edit footprint (sparse 2-voxel sampling)
     const yScanTop = WORLD_CY * CHUNK - 1
     let topY = edit.y1
@@ -743,7 +754,10 @@ export class PhysicsWorld implements IPhysicsWorld {
       for (let x = edit.x0; x <= edit.x1; x += 2)
         for (let y = yScanTop; y > topY; y--)
           if (sim.world.getVoxel(x, y, z) !== 0) { topY = y; break }
-    if (topY <= edit.y1 + 1) return // nothing above — no neck, no float possible
+    // B38 — cascade boxes are the bbox of a KNOWN floating remainder: it sits
+    // inside the box (beside the extracted slice), not above, so the
+    // nothing-above early-out must not kill the continuation.
+    if (topY <= edit.y1 + 1 && !edit.cascade) return // nothing above — no neck, no float possible
 
     // (a) T56 weak-neck stress over the FULL ground→top column above the edit —
     // a thin remnant holding a whole tower must see its true load.
@@ -752,18 +766,43 @@ export class PhysicsWorld implements IPhysicsWorld {
       this.extractIsland(sim, island)
     }
     // (b) coarse global support around the edit — a severed top far above the
-    // connectivity region must not float. Side-boundary cells seed as supported
-    // (a wide structure crossing the analysis box is never falsely dropped).
-    const ccx0 = Math.max(0, (edit.x0 >> 5) - 2)
-    const ccx1 = Math.min(WORLD_CX - 1, (edit.x1 >> 5) + 2)
-    const ccz0 = Math.max(0, (edit.z0 >> 5) - 2)
-    const ccz1 = Math.min(WORLD_CZ - 1, (edit.z1 >> 5) + 2)
+    // connectivity region must not float. B38 — ADAPTIVE region: a strict flood
+    // (no side seeding) whose floating candidate touches a region side cannot
+    // decide (the structure may continue outside), so the region grows and
+    // re-runs until the candidate is fully enclosed (strict = ground truth for
+    // towers up to ~2×256 voxels across) or the margin cap falls back to the
+    // conservative side-seeded flood (old behavior — never a false drop).
     const ccy1 = Math.min(WORLD_CY - 1, (topY >> 5) + 1)
-    const coarse = new CoarseSupport({ cx0: ccx0, cy0: 0, cz0: ccz0, cx1: ccx1, cy1: ccy1, cz1: ccz1 })
-    coarse.rebuild(sim.world)
-    const floating = coarse.findFloating(true)
-    if (floating) {
-      for (const island of findUnsupportedIslands(sim.world, floating)) this.extractIsland(sim, island)
+    let coarse: CoarseSupport | null = null
+    let decided = false
+    for (const margin of [2, 4, 6, 8]) {
+      const ccx0 = Math.max(0, (edit.x0 >> 5) - margin)
+      const ccx1 = Math.min(WORLD_CX - 1, (edit.x1 >> 5) + margin)
+      const ccz0 = Math.max(0, (edit.z0 >> 5) - margin)
+      const ccz1 = Math.min(WORLD_CZ - 1, (edit.z1 >> 5) + margin)
+      coarse = new CoarseSupport({ cx0: ccx0, cy0: 0, cz0: ccz0, cx1: ccx1, cy1: ccy1, cz1: ccz1 })
+      coarse.rebuild(sim.world)
+      if (!coarse.findFloating(false)) { coarse = null; break } // nothing floats — done
+      if (!coarse.floatingTouchesSide()) { decided = true; break } // fully enclosed — strict is truth
+    }
+    if (coarse && !decided) coarse.findFloating(true) // cap hit: conservative side-seeded flood
+    if (coarse) {
+      // B38 — extract the floating voxels DIRECTLY from the coarse grid's
+      // unreached cells (provably disconnected — see collectFloatingVoxels).
+      // The old handoff to findUnsupportedIslands silently kept every
+      // building-scale floater static: the fine region clamps to 128/axis (a
+      // tower top crosses the clamped boundary → "boundary escape" → supported)
+      // and boundary components > PROVISIONAL_MAX_VOXELS never re-resolve.
+      const cut = coarse.collectFloatingVoxels(sim.world, COARSE_EXTRACT_BUDGET)
+      if (cut && cut.voxels.length > 0) {
+        this.extractIsland(sim, { voxels: cut.voxels })
+        if (cut.truncated && cut.rest) {
+          // more floating remains — re-queue the REMAINDER's bbox (cascade box)
+          // so the next stress flush takes the next slice (bottom-up demolition
+          // cascade; deterministic: fixed budget + fixed schedule)
+          this.pendingStress.push({ tick: sim.tick, ...cut.rest, cascade: true })
+        }
+      }
     }
     // (c) T93/B34 — direct ground-reachability on the survivors: flood each
     // edit-adjacent component with NO region boundary (the hole in (a)/(b):

@@ -1062,6 +1062,14 @@ async function joinFlow(): Promise<void> {
 if (boot.dev) {
   ;(window as unknown as { __bbDev: unknown }).__bbDev = {
     submitOp: (op: Op) => game.pushOp(op),
+    /** dev probe — teleport the player + aim the view (fly/noclip mode keeps
+     *  the capsule parked there); CDP world-scale shots aim at structures
+     *  directly. Goes through the sanctioned op path — deterministic. */
+    flyTo: (x: number, y: number, z: number, yaw = 0, pitch = -0.5) => {
+      game.pushOp({ kind: 'tp', x, y, z })
+      game.input.yaw = yaw
+      game.input.pitch = pitch
+    },
     get tick() {
       return game.sim.tick
     },

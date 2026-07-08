@@ -44,6 +44,9 @@ function hashStore(s: ChunkStore): number {
 function stamped(seed: number): { store: ChunkStore; layout: Layout; waterFills: { box: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } }[]; vehicleSpawns: { archetype: string; cx: number; cy: number; cz: number; yaw: number }[] } {
   const store = new ChunkStore()
   const layout = generateLayout(seed)
+  // B38 — five tower styles exist; the facade tests below probe styles 0 and 1
+  // specifically, so pin the first tower to 0 (seed 42 happens to roll none)
+  if (layout.towers.length > 0 && !layout.towers.some((t) => t.style === 0)) layout.towers[0].style = 0
   const { waterFills, vehicleSpawns } = stampScene(store, layout, placeholderProps())
   return { store, layout, waterFills, vehicleSpawns }
 }

@@ -11,7 +11,7 @@
  * ~1ms flood, vs an 82M-voxel fine flood. Engine-agnostic (sim layer).
  */
 import { CHUNK, ChunkKind, chunkIndex, WORLD_CX, WORLD_CZ, type ChunkStore } from '../world/chunks'
-import type { Region } from './connectivity'
+import type { IslandVoxel, Region } from './connectivity'
 
 const D = 4 // coarse cell edge (voxels); divides CHUNK(32) → 8 cells/chunk/axis.
 // D=4 so a typical blast gap (≥~8 voxels) yields a fully-empty cell layer that
@@ -161,5 +161,83 @@ export class CoarseSupport {
     if (!any) return null
     // pad down one cell so the fine flood has the gap below (no false grounding)
     return { x0: x0 - 1, y0: Math.max(0, y0 - D), z0: z0 - 1, x1: x1 + 1, y1: y1 + 1, z1: z1 + 1 }
+  }
+
+  /**
+   * B38 — true when any unreached solid cell of the LAST findFloating() flood
+   * lies on a region side wall. A floating candidate touching the side may in
+   * fact continue outside the analysis box (this region cannot decide) — the
+   * caller grows the region and re-runs until the candidate is fully enclosed
+   * (strict flood is then ground truth) or a margin cap is hit.
+   */
+  floatingTouchesSide(): boolean {
+    const { ncx, ncy, ncz, count, reached } = this
+    const nxnz = ncx * ncz
+    for (let cy = 0; cy < ncy; cy++)
+      for (let cz = 0; cz < ncz; cz++)
+        for (let cx = 0; cx < ncx; cx++) {
+          if (cx !== 0 && cx !== ncx - 1 && cz !== 0 && cz !== ncz - 1) continue
+          const i = cx + cz * ncx + cy * nxnz
+          if (count[i] > 0 && !reached[i]) return true
+        }
+    return false
+  }
+
+  /**
+   * B38 — enumerate the ACTUAL voxels of unreached (floating) cells, using the
+   * reached[] state of the last findFloating() call. Coarse adjacency strictly
+   * over-connects the fine 6-face graph (any fine path between voxels crosses
+   * face-adjacent cells, both non-empty → the coarse edge exists), so an
+   * UNREACHED cell is PROVABLY disconnected from ground — and a grounded
+   * structure passing through a cell marks it reached, so every voxel in an
+   * unreached cell floats. No fine re-verification, no size caps: this is what
+   * lets building-scale collapse work (the fine flood's region clamp and
+   * provisional caps conservatively kept whole towers static).
+   *
+   * Bottom-up (cy asc, then cz, cx — deterministic), stopping at a CELL
+   * boundary once `budget` voxels are collected. truncated=true → more floating
+   * cells remain; the caller re-queues the analysis and the rest goes next
+   * flush (a rising demolition cascade: lowest slices drop first).
+   */
+  collectFloatingVoxels(
+    world: ChunkStore,
+    budget: number,
+  ): { voxels: IslandVoxel[]; truncated: boolean; rest: Region | null } | null {
+    const { ncx, ncy, ncz, count, reached } = this
+    const nxnz = ncx * ncz
+    const voxels: IslandVoxel[] = []
+    let truncated = false
+    // voxel bbox of unreached cells NOT collected this call — the caller
+    // re-queues THIS box so the next flush continues where we stopped (a wide
+    // floater's remainder sits BESIDE the slice, not above it)
+    let rx0 = Infinity, ry0 = Infinity, rz0 = Infinity, rx1 = -Infinity, ry1 = -Infinity, rz1 = -Infinity
+    for (let cy = 0; cy < ncy; cy++)
+      for (let cz = 0; cz < ncz; cz++)
+        for (let cx = 0; cx < ncx; cx++) {
+          const i = cx + cz * ncx + cy * nxnz
+          if (count[i] === 0 || reached[i]) continue
+          const vx0 = this.cx0 * CHUNK + cx * D
+          const vy0 = this.cy0 * CHUNK + cy * D
+          const vz0 = this.cz0 * CHUNK + cz * D
+          if (voxels.length >= budget) {
+            truncated = true
+            if (vx0 < rx0) rx0 = vx0; if (vy0 < ry0) ry0 = vy0; if (vz0 < rz0) rz0 = vz0
+            if (vx0 + D - 1 > rx1) rx1 = vx0 + D - 1
+            if (vy0 + D - 1 > ry1) ry1 = vy0 + D - 1
+            if (vz0 + D - 1 > rz1) rz1 = vz0 + D - 1
+            continue // keep scanning cells for the remainder bbox only
+          }
+          for (let dy = 0; dy < D; dy++)
+            for (let dz = 0; dz < D; dz++)
+              for (let dx = 0; dx < D; dx++) {
+                const mat = world.getVoxel(vx0 + dx, vy0 + dy, vz0 + dz)
+                if (mat !== 0) voxels.push({ x: vx0 + dx, y: vy0 + dy, z: vz0 + dz, mat })
+              }
+        }
+    if (voxels.length === 0 && !truncated) return null
+    const rest: Region | null = truncated
+      ? { x0: rx0, y0: ry0, z0: rz0, x1: rx1, y1: ry1, z1: rz1 }
+      : null
+    return { voxels, truncated, rest }
   }
 }

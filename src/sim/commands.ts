@@ -64,6 +64,15 @@ export interface NoclipOp {
   kind: 'noclip'
 }
 
+/** B38 — teleport the issuing player (dev probes / CDP world-scale shots).
+ *  Deterministic like every op: position is hashed sim state. Meters. */
+export interface TpOp {
+  kind: 'tp'
+  x: number
+  y: number
+  z: number
+}
+
 /** T54 — throw a bomb projectile: arcs, bounces, 3s fuse → T55 explosion */
 export interface ThrowOp {
   kind: 'throw'
@@ -162,6 +171,7 @@ export type Op =
   | MoveOp
   | SpawnOp
   | NoclipOp
+  | TpOp
   | ThrowOp
   | RocketOp
   | TntPlaceOp

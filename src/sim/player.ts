@@ -644,6 +644,23 @@ export function registerPlayerOps(sim: Sim, phys: PhysicsWorld): void {
       p.vz = 0
     }
   })
+  // B38 — teleport (dev probes). Same determinism contract as noclip: the op
+  // is in the command stream, position is hashed entity state, char synced.
+  sim.onOp('tp', (s, cmd) => {
+    const p = phys.players.get(cmd.playerId)
+    if (!p) throw new Error(`tp for unspawned player ${cmd.playerId} at tick ${s.tick}`)
+    if (!p.alive) return
+    const op = cmd.op as { x: number; y: number; z: number }
+    p.px = op.x
+    p.py = op.y
+    p.pz = op.z
+    p.vx = 0
+    p.vy = 0
+    p.vz = 0
+    const pos = new phys.api.RVec3(p.px, p.py, p.pz)
+    p.char.SetPosition(pos)
+    phys.api.destroy(pos)
+  })
 }
 
 /**

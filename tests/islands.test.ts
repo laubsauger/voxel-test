@@ -1,8 +1,9 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Sim } from '../src/sim/loop'
 import { registerEditOps } from '../src/sim/edit-ops'
-import { createPhysics, loadJolt } from '../src/sim/physics'
+import { createPhysics, loadJolt, STRESS_INTERVAL } from '../src/sim/physics'
 import { findUnsupportedIslands } from '../src/sim/connectivity'
+import { CoarseSupport } from '../src/sim/coarse-support'
 import { material, VOXEL_VOLUME } from '../src/sim/materials'
 
 // T12 — island extraction → dynamic body. The Teardown moment: voxels leave
@@ -135,6 +136,133 @@ describe('zero-support catch (T92, B33): fully severed structure MUST fall', () 
     expect(phys.debris!.bodies.size).toBeGreaterThan(0)
     phys.dispose()
   }, 30000)
+})
+
+describe('building-scale collapse (B38): coarse floaters extract directly, no caps', () => {
+  // WHY: every fine detector conservatively keeps ANY over-cap component static
+  // (region clamp 128/axis → boundary escape; PROVISIONAL_MAX_VOXELS=2048;
+  // ground-check 120k-visit abort). A severed highrise trips ALL of them and
+  // hung in the air forever. The coarse grid's global ground flood over-connects
+  // the fine graph, so its unreached cells are PROVABLY floating — B38 extracts
+  // their voxels directly, in budgeted bottom-up slices (demolition cascade).
+
+  it('collectFloatingVoxels enumerates exactly the floating voxels (unit)', () => {
+    const sim = new Sim(1)
+    sim.world.fillBox(0, 0, 0, 63, 3, 63, 3) // ground
+    sim.world.fillBox(20, 30, 20, 27, 37, 27, BRICK) // floating 8³ cube (512 vox)
+    sim.world.fillBox(40, 4, 40, 43, 20, 43, BRICK) // grounded column — must NOT collect
+    const coarse = new CoarseSupport({ cx0: 0, cy0: 0, cz0: 0, cx1: 1, cy1: 1, cz1: 1 })
+    coarse.rebuild(sim.world)
+    expect(coarse.findFloating(true)).not.toBeNull()
+    const cut = coarse.collectFloatingVoxels(sim.world, 100000)!
+    expect(cut.truncated).toBe(false)
+    expect(cut.voxels.length).toBe(512)
+    for (const v of cut.voxels) {
+      expect(v.x >= 20 && v.x <= 27 && v.y >= 30 && v.y <= 37 && v.z >= 20 && v.z <= 27).toBe(true)
+      expect(v.mat).toBe(BRICK)
+    }
+  })
+
+  it('budget truncates at a cell boundary, bottom-up, and the rest survives to a second call', () => {
+    const sim = new Sim(1)
+    sim.world.fillBox(0, 0, 0, 63, 3, 63, 3)
+    sim.world.fillBox(20, 30, 20, 27, 45, 27, BRICK) // floating 8×16×8 pillar
+    const coarse = new CoarseSupport({ cx0: 0, cy0: 0, cz0: 0, cx1: 1, cy1: 1, cz1: 1 })
+    coarse.rebuild(sim.world)
+    coarse.findFloating(true)
+    const first = coarse.collectFloatingVoxels(sim.world, 300)!
+    expect(first.truncated).toBe(true)
+    // bottom-up: everything collected sits below everything not collected
+    const maxTaken = Math.max(...first.voxels.map((v) => v.y))
+    expect(maxTaken).toBeLessThan(45)
+    // clear the taken slice, re-run: the remainder is found and finishes
+    sim.world.clearVoxels(first.voxels)
+    coarse.update(sim.world, [...sim.world.drainDirty()])
+    coarse.findFloating(true)
+    const rest = coarse.collectFloatingVoxels(sim.world, 100000)!
+    expect(rest.truncated).toBe(false)
+    expect(first.voxels.length + rest.voxels.length).toBe(8 * 16 * 8)
+  })
+
+  it('severed highrise (bigger than every fine cap) fully collapses via the cascade', async () => {
+    const sim = makeSim()
+    sim.world.fillBox(0, 0, 0, 120, 3, 120, 3) // terrain
+    // hollow tower: 48×48 footprint, 3-thick walls, 250 tall, slabs every 26 —
+    // ~140k voxels: > PROVISIONAL_MAX (2048), > region extent (128/axis),
+    // > GROUND_CHECK_MAX_VISITS (120k). Every pre-B38 detector keeps it static.
+    const x0 = 30, z0 = 30, x1 = 77, z1 = 77, yb = 4, yt = 253
+    sim.world.fillBox(x0, yb, z0, x1, yt, z1, BRICK)
+    sim.world.fillBox(x0 + 3, yb, z0 + 3, x1 - 3, yt, z1 - 3, 0) // hollow core
+    for (let y = yb + 26; y < yt; y += 26) sim.world.fillBox(x0 + 3, y, z0 + 3, x1 - 3, y + 1, z1 - 3, BRICK)
+    const phys = await createPhysics(sim)
+    sim.step() // initial dirty drain settles as "build"
+    for (let i = 0; i < STRESS_INTERVAL * 3; i++) sim.step() // flush initial stress queue: tower stands
+    let preCut = 0
+    for (let y = 60; y <= 62; y++)
+      for (let z = z0; z <= z1; z += 4)
+        for (let x = x0; x <= x1; x += 4) if (sim.world.getVoxel(x, y, z) !== 0) preCut++
+    expect(preCut).toBeGreaterThan(0) // sanity: intact before the cut
+
+    // yoink the bottom two floors clean (y 4..55): the user's exact scenario
+    sim.world.fillBox(x0 - 1, yb, z0 - 1, x1 + 1, yb + 51, z1 + 1, 0)
+    // cascade: 12k voxels per stress flush (6 ticks) — give it ample ticks
+    for (let i = 0; i < 160; i++) sim.step()
+
+    // EVERYTHING above the cut must have left the world (extracted to debris)
+    let remaining = 0
+    for (let y = yb + 52; y <= yt; y++)
+      for (let z = z0; z <= z1; z++)
+        for (let x = x0; x <= x1; x++) if (sim.world.getVoxel(x, y, z) !== 0) remaining++
+    expect(remaining).toBe(0)
+    expect(phys.debris!.bodies.size).toBeGreaterThan(0) // it fell as debris, not vanished silently
+    phys.dispose()
+  }, 60000)
+
+  it('wide structure severed by a SMALL local edit collapses (adaptive region growth)', async () => {
+    // The kill case for a fixed ±2-chunk coarse region: a 200-wide slab crosses
+    // the region sides, side-seeding marks it supported, and at 160k voxels the
+    // ground-check aborts (>120k visits). Only the B38 growth loop — enlarge the
+    // region until the floater is fully enclosed — catches it.
+    const sim = makeSim()
+    sim.world.fillBox(0, 0, 0, 260, 3, 260, 3) // terrain
+    sim.world.fillBox(126, 4, 126, 129, 40, 129, BRICK) // single 4×4 column
+    sim.world.fillBox(30, 41, 30, 229, 44, 229, BRICK) // 200×200×4 slab = 160k vox
+    const phys = await createPhysics(sim)
+    sim.step()
+    for (let i = 0; i < STRESS_INTERVAL * 3; i++) sim.step() // settles standing
+    // sever the column with a small dig — edit box is tiny, slab is 200 wide.
+    // r=6 → ~12-voxel gap: clears a full D=4 coarse cell layer (thinner cuts
+    // alias in the coarse grid — that pre-existing T92 limitation is out of
+    // scope here; a "two floors gone" gameplay cut is 50+ voxels tall).
+    sim.queue.push({ tick: sim.tick + 1, playerId: 1, seq: 0, op: { kind: 'dig', x: 127, y: 20, z: 127, r: 6 } })
+    for (let i = 0; i < 200; i++) sim.step()
+    let remaining = 0
+    for (let y = 41; y <= 44; y++)
+      for (let z = 30; z <= 229; z += 2)
+        for (let x = 30; x <= 229; x += 2) if (sim.world.getVoxel(x, y, z) !== 0) remaining++
+    expect(remaining).toBe(0)
+    phys.dispose()
+  }, 60000)
+
+  it('same tower NOT severed stays standing through stress flushes (no false collapse)', async () => {
+    const sim = makeSim()
+    sim.world.fillBox(0, 0, 0, 120, 3, 120, 3)
+    const x0 = 30, z0 = 30, x1 = 77, z1 = 77, yb = 4, yt = 253
+    sim.world.fillBox(x0, yb, z0, x1, yt, z1, BRICK)
+    sim.world.fillBox(x0 + 3, yb, z0 + 3, x1 - 3, yt, z1 - 3, 0)
+    for (let y = yb + 26; y < yt; y += 26) sim.world.fillBox(x0 + 3, y, z0 + 3, x1 - 3, y + 1, z1 - 3, BRICK)
+    const phys = await createPhysics(sim)
+    sim.step()
+    // poke a small hole in one wall (normal gameplay dig) — tower must stand
+    sim.queue.push({ tick: 1, playerId: 1, seq: 0, op: { kind: 'dig', x: x0 + 1, y: 80, z: 54, r: 3 } })
+    for (let i = 0; i < 40; i++) sim.step()
+    let wallLeft = 0
+    for (let z = z0; z <= z1; z += 2) for (let x = x0; x <= x1; x += 2)
+      if (sim.world.getVoxel(x, 200, z) !== 0) wallLeft++
+    expect(wallLeft).toBeGreaterThan(50) // upper floors intact
+    expect(phys.debris!.bodies.size).toBeLessThan(30) // only the dig's small spall, no cascade
+    phys.dispose()
+  }, 60000)
 })
 
 describe('ground-reachability check (T93, B34): no welded path to ground = fall', () => {

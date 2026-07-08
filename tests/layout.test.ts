@@ -234,7 +234,7 @@ describe('town layout generator (T19/T50, V2)', () => {
       for (const t of l.towers) {
         expect(t.floors).toBeGreaterThanOrEqual(5)
         expect(t.floors).toBeLessThanOrEqual(15)
-        expect([0, 1], 'tower has a valid P23 style').toContain(t.style)
+        expect([0, 1, 2, 3, 4], 'tower has a valid P23/B38 style').toContain(t.style)
         expect(t.storyH).toBe(TOWER_STORY_H)
         // tower sits inside a commercial district
         expect(comDistricts.some((d) => contains(d.rect, t.rect)), `tower outside commercial districts`).toBe(true)
@@ -259,19 +259,25 @@ describe('town layout generator (T19/T50, V2)', () => {
     }
   })
 
-  it('P23 towers: 2+ facade styles seeded per tower, both appear across the skyline', () => {
+  it('P23/B38 towers: 5 facade/massing styles seeded per tower, variety across the skyline', () => {
     // WHY: every commercial tower used to be an identical glass box — a seeded
-    // per-tower style makes the skyline vary. Both styles must actually occur.
+    // per-tower style makes the skyline vary. All styles must be reachable and
+    // several must actually occur across a handful of seeds.
     const seen = new Set<number>()
     for (const seed of [42, 7, 99, 1337, 31337]) {
       const l = generateLayout(seed)
       for (const t of l.towers) {
-        expect([0, 1]).toContain(t.style)
+        expect([0, 1, 2, 3, 4]).toContain(t.style)
+        // geometry gates: setback tiers need x slack around the 67-wide core
+        if (t.style === 3) {
+          expect(t.rect.x1 - t.rect.x0 + 1).toBeGreaterThanOrEqual(110)
+          expect(t.floors).toBeGreaterThanOrEqual(7)
+        }
+        if (t.style === 4) expect(t.floors).toBeGreaterThanOrEqual(5)
         seen.add(t.style)
       }
     }
-    expect(seen.has(0), 'glass-curtain towers occur').toBe(true)
-    expect(seen.has(1), 'masonry towers occur').toBe(true)
+    expect(seen.size, 'skyline variety: at least 4 of 5 styles occur across seeds').toBeGreaterThanOrEqual(4)
   })
 
   it('P21 farmhouses: rural compounds on SOME park blocks, bigger than suburb houses, clear of paths/ponds', () => {

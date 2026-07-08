@@ -232,11 +232,18 @@ export interface Tower {
   /** vertical glass mullion spacing (voxels) */
   mullion: number
   /**
-   * P23 — facade/massing style, seeded per tower for skyline variety:
+   * P23/B38 — facade/massing style, seeded per tower for skyline variety:
    *   0 = all-glass curtain wall + thin metal mullions + flat concrete parapet
-   *   1 = masonry (brick) facade with punched glass windows + stepped brick crown
+   *   1 = horizontal-ribbon: glass skin + metal spandrel bands + metal crown
+   *   2 = brutalist pilotis: open ground-floor colonnade of chunky concrete
+   *       columns, upper block CANTILEVERS out over the plaza (sever the
+   *       pilotis and the block comes down — deliberate demolition target)
+   *   3 = stepped terraces: wedding-cake setbacks toward the street with
+   *       glass-parapet roof gardens on each tier
+   *   4 = glass slab + brick service spine + a 2-story SKYWING cantilevered
+   *       off the front face near the top (bomb the root to drop it)
    */
-  style: 0 | 1
+  style: 0 | 1 | 2 | 3 | 4
 }
 
 export interface ParkingLot {
@@ -900,6 +907,17 @@ function commercialFront(d: District): Side {
 export const STALL_W = 26
 export const STALL_D = 48
 
+/** B38 — pick a facade/massing style; geometry-gated so every style fits.
+ *  Style 3 setbacks need x slack around the 67-wide core and enough floors for
+ *  two tiers; style 2's cantilever + pilotis want a real tower, not a stub. */
+function pickTowerStyle(sp: Prng, width: number, floors: number): Tower['style'] {
+  const s = sp.nextInt(5) as Tower['style']
+  if (s === 3 && (width < 110 || floors < 7)) return 0
+  if (s === 2 && floors < 4) return 1
+  if (s === 4 && floors < 5) return 0
+  return s
+}
+
 function makeTower(id: number, rect: Rect, floors: number, front: Side): Tower {
   // core against the wall opposite the block front (or z+ default for x fronts)
   const coreAtZ1 = front !== 'z+'
@@ -953,7 +971,7 @@ function makeCommercial(seed: number, districts: District[]): CommercialOut {
     const tx0 = d.rect.x0 + 16 + cp.nextInt(Math.max(1, bw - tw - 32))
     const t1 = makeTower(id++, { x0: tx0, z0: tz0, x1: tx0 + tw - 1, z1: tz0 + td - 1 }, floors, front)
     t1.mullion = mullion
-    t1.style = sp.nextInt(2) as 0 | 1
+    t1.style = pickTowerStyle(sp, tw, floors)
     out.towers.push(t1)
     // optional twin tower at the opposite x end of the front row
     const twin = cp.nextInt(10) < 4
@@ -970,7 +988,7 @@ function makeCommercial(seed: number, districts: District[]): CommercialOut {
         const z2 = frontZplus ? d.rect.z1 - 16 - d2 + 1 : d.rect.z0 + 16
         const t2 = makeTower(id++, { x0: x2, z0: z2, x1: x2 + w2 - 1, z1: z2 + d2 - 1 }, f2, front)
         t2.mullion = mullion
-        t2.style = sp.nextInt(2) as 0 | 1
+        t2.style = pickTowerStyle(sp, w2, f2)
         out.towers.push(t2)
       }
     }

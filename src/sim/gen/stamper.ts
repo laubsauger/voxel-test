@@ -620,104 +620,85 @@ function stampTower(store: ChunkStore, layout: Layout, t: Tower): void {
   const wallTop = g + t.floors * t.storyH - 1
   const roofY = wallTop + 1
 
-  // ground slab + full-height concrete shell, then glass bands carved in
+  // B38 — per-floor massing: styles 2 (pilotis + cantilever) and 3 (setback
+  // tiers) vary the footprint per floor; everything else is constant-rect.
+  const m = towerMassing(t)
+  const rTop = m.rectAt(t.floors - 1)
+
+  // ground slab + per-floor shell, then glass bands carved in
   store.fillBox(r.x0, g, r.z0, r.x1, g, r.z1, MAT_CONCRETE)
-  stampWalls(store, r, g + 1, wallTop, MAT_CONCRETE)
 
   for (let f = 0; f < t.floors; f++) {
+    const rf = m.rectAt(f)
     const yb = g + f * t.storyH
-    const gy0 = yb + 5
-    const gy1 = yb + t.storyH - 1
-    if (t.style === 0) {
-      // glass curtain per wall (corner columns 4 wide stay concrete)
-      store.fillBox(r.x0 + 4, gy0, r.z0, r.x1 - 4, gy1, r.z0 + 1, MAT_GLASS)
-      store.fillBox(r.x0 + 4, gy0, r.z1 - 1, r.x1 - 4, gy1, r.z1, MAT_GLASS)
-      store.fillBox(r.x0, gy0, r.z0 + 4, r.x0 + 1, gy1, r.z1 - 4, MAT_GLASS)
-      store.fillBox(r.x1 - 1, gy0, r.z0 + 4, r.x1, gy1, r.z1 - 4, MAT_GLASS)
-      // metal mullions
-      for (let x = r.x0 + 4 + t.mullion; x <= r.x1 - 5; x += t.mullion) {
-        store.fillBox(x, gy0, r.z0, x, gy1, r.z0 + 1, MAT_METAL)
-        store.fillBox(x, gy0, r.z1 - 1, x, gy1, r.z1, MAT_METAL)
-      }
-      for (let z = r.z0 + 4 + t.mullion; z <= r.z1 - 5; z += t.mullion) {
-        store.fillBox(r.x0, gy0, z, r.x0 + 1, gy1, z, MAT_METAL)
-        store.fillBox(r.x1 - 1, gy0, z, r.x1, gy1, z, MAT_METAL)
-      }
-    } else {
-      // P23 style 1 — sleek HORIZONTAL-RIBBON tower: a continuous glass skin
-      // with a METAL SPANDREL band at each floor line (strong horizontal
-      // emphasis vs style 0's vertical mullions), corner columns in metal too.
-      // No brick — a clean modern-corporate look distinct from the glass grid.
-      // BUG2 — RECESS the glass one voxel behind the frame plane. The glass band
-      // used to fill the full 2-deep skin (outer row = z0), so its transparent
-      // front face (glass writes no depth) sat COPLANAR with the opaque metal
-      // spandrel / concrete frame front faces at z0. At many view angles the
-      // transparent sort flipped against that coplanar opaque frame + the near
-      // interior slab and flickered a black bar along every floor line. Clearing
-      // the outer row to air and keeping glass only on the inner row (z0+1) moves
-      // the glass front to z0+1 — the opaque frame is now a clean 1-voxel proud
-      // lip in front (reads as recessed ribbon glazing). The glass BACK plane is
-      // unchanged (still z0+2), so the interior-slab clearance is untouched.
-      store.fillBox(r.x0 + 3, gy0, r.z0, r.x1 - 3, gy1, r.z0, MAT_AIR)
-      store.fillBox(r.x0 + 3, gy0, r.z0 + 1, r.x1 - 3, gy1, r.z0 + 1, MAT_GLASS)
-      store.fillBox(r.x0 + 3, gy0, r.z1, r.x1 - 3, gy1, r.z1, MAT_AIR)
-      store.fillBox(r.x0 + 3, gy0, r.z1 - 1, r.x1 - 3, gy1, r.z1 - 1, MAT_GLASS)
-      store.fillBox(r.x0, gy0, r.z0 + 3, r.x0, gy1, r.z1 - 3, MAT_AIR)
-      store.fillBox(r.x0 + 1, gy0, r.z0 + 3, r.x0 + 1, gy1, r.z1 - 3, MAT_GLASS)
-      store.fillBox(r.x1, gy0, r.z0 + 3, r.x1, gy1, r.z1 - 3, MAT_AIR)
-      store.fillBox(r.x1 - 1, gy0, r.z0 + 3, r.x1 - 1, gy1, r.z1 - 3, MAT_GLASS)
-      // metal corner mullions (thin, run the full story) + metal spandrel band
-      // capping each floor → horizontal ribbon read
-      for (const yy of [gy1 - 1, gy1]) {
-        store.fillBox(r.x0, yy, r.z0, r.x1, yy, r.z0 + 1, MAT_METAL)
-        store.fillBox(r.x0, yy, r.z1 - 1, r.x1, yy, r.z1, MAT_METAL)
-        store.fillBox(r.x0, yy, r.z0, r.x0 + 1, yy, r.z1, MAT_METAL)
-        store.fillBox(r.x1 - 1, yy, r.z0, r.x1, yy, r.z1, MAT_METAL)
-      }
-      for (const cx of [r.x0, r.x1 - 1]) {
-        store.fillBox(cx, gy0, r.z0, cx + 1, gy1, r.z0 + 1, MAT_METAL)
-        store.fillBox(cx, gy0, r.z1 - 1, cx + 1, gy1, r.z1, MAT_METAL)
-      }
+    if (t.style === 2 && f === 0) {
+      // open ground floor: chunky pilotis colonnade instead of walls — the
+      // whole block stands on them (sever them and it comes down, B38)
+      stampPilotis(store, r, yb + 1, yb + t.storyH - 1)
+      continue
     }
+    stampWalls(store, rf, f === 0 ? yb + 1 : yb, yb + t.storyH - 1, MAT_CONCRETE)
+    stampTowerFacade(store, t, rf, yb, f)
     // interior slab (floors above ground). B37 — inset 2 vox BEHIND the facade
-    // (was flush at WALL_T): the slab edge reached the 2-deep glass skin at every
-    // level, so the concrete poked into the window and the transparent glass
-    // sort flickered a black bar. Held clear, the floor sits behind the glass.
+    // (see below); at a style-3 setback the slab spans the tier BELOW so the
+    // exposed band becomes the terrace deck; style 2's first deck spans the
+    // full cantilever rect (it IS the overhang underside).
     if (f > 0) {
-      const si = WALL_T + 2
-      store.fillBox(r.x0 + si, yb - 1, r.z0 + si, r.x1 - si, yb, r.z1 - si, MAT_CONCRETE)
+      if (m.setbacks.includes(f)) {
+        const below = m.rectAt(f - 1)
+        store.fillBox(below.x0, yb - 1, below.z0, below.x1, yb, below.z1, MAT_CONCRETE)
+        stampTerrace(store, below, rf, yb)
+      } else if (t.style === 2 && f === 1) {
+        store.fillBox(rf.x0, yb - 1, rf.z0, rf.x1, yb, rf.z1, MAT_CONCRETE)
+      } else {
+        const si = WALL_T + 2
+        store.fillBox(rf.x0 + si, yb - 1, rf.z0 + si, rf.x1 - si, yb, rf.z1 - si, MAT_CONCRETE)
+      }
     }
   }
+  if (t.style === 4) stampSpineAndWing(store, t, g, roofY)
 
-  // roof: slab, parapet/crown, hashed HVAC boxes
-  store.fillBox(r.x0, roofY, r.z0, r.x1, roofY + 1, r.z1, MAT_CONCRETE)
-  if (t.style === 0) {
-    stampWalls(store, r, roofY + 2, roofY + 4, MAT_CONCRETE)
-  } else {
+  // roof: slab on the TOP tier's rect, style-specific crown, hashed HVAC boxes
+  store.fillBox(rTop.x0, roofY, rTop.z0, rTop.x1, roofY + 1, rTop.z1, MAT_CONCRETE)
+  if (t.style === 1 || t.style === 4) {
     // P23 style 1 — taller stepped METAL crown + glass mechanical penthouse:
     // a distinct sleek silhouette (a lit metal cap, not a brick parapet)
-    stampWalls(store, r, roofY + 2, roofY + 3, MAT_METAL)
-    stampWalls(store, { x0: r.x0 + 2, z0: r.z0 + 2, x1: r.x1 - 2, z1: r.z1 - 2 }, roofY + 4, roofY + 9, MAT_GLASS)
-    stampWalls(store, { x0: r.x0 + 2, z0: r.z0 + 2, x1: r.x1 - 2, z1: r.z1 - 2 }, roofY + 10, roofY + 11, MAT_METAL)
+    stampWalls(store, rTop, roofY + 2, roofY + 3, MAT_METAL)
+    stampWalls(store, { x0: rTop.x0 + 2, z0: rTop.z0 + 2, x1: rTop.x1 - 2, z1: rTop.z1 - 2 }, roofY + 4, roofY + 9, MAT_GLASS)
+    stampWalls(store, { x0: rTop.x0 + 2, z0: rTop.z0 + 2, x1: rTop.x1 - 2, z1: rTop.z1 - 2 }, roofY + 10, roofY + 11, MAT_METAL)
+  } else if (t.style === 3) {
+    // B38 style 3 — rooftop garden finish: glass parapet + grass deck
+    stampWalls(store, rTop, roofY + 2, roofY + 4, MAT_GLASS)
+    store.fillBox(rTop.x0 + 4, roofY + 2, rTop.z0 + 4, rTop.x1 - 4, roofY + 2, rTop.z1 - 4, MAT_GRASS)
+  } else {
+    // styles 0/2 — concrete parapet (style 2 gets a heavier brutalist lip)
+    stampWalls(store, rTop, roofY + 2, t.style === 2 ? roofY + 5 : roofY + 4, MAT_CONCRETE)
   }
   const w = r.x1 - r.x0 + 1
   const d = r.z1 - r.z0 + 1
-  for (let k = 0; k < 2; k++) {
-    const hx = r.x0 + 10 + (hash3(t.id, k, 0, layout.seed) % Math.max(1, w - 32))
-    const hz = r.z0 + 10 + (hash3(t.id, k, 1, layout.seed) % Math.max(1, d - 28))
-    store.fillBox(hx, roofY + 2, hz, hx + 11, roofY + 7, hz + 7, MAT_METAL)
+  if (t.style !== 3) {
+    const tw = rTop.x1 - rTop.x0 + 1
+    const td = rTop.z1 - rTop.z0 + 1
+    for (let k = 0; k < 2; k++) {
+      const hx = rTop.x0 + 10 + (hash3(t.id, k, 0, layout.seed) % Math.max(1, tw - 32))
+      const hz = rTop.z0 + 10 + (hash3(t.id, k, 1, layout.seed) % Math.max(1, td - 28))
+      store.fillBox(hx, roofY + 2, hz, hx + 11, roofY + 7, hz + 7, MAT_METAL)
+    }
   }
 
-  // entrance: double door + metal canopy on the front face
-  const doorW = 14
-  const frontLen = t.front === 'z-' || t.front === 'z+' ? w : d
-  const doorOff = (frontLen - doorW) >> 1
-  wallOpening(store, r, t.front, doorOff, doorW, g + 1, g + 24, MAT_AIR)
-  const canY = g + 25
-  if (t.front === 'z-') store.fillBox(r.x0 + doorOff - 2, canY, r.z0 - 4, r.x0 + doorOff + doorW + 1, canY + 1, r.z0 - 1, MAT_METAL)
-  else if (t.front === 'z+') store.fillBox(r.x0 + doorOff - 2, canY, r.z1 + 1, r.x0 + doorOff + doorW + 1, canY + 1, r.z1 + 4, MAT_METAL)
-  else if (t.front === 'x-') store.fillBox(r.x0 - 4, canY, r.z0 + doorOff - 2, r.x0 - 1, canY + 1, r.z0 + doorOff + doorW + 1, MAT_METAL)
-  else store.fillBox(r.x1 + 1, canY, r.z0 + doorOff - 2, r.x1 + 4, canY + 1, r.z0 + doorOff + doorW + 1, MAT_METAL)
+  // entrance: double door + metal canopy on the front face (style 2's ground
+  // floor is an open colonnade — no wall to cut, the plaza walks straight in)
+  if (t.style !== 2) {
+    const doorW = 14
+    const frontLen = t.front === 'z-' || t.front === 'z+' ? w : d
+    const doorOff = (frontLen - doorW) >> 1
+    wallOpening(store, r, t.front, doorOff, doorW, g + 1, g + 24, MAT_AIR)
+    const canY = g + 25
+    if (t.front === 'z-') store.fillBox(r.x0 + doorOff - 2, canY, r.z0 - 4, r.x0 + doorOff + doorW + 1, canY + 1, r.z0 - 1, MAT_METAL)
+    else if (t.front === 'z+') store.fillBox(r.x0 + doorOff - 2, canY, r.z1 + 1, r.x0 + doorOff + doorW + 1, canY + 1, r.z1 + 4, MAT_METAL)
+    else if (t.front === 'x-') store.fillBox(r.x0 - 4, canY, r.z0 + doorOff - 2, r.x0 - 1, canY + 1, r.z0 + doorOff + doorW + 1, MAT_METAL)
+    else store.fillBox(r.x1 + 1, canY, r.z0 + doorOff - 2, r.x1 + 4, canY + 1, r.z0 + doorOff + doorW + 1, MAT_METAL)
+  }
 
   // --- core: concrete ring + stairs + elevator shaft ------------------------
   stampWalls(store, t.core, g + 1, wallTop, MAT_CONCRETE)
@@ -747,6 +728,221 @@ function stampTower(store: ChunkStore, layout: Layout, t: Tower): void {
     store.fillBox(ox0, base + t.storyH - 1, oz0, ox1, base + t.storyH, oz1, MAT_AIR)
     stampStairRun(store, t.stairs, 'x', dir, base, TOWER_STAIR_STEPS, MAT_CONCRETE)
   }
+}
+
+/** B38 — per-floor massing for the tower styles that vary their footprint */
+interface TowerMassing {
+  rectAt: (f: number) => Rect
+  /** floor indices whose rect shrank vs the floor below (style 3 terraces) */
+  setbacks: number[]
+}
+
+/** style-2 cantilever: how far the upper block overhangs the base footprint */
+const TOWER_CANTILEVER = 5
+
+function towerMassing(t: Tower): TowerMassing {
+  const r = t.rect
+  if (t.style === 2) {
+    // pilotis ground floor at the base rect; every floor above CANTILEVERS out
+    const ex: Rect = {
+      x0: r.x0 - TOWER_CANTILEVER, z0: r.z0 - TOWER_CANTILEVER,
+      x1: r.x1 + TOWER_CANTILEVER, z1: r.z1 + TOWER_CANTILEVER,
+    }
+    return { rectAt: (f) => (f === 0 ? r : ex), setbacks: [] }
+  }
+  if (t.style === 3 && t.floors >= 7) {
+    // two setbacks toward the street: x shrinks both sides, z only on the side
+    // opposite the core (the core wall stays a sheer full-height spine)
+    const s1 = Math.max(2, Math.round(t.floors * 0.4))
+    const s2 = Math.min(t.floors - 1, Math.max(s1 + 2, Math.round(t.floors * 0.72)))
+    const coreAtZ1 = t.coreDoor === 'z-' // makeTower: doors face z- ⇔ core hugs z1
+    const shrink = (n: number): Rect => ({
+      x0: r.x0 + 7 * n, x1: r.x1 - 7 * n,
+      z0: coreAtZ1 ? r.z0 + 9 * n : r.z0,
+      z1: coreAtZ1 ? r.z1 : r.z1 - 9 * n,
+    })
+    const tiers = [r, shrink(1), shrink(2)]
+    return { rectAt: (f) => (f < s1 ? tiers[0] : f < s2 ? tiers[1] : tiers[2]), setbacks: [s1, s2] }
+  }
+  return { rectAt: () => r, setbacks: [] }
+}
+
+/** B38 style 2 — open ground-floor colonnade: chunky 5×5 concrete pilotis
+ *  along the shell line. The whole block stands on them + the core — a
+ *  deliberate demolition target (sever them and the block comes down). */
+function stampPilotis(store: ChunkStore, r: Rect, y0: number, y1: number): void {
+  const put = (x: number, z: number): void => {
+    store.fillBox(x, y0, z, x + 4, y1, z + 4, MAT_CONCRETE)
+  }
+  const step = 13
+  for (let x = r.x0 + 1; x <= r.x1 - 5; x += step) {
+    put(x, r.z0 + 1)
+    put(x, r.z1 - 5)
+  }
+  for (let z = r.z0 + 1 + step; z <= r.z1 - 5 - step + 1; z += step) {
+    put(r.x0 + 1, z)
+    put(r.x1 - 5, z)
+  }
+  // far corners are load-bearing regardless of how the step landed
+  put(r.x1 - 5, r.z0 + 1)
+  put(r.x1 - 5, r.z1 - 5)
+  put(r.x0 + 1, r.z1 - 5)
+}
+
+/** B38 — one floor of facade for the tower's style, on that floor's rect */
+function stampTowerFacade(store: ChunkStore, t: Tower, r: Rect, yb: number, f: number): void {
+  const gy0 = yb + 5
+  const gy1 = yb + t.storyH - 1
+  if (t.style === 0 || t.style === 3) {
+    // glass curtain per wall (corner columns 4 wide stay concrete)
+    store.fillBox(r.x0 + 4, gy0, r.z0, r.x1 - 4, gy1, r.z0 + 1, MAT_GLASS)
+    store.fillBox(r.x0 + 4, gy0, r.z1 - 1, r.x1 - 4, gy1, r.z1, MAT_GLASS)
+    store.fillBox(r.x0, gy0, r.z0 + 4, r.x0 + 1, gy1, r.z1 - 4, MAT_GLASS)
+    store.fillBox(r.x1 - 1, gy0, r.z0 + 4, r.x1, gy1, r.z1 - 4, MAT_GLASS)
+    // metal mullions
+    for (let x = r.x0 + 4 + t.mullion; x <= r.x1 - 5; x += t.mullion) {
+      store.fillBox(x, gy0, r.z0, x, gy1, r.z0 + 1, MAT_METAL)
+      store.fillBox(x, gy0, r.z1 - 1, x, gy1, r.z1, MAT_METAL)
+    }
+    for (let z = r.z0 + 4 + t.mullion; z <= r.z1 - 5; z += t.mullion) {
+      store.fillBox(r.x0, gy0, z, r.x0 + 1, gy1, z, MAT_METAL)
+      store.fillBox(r.x1 - 1, gy0, z, r.x1, gy1, z, MAT_METAL)
+    }
+    return
+  }
+  if (t.style === 2) {
+    // brutalist slot windows: a recessed glass band held between heavy
+    // concrete piers every 11 — mostly-concrete mass, strong shadow lines
+    const sy0 = yb + 9
+    const sy1 = yb + 17
+    store.fillBox(r.x0 + 4, sy0, r.z0 + 1, r.x1 - 4, sy1, r.z0 + 1, MAT_GLASS)
+    store.fillBox(r.x0 + 4, sy0, r.z0, r.x1 - 4, sy1, r.z0, MAT_AIR)
+    store.fillBox(r.x0 + 4, sy0, r.z1 - 1, r.x1 - 4, sy1, r.z1 - 1, MAT_GLASS)
+    store.fillBox(r.x0 + 4, sy0, r.z1, r.x1 - 4, sy1, r.z1, MAT_AIR)
+    store.fillBox(r.x0 + 1, sy0, r.z0 + 4, r.x0 + 1, sy1, r.z1 - 4, MAT_GLASS)
+    store.fillBox(r.x0, sy0, r.z0 + 4, r.x0, sy1, r.z1 - 4, MAT_AIR)
+    store.fillBox(r.x1 - 1, sy0, r.z0 + 4, r.x1 - 1, sy1, r.z1 - 4, MAT_GLASS)
+    store.fillBox(r.x1, sy0, r.z0 + 4, r.x1, sy1, r.z1 - 4, MAT_AIR)
+    for (let x = r.x0 + 4 + 11; x <= r.x1 - 5; x += 11) {
+      store.fillBox(x, sy0, r.z0, x + 1, sy1, r.z0 + 1, MAT_CONCRETE)
+      store.fillBox(x, sy0, r.z1 - 1, x + 1, sy1, r.z1, MAT_CONCRETE)
+    }
+    for (let z = r.z0 + 4 + 11; z <= r.z1 - 5; z += 11) {
+      store.fillBox(r.x0, sy0, z, r.x0 + 1, sy1, z + 1, MAT_CONCRETE)
+      store.fillBox(r.x1 - 1, sy0, z, r.x1, sy1, z + 1, MAT_CONCRETE)
+    }
+    return
+  }
+  if (t.style === 1) {
+    // P23 style 1 — sleek HORIZONTAL-RIBBON tower: a continuous glass skin
+    // with a METAL SPANDREL band at each floor line (strong horizontal
+    // emphasis vs style 0's vertical mullions), corner columns in metal too.
+    // BUG2 — glass RECESSED one voxel behind the frame plane (outer row air,
+    // glass on the inner row) so the transparent front never sits coplanar
+    // with the opaque frame — that pair flickered a black bar per floor line.
+    store.fillBox(r.x0 + 3, gy0, r.z0, r.x1 - 3, gy1, r.z0, MAT_AIR)
+    store.fillBox(r.x0 + 3, gy0, r.z0 + 1, r.x1 - 3, gy1, r.z0 + 1, MAT_GLASS)
+    store.fillBox(r.x0 + 3, gy0, r.z1, r.x1 - 3, gy1, r.z1, MAT_AIR)
+    store.fillBox(r.x0 + 3, gy0, r.z1 - 1, r.x1 - 3, gy1, r.z1 - 1, MAT_GLASS)
+    store.fillBox(r.x0, gy0, r.z0 + 3, r.x0, gy1, r.z1 - 3, MAT_AIR)
+    store.fillBox(r.x0 + 1, gy0, r.z0 + 3, r.x0 + 1, gy1, r.z1 - 3, MAT_GLASS)
+    store.fillBox(r.x1, gy0, r.z0 + 3, r.x1, gy1, r.z1 - 3, MAT_AIR)
+    store.fillBox(r.x1 - 1, gy0, r.z0 + 3, r.x1 - 1, gy1, r.z1 - 3, MAT_GLASS)
+    // metal corner mullions (thin, run the full story) + metal spandrel band
+    // capping each floor → horizontal ribbon read
+    for (const yy of [gy1 - 1, gy1]) {
+      store.fillBox(r.x0, yy, r.z0, r.x1, yy, r.z0 + 1, MAT_METAL)
+      store.fillBox(r.x0, yy, r.z1 - 1, r.x1, yy, r.z1, MAT_METAL)
+      store.fillBox(r.x0, yy, r.z0, r.x0 + 1, yy, r.z1, MAT_METAL)
+      store.fillBox(r.x1 - 1, yy, r.z0, r.x1, yy, r.z1, MAT_METAL)
+    }
+    for (const cx of [r.x0, r.x1 - 1]) {
+      store.fillBox(cx, gy0, r.z0, cx + 1, gy1, r.z0 + 1, MAT_METAL)
+      store.fillBox(cx, gy0, r.z1 - 1, cx + 1, gy1, r.z1, MAT_METAL)
+    }
+    return
+  }
+  // style 4 — floor-to-ceiling dark-glass slab: tall recessed glass (short
+  // spandrel), dense thin mullions every 8 — sleeker than style 0's grid
+  const ty0 = yb + (f === 0 ? 5 : 2)
+  store.fillBox(r.x0 + 3, ty0, r.z0, r.x1 - 3, gy1, r.z0, MAT_AIR)
+  store.fillBox(r.x0 + 3, ty0, r.z0 + 1, r.x1 - 3, gy1, r.z0 + 1, MAT_GLASS)
+  store.fillBox(r.x0 + 3, ty0, r.z1, r.x1 - 3, gy1, r.z1, MAT_AIR)
+  store.fillBox(r.x0 + 3, ty0, r.z1 - 1, r.x1 - 3, gy1, r.z1 - 1, MAT_GLASS)
+  store.fillBox(r.x0, ty0, r.z0 + 3, r.x0, gy1, r.z1 - 3, MAT_AIR)
+  store.fillBox(r.x0 + 1, ty0, r.z0 + 3, r.x0 + 1, gy1, r.z1 - 3, MAT_GLASS)
+  store.fillBox(r.x1, ty0, r.z0 + 3, r.x1, gy1, r.z1 - 3, MAT_AIR)
+  store.fillBox(r.x1 - 1, ty0, r.z0 + 3, r.x1 - 1, gy1, r.z1 - 3, MAT_GLASS)
+  for (let x = r.x0 + 3 + 8; x <= r.x1 - 4; x += 8) {
+    store.fillBox(x, ty0, r.z0 + 1, x, gy1, r.z0 + 1, MAT_METAL)
+    store.fillBox(x, ty0, r.z1 - 1, x, gy1, r.z1 - 1, MAT_METAL)
+  }
+  for (let z = r.z0 + 3 + 8; z <= r.z1 - 4; z += 8) {
+    store.fillBox(r.x0 + 1, ty0, z, r.x0 + 1, gy1, z, MAT_METAL)
+    store.fillBox(r.x1 - 1, ty0, z, r.x1 - 1, gy1, z, MAT_METAL)
+  }
+}
+
+/** B38 style 3 — dress a setback: glass parapet along the exposed deck edges
+ *  + grass garden strips on the bands left uncovered by the new tier. */
+function stampTerrace(store: ChunkStore, below: Rect, rf: Rect, yb: number): void {
+  const py0 = yb + 1
+  const py1 = yb + 3
+  // parapet only on edges that actually stepped back (core-side edge is flush)
+  if (rf.x0 > below.x0) store.fillBox(below.x0, py0, below.z0, below.x0, py1, below.z1, MAT_GLASS)
+  if (rf.x1 < below.x1) store.fillBox(below.x1, py0, below.z0, below.x1, py1, below.z1, MAT_GLASS)
+  if (rf.z0 > below.z0) store.fillBox(below.x0, py0, below.z0, below.x1, py1, below.z0, MAT_GLASS)
+  if (rf.z1 < below.z1) store.fillBox(below.x0, py0, below.z1, below.x1, py1, below.z1, MAT_GLASS)
+  // grass strips on the exposed bands, held off both the parapet and the wall
+  const strip = (x0: number, z0: number, x1: number, z1: number): void => {
+    if (x1 - x0 >= 2 && z1 - z0 >= 2) store.fillBox(x0, py0, z0, x1, py0, z1, MAT_GRASS)
+  }
+  if (rf.x0 > below.x0) strip(below.x0 + 2, below.z0 + 2, rf.x0 - 3, below.z1 - 2)
+  if (rf.x1 < below.x1) strip(rf.x1 + 3, below.z0 + 2, below.x1 - 2, below.z1 - 2)
+  if (rf.z0 > below.z0) strip(below.x0 + 2, below.z0 + 2, below.x1 - 2, rf.z0 - 3)
+  if (rf.z1 < below.z1) strip(below.x0 + 2, rf.z1 + 3, below.x1 - 2, below.z1 - 2)
+}
+
+/** B38 style 4 — brick service spine on a front corner (full height, reads as
+ *  a chimney past the roof) + the SKYWING: a 2-story glass box cantilevered
+ *  ~20 voxels off the front face near the top. Bomb its root to drop it. */
+function stampSpineAndWing(store: ChunkStore, t: Tower, g: number, roofY: number): void {
+  const r = t.rect
+  // spine: 6×6 brick, on the corner clockwise of the front face
+  const sx = t.front === 'x+' ? r.x1 - 5 : r.x0
+  const sz = t.front === 'z+' ? r.z1 - 5 : r.z0
+  store.fillBox(sx, g + 1, sz, sx + 5, roofY + 6, sz + 5, MAT_BRICK)
+
+  if (t.floors < 5) return
+  const P = 20 // protrusion
+  const yb = g + (t.floors - 3) * t.storyH // wing floors: floors-3 and floors-2
+  const y1 = yb + 2 * t.storyH - 1
+  const w = r.x1 - r.x0 + 1
+  const d = r.z1 - r.z0 + 1
+  const along = t.front === 'z-' || t.front === 'z+' ? w : d
+  const ww = Math.min(44, along - 28)
+  const off = (along - ww) >> 1
+  // wing box in world coords per front orientation (embeds 2 into the shell)
+  let b: Rect
+  if (t.front === 'z-') b = { x0: r.x0 + off, z0: r.z0 - P, x1: r.x0 + off + ww - 1, z1: r.z0 + 1 }
+  else if (t.front === 'z+') b = { x0: r.x0 + off, z0: r.z1 - 1, x1: r.x0 + off + ww - 1, z1: r.z1 + P }
+  else if (t.front === 'x-') b = { x0: r.x0 - P, z0: r.z0 + off, x1: r.x0 + 1, z1: r.z0 + off + ww - 1 }
+  else b = { x0: r.x1 - 1, z0: r.z0 + off, x1: r.x1 + P, z1: r.z0 + off + ww - 1 }
+
+  // slabs top/bottom, glass skin, metal edge ribs, hollow interior
+  store.fillBox(b.x0, yb - 1, b.z0, b.x1, yb, b.z1, MAT_CONCRETE)
+  store.fillBox(b.x0, y1, b.z0, b.x1, y1 + 1, b.z1, MAT_CONCRETE)
+  stampWalls(store, b, yb + 1, y1 - 1, MAT_GLASS)
+  for (const [cx, cz] of [
+    [b.x0, b.z0], [b.x1 - 1, b.z0], [b.x0, b.z1 - 1], [b.x1 - 1, b.z1 - 1],
+  ] as const) {
+    store.fillBox(cx, yb + 1, cz, cx + 1, y1 - 1, cz + 1, MAT_METAL)
+  }
+  // open the tower wall into the wing (walkable skybar)
+  if (t.front === 'z-') store.fillBox(b.x0 + 3, yb + 1, r.z0, b.x1 - 3, y1 - 4, r.z0 + 1, MAT_AIR)
+  else if (t.front === 'z+') store.fillBox(b.x0 + 3, yb + 1, r.z1 - 1, b.x1 - 3, y1 - 4, r.z1, MAT_AIR)
+  else if (t.front === 'x-') store.fillBox(r.x0, yb + 1, b.z0 + 3, r.x0 + 1, y1 - 4, b.z1 - 3, MAT_AIR)
+  else store.fillBox(r.x1 - 1, yb + 1, b.z0 + 3, r.x1, y1 - 4, b.z1 - 3, MAT_AIR)
 }
 
 /** T50 — plaza apron around the towers: concrete with subtle paver accents */
