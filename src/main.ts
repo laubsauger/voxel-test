@@ -40,7 +40,7 @@ import { MapSystem } from './ui/map/map-system'
 import { adaptLayout } from './ui/map/layout-adapter'
 import { installVehicleDevControls } from './render/vehicle-meshes'
 import { generateLayout } from './sim/gen/layout'
-import { WORLD_VX, WORLD_VZ } from './world/chunks'
+import { CHUNK_COUNT, WORLD_VX, WORLD_VZ } from './world/chunks'
 import { MpLobby, NetHud, StallBanner, DesyncOverlay } from './ui/mp'
 import { CombatHud } from './ui/combat-hud'
 import { SignalingClient, type Signaling } from './net/signaling'
@@ -1079,6 +1079,20 @@ if (boot.dev) {
         frozen: game.phys.debris?.frozen.size ?? 0,
         active: game.phys.debris?.activeCount ?? 0,
       }
+    },
+    /** T97/V21 — chunk-kind census (boot-memory verification probe) */
+    get chunkCensus() {
+      const w = game.sim.world as unknown as { chunkAtRaw(i: number): { kind: number }; dirty: Set<number> }
+      const out = { empty: 0, uniform: 0, dense: 0, palette: 0, dirty: w.dirty.size }
+      const CHUNK_TOTAL = CHUNK_COUNT
+      for (let i = 0; i < CHUNK_TOTAL; i++) {
+        const k = w.chunkAtRaw(i).kind
+        if (k === 0) out.empty++
+        else if (k === 1) out.uniform++
+        else if (k === 2) out.dense++
+        else out.palette++
+      }
+      return out
     },
   }
 }

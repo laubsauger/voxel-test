@@ -14,10 +14,15 @@ export const CHUNK = 32
 export const CHUNK_VOL = CHUNK * CHUNK * CHUNK
 // B35 — 160 (5120² = ~512 m). Physics colliders + render meshes both STREAM to
 // the sim anchors / camera (bounded cost), so the size ceiling is now the
-// uncompressed dense-chunk store memory (~1.2 GB here); bigger needs palette compression.
-export const WORLD_CX = 160
+// uncompressed dense-chunk store memory; bigger needs palette compression.
+// T97/V21 — 256 (8192² = ~819 m) for the Bombay Beach zone. Dense store would
+// peak ~3 GB uncompressed at boot, so Game.create runs a FULL compactStep
+// sweep (palette compression) right after stampScene, before physics/water —
+// steady-state heap must hold ≤ ~1.5 GB. Frame cost is world-size independent
+// (radius-bounded streaming); boot stamp time ×~2.6.
+export const WORLD_CX = 256
 export const WORLD_CY = 24
-export const WORLD_CZ = 160
+export const WORLD_CZ = 256
 export const WORLD_VX = WORLD_CX * CHUNK
 export const WORLD_VY = WORLD_CY * CHUNK
 export const WORLD_VZ = WORLD_CZ * CHUNK
@@ -355,14 +360,19 @@ export class ChunkStore {
    * tick and its (non-deterministic) schedule cannot cause desync. Returns the
    * approximate bytes reclaimed this call.
    */
-  compactStep(maxCompress: number, maxScan: number): number {
+  compactStep(maxCompress: number, maxScan: number, ignoreDirty = false): number {
     let reclaimed = 0
     let compressed = 0
     let scanned = 0
     let i = this.compactCursor
     while (compressed < maxCompress && scanned < maxScan) {
       const c = this.chunks[i]
-      if (c.kind === ChunkKind.Dense && !this.dirty.has(i) && this.compress(i)) {
+      // T97/V21 — ignoreDirty: the boot sweep runs BEFORE physics/render drain
+      // the stamp's dirty set (the whole world), which the default skip would
+      // exclude entirely. Compressing pre-drain is safe: reads bit-unpack or
+      // inflate on demand (hot chunks near spawn go Dense again, the far world
+      // stays compressed), writes inflate, hash reads denseView (lossless).
+      if (c.kind === ChunkKind.Dense && (ignoreDirty || !this.dirty.has(i)) && this.compress(i)) {
         compressed++
         reclaimed += CHUNK_VOL - this.chunks[i].packed!.length - this.chunks[i].palette!.length
       }

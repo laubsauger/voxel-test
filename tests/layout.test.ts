@@ -90,7 +90,7 @@ describe('town layout generator (T19/T50, V2)', () => {
     // every-other road (rim blocks ~2×, open/rural), so the 5× world's grid
     // drops from 10×10 to 8×8 blocks while the dense downtown core is untouched.
     const l = generateLayout(7)
-    expect(l.districts.length).toBe(65) // 8×8 blocks + 1 beach strip (P22: coarsened rim)
+    expect(l.districts.length).toBe(145) // 12×12 blocks + 1 beach strip (P22 rim thinning; T97: 256-chunk world)
     const byKind = new Map<string, number>()
     for (const d of l.districts) byKind.set(d.kind, (byKind.get(d.kind) ?? 0) + 1)
     // downtown core (unchanged from the T50 4×4 plan — centered regardless of size)
@@ -99,7 +99,7 @@ describe('town layout generator (T19/T50, V2)', () => {
     expect(byKind.get('commercial')).toBe(4)
     // ring: 3 core parks + 41 nature-ring parks (P22 rim thinning halves the
     // rim block count vs the old uniform grid)
-    expect(byKind.get('park')).toBe(44)
+    expect(byKind.get('park')).toBe(124)
     expect(byKind.get('desert')).toBe(4)
     expect(byKind.get('airport')).toBe(3)
     expect(byKind.get('beach')).toBe(1)

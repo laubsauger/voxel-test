@@ -243,7 +243,9 @@ export class ChunkMeshManager {
    * (its own setVoxel), exactly as an already-empty-meshed one would be. */
   enqueueAll(): void {
     for (let ci = 0; ci < CHUNK_COUNT; ci++) {
-      if (this.world.chunkAt(ci).kind === ChunkKind.Empty) continue
+      // T97 — probeChunk: kind check must NOT inflate palette chunks (chunkAt
+      // did, defeating the boot compaction sweep world-wide)
+      if (this.world.probeChunk(ci).kind === 'empty') continue
       if (this.isBuried(ci)) continue
       this.scheduler.enqueue(ci)
     }
@@ -302,7 +304,7 @@ export class ChunkMeshManager {
       for (let cz = rz * REGION; cz < rz * REGION + REGION && cz < WORLD_CZ; cz++) {
         for (let cx = rx * REGION; cx < rx * REGION + REGION && cx < WORLD_CX; cx++) {
           const ci = chunkIndex(cx, cy, cz)
-          if (this.world.chunkAt(ci).kind === ChunkKind.Empty) continue
+          if (this.world.probeChunk(ci).kind === 'empty') continue // T97 — no inflation
           if (this.isBuried(ci)) continue
           this.scheduler.enqueue(ci)
         }
@@ -333,7 +335,7 @@ export class ChunkMeshManager {
   /** true iff a Uniform-solid chunk has all 6 faces against solid voxels, so
    * the greedy mesher would emit nothing for it (V6: pure ChunkStore reads). */
   private isBuried(ci: number): boolean {
-    const c = this.world.chunkAt(ci)
+    const c = this.world.chunkAtRaw(ci) // T97 — kind/mat probe, no inflation
     if (c.kind !== ChunkKind.Uniform || c.mat === 0) return false
     const [cx, cy, cz] = chunkCoords(ci)
     return (
@@ -453,7 +455,7 @@ export class ChunkMeshManager {
         this.versions.set(ci, this.nextVersion++)
         continue
       }
-      if (this.world.chunkAt(ci).kind === ChunkKind.Empty) {
+      if (this.world.probeChunk(ci).kind === 'empty') { // T97 — no inflation
         // no voxels ⇒ no faces; skip the worker round-trip and invalidate
         // any in-flight result so it can't resurrect a removed mesh
         this.versions.set(ci, this.nextVersion++)

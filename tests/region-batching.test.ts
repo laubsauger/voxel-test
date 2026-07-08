@@ -38,12 +38,13 @@ describe('T35 region batching', () => {
     // region count is only a loose sanity bound, not the runtime draw count.
     // B36 — REGION reverted 8→4 (cheap edits), so ~8× more, smaller regions; the
     // 5× world has more surface too. Bound scaled to the 5× REGION-4 occupancy.
+    // T97 — rescaled ×(256/160)² for the 819 m world (measured 16.7k at resize).
     const store = new ChunkStore()
     stampScene(store, generateLayout(1337), placeholderProps())
     const occupied = new Set<number>()
     for (let ci = 0; ci < CHUNK_COUNT; ci++) {
       if (store.chunkAt(ci).kind !== ChunkKind.Empty) occupied.add(regionIndex(ci))
     }
-    expect(occupied.size * 4).toBeLessThanOrEqual(9000)
+    expect(occupied.size * 4).toBeLessThanOrEqual(24000)
   })
 })

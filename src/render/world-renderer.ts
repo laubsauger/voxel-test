@@ -157,6 +157,8 @@ export class WorldRenderer {
   private readonly lampTargets: number[] = [] // B31 — per-lamp intensity target
   private readonly lampPositions: Vector3[] = []
   private lampScanCursor = 0
+  /** T97 — scratch for denseView reads in scanLampChunks (no palette inflation) */
+  private readonly lampScanScratch = new Uint8Array(32 * 32 * 32)
   private readonly lampClusters = new Map<number, { x: number; y: number; z: number; n: number }>()
   private lampPickTimer = 0
   private csm!: CSMShadowNode
@@ -765,10 +767,13 @@ export class WorldRenderer {
     let denseScanned = 0
     let ci = this.lampScanCursor
     for (; ci < CHUNK_COUNT && denseScanned < LAMP_SCAN_CHUNKS_PER_FRAME; ci++) {
-      const c = this.world.chunkAt(ci)
-      if (c.kind !== ChunkKind.Dense) continue // uniform-lamp chunks don't exist
+      // T97/V21 — read via chunkAtRaw + denseView: the old chunkAt call
+      // INFLATED every palette-compressed chunk it merely looked at, undoing
+      // the boot compaction across the whole world (~1.3 GB re-inflated).
+      const kind = this.world.chunkAtRaw(ci).kind
+      if (kind !== ChunkKind.Dense && kind !== ChunkKind.Palette) continue // uniform-lamp chunks don't exist
       denseScanned++
-      const data = c.data!
+      const data = this.world.denseView(ci, this.lampScanScratch)!
       const cx = ci % WORLD_CX
       const cz = ((ci / WORLD_CX) | 0) % WORLD_CZ
       const cy = (ci / (WORLD_CX * WORLD_CZ)) | 0

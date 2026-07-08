@@ -42,7 +42,7 @@ import { generateLayout } from './sim/gen/layout'
 import { stampScene } from './sim/gen/stamper'
 import { placeholderProps } from './sim/gen/props'
 import { nextSeq } from './render/command-seq'
-import { VOXEL_SIZE, WORLD_VX, WORLD_VZ } from './world/chunks'
+import { CHUNK_COUNT, VOXEL_SIZE, WORLD_VX, WORLD_VZ } from './world/chunks'
 import type { Settings } from './ui/settings-store'
 import { PlayerMesh } from './render/player-mesh'
 
@@ -568,6 +568,15 @@ export class Game {
     registerEditOps(sim)
     const layout = generateLayout(seed)
     const { waterFills, vehicleSpawns, aircraftSpawns } = stampScene(sim.world, layout, placeholderProps())
+
+    // T97/V21 — full palette-compaction sweep straight after the stamp: at
+    // WORLD_CX=256 the freshly-stamped dense store would peak ~3 GB; one
+    // bounded pass over every chunk compresses it before physics/water attach.
+    // Memory-only (hash-neutral, same as the per-frame trickle in startLoop).
+    for (let swept = 0; swept < CHUNK_COUNT; swept += 65536) {
+      sim.world.compactStep(65536, 65536, /*ignoreDirty*/ true) // pre-drain: dirty = whole world
+      await nextFrame() // keep the preloader responsive between sweep slices
+    }
 
     const water = attachWaterSim(sim)
     // edits wake settled water (breached pool wall etc.)
