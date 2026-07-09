@@ -64,31 +64,32 @@ const FONT4: Record<string, readonly number[]> = {
 
 /**
  * Voxel lettering on a x = const wall plane, read by a viewer standing west
- * looking +x (their left = +z): chars advance toward -z from zLeft.
- * Returns nothing; writes `mat` over the wall voxels (caller aligns band).
+ * looking +x. Facing +x with up +y puts the viewer's LEFT at -z (up×fwd), so
+ * left-to-right reading advances +z from zStart (was -z — mirrored 'IKS', the
+ * bug the first tour screenshot caught).
  */
 function stampTextXFace(
   store: ChunkStore,
   text: string,
   x: number,
   yTop: number,
-  zLeft: number,
+  zStart: number,
   mat: number,
 ): void {
-  let z = zLeft
+  let z = zStart
   for (const ch of text) {
     if (ch === ' ') {
-      z -= 4
+      z += 4
       continue
     }
     const glyph = FONT4[ch]
     if (!glyph) throw new Error(`T103 stampTextXFace: no glyph for '${ch}'`)
     for (let row = 0; row < 5; row++) {
       for (let col = 0; col < 4; col++) {
-        if ((glyph[row] >> (3 - col)) & 1) store.setVoxel(x, yTop - row, z - col, mat)
+        if ((glyph[row] >> (3 - col)) & 1) store.setVoxel(x, yTop - row, z + col, mat)
       }
     }
-    z -= 5 // 4 columns + 1 gap
+    z += 5 // 4 columns + 1 gap
   }
 }
 
@@ -133,7 +134,7 @@ function stampSkiInn(store: ChunkStore, r: Rect, g: number): void {
 
   // 'SKI INN' char lettering above the door (5 tall, reads from the spur).
   // Width 33 (6 glyphs ×5 − trailing gap + space 4), centered on the door.
-  stampTextXFace(store, 'SKI INN', r.x0, g + SKI.letterY1, r.z0 + 56, MAT_CHAR)
+  stampTextXFace(store, 'SKI INN', r.x0, g + SKI.letterY1, r.z0 + 24, MAT_CHAR) // band z 24..56, reads left→right from the street
 
   // dollar-bill wall — inner wall band: bone-shell speckle + sparse art
   // flecks (~1/16, V19-tiny). Guard on the wall mat so windows/door survive.
