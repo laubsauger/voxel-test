@@ -10,7 +10,9 @@
  *   0 air, 1 dirt, 2 grass, 3 asphalt, 4 concrete, 5 brick, 6 wood,
  *   7 plaster, 8 glass, 9 metal, 10 water-solid marker (water track: solid
  *   cells the CA treats as source volume), 11 leaves, 12 rooftile, 13 lamp,
- *   14 flesh (player body segments), 15 paint (road markings).
+ *   14 flesh (player body segments), 15 paint (road markings), 16 sand (B32),
+ *   17-28 bombay set (T99: salt-crust, playa-mud, rust, char, bone-shell,
+ *   cracked-asphalt, galv-metal, opera-blue, art-red/yellow/teal/pink).
  *
  * Strength scale: blast resistance ~0..10. Explode destroys where
  * falloff · power ≥ strength (src/sim/destruction.ts). Air/water 0.
@@ -60,6 +62,19 @@ export const MAT_LAMP = 13
 export const MAT_FLESH = 14
 export const MAT_PAINT = 15
 export const MAT_SAND = 16 // B32 — desert dunes + beach
+// T99 bombay set — ids reserved in src/sim/gen/INTEGRATION-content.md first (B1)
+export const MAT_SALT_CRUST = 17 // playa crust, walkable
+export const MAT_PLAYA_MUD = 18 // cracked mud patches
+export const MAT_RUST = 19 // wrecked cars, scrap art
+export const MAT_CHAR = 20 // burned trailer shells — already burned, NOT flammable
+export const MAT_BONE_SHELL = 21 // fish-bone/barnacle speckle band
+export const MAT_CRACKED_ASPHALT = 22 // weathered bombay streets
+export const MAT_GALV_METAL = 23 // dull galvanized trailer skins
+export const MAT_OPERA_BLUE = 24 // Opera House #3E7FBF
+export const MAT_ART_RED = 25 // art pop #E63946
+export const MAT_ART_YELLOW = 26 // art pop #F4C430
+export const MAT_ART_TEAL = 27 // art pop #2EC4B6
+export const MAT_ART_PINK = 28 // art pop #FF6FB5
 
 /** table indexed by material id; null = reserved slot */
 export const MATERIALS: (Material | null)[] = [
@@ -80,6 +95,19 @@ export const MATERIALS: (Material | null)[] = [
   { id: 14, name: 'flesh', colorRamp: [0xc08a7a, 0xd8a090], strength: 1, density: 1000, flags: MatFlags.None },
   { id: 15, name: 'paint', colorRamp: [0xf0f0ea, 0xffffff], strength: 1, density: 2400, flags: MatFlags.None },
   { id: 16, name: 'sand', colorRamp: [0xc2a868, 0xd8c48a], strength: 1, density: 1500, flags: MatFlags.None },
+  // T99 bombay palette (docs/research/bombay-beach.md §1.7)
+  { id: 17, name: 'salt-crust', colorRamp: [0xede8dc, 0xf7f4ea], strength: 1, density: 1200, flags: MatFlags.None },
+  { id: 18, name: 'playa-mud', colorRamp: [0x8a7458, 0xc9b08a], strength: 1, density: 1500, flags: MatFlags.None },
+  { id: 19, name: 'rust', colorRamp: [0x7a3b24, 0xb4552d], strength: 5, density: 7000, flags: MatFlags.None },
+  { id: 20, name: 'char', colorRamp: [0x17130f, 0x2e2721], strength: 1, density: 400, flags: MatFlags.Floats },
+  { id: 21, name: 'bone-shell', colorRamp: [0xcfc7b4, 0xf2ecdc], strength: 1, density: 1100, flags: MatFlags.None },
+  { id: 22, name: 'cracked-asphalt', colorRamp: [0x2a2a28, 0x48443c], strength: 3, density: 2400, flags: MatFlags.None },
+  { id: 23, name: 'galv-metal', colorRamp: [0x7f8689, 0x9aa0a3], strength: 6, density: 7100, flags: MatFlags.None },
+  { id: 24, name: 'opera-blue', colorRamp: [0x366ea6, 0x4a8fd2], strength: 2, density: 600, flags: MatFlags.Flammable | MatFlags.Floats },
+  { id: 25, name: 'art-red', colorRamp: [0xd32f3c, 0xe63946], strength: 2, density: 600, flags: MatFlags.Flammable | MatFlags.Floats },
+  { id: 26, name: 'art-yellow', colorRamp: [0xdfae22, 0xf4c430], strength: 2, density: 600, flags: MatFlags.Flammable | MatFlags.Floats },
+  { id: 27, name: 'art-teal', colorRamp: [0x27ab9f, 0x2ec4b6], strength: 2, density: 600, flags: MatFlags.Flammable | MatFlags.Floats },
+  { id: 28, name: 'art-pink', colorRamp: [0xe95fa3, 0xff6fb5], strength: 2, density: 600, flags: MatFlags.Flammable | MatFlags.Floats },
 ]
 
 export function getMaterial(id: number): Material | null {

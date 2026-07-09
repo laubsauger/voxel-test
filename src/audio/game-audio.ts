@@ -12,19 +12,31 @@
  */
 import {
   MAT_AIR,
+  MAT_ART_PINK,
+  MAT_ART_RED,
+  MAT_ART_TEAL,
+  MAT_ART_YELLOW,
   MAT_ASPHALT,
+  MAT_BONE_SHELL,
   MAT_BRICK,
+  MAT_CHAR,
   MAT_CONCRETE,
+  MAT_CRACKED_ASPHALT,
   MAT_DIRT,
   MAT_FLESH,
+  MAT_GALV_METAL,
   MAT_GLASS,
   MAT_GRASS,
   MAT_LAMP,
   MAT_LEAVES,
   MAT_METAL,
+  MAT_OPERA_BLUE,
   MAT_PAINT,
   MAT_PLASTER,
+  MAT_PLAYA_MUD,
   MAT_ROOFTILE,
+  MAT_RUST,
+  MAT_SALT_CRUST,
   MAT_SAND,
   MAT_WATER_SOLID,
   MAT_WOOD,
@@ -52,12 +64,16 @@ export function footstepSurface(mat: number): FootstepSurface | null {
       return null
     case MAT_DIRT:
     case MAT_SAND:
+    case MAT_SALT_CRUST: // T99 — soft playa ground family
+    case MAT_PLAYA_MUD:
+    case MAT_BONE_SHELL:
       return 'dirt' // sand shares the soft-ground footstep set
     case MAT_GRASS:
     case MAT_LEAVES:
       return 'grass'
     case MAT_ASPHALT:
     case MAT_PAINT:
+    case MAT_CRACKED_ASPHALT: // T99 — same road skin, just weathered
       return 'asphalt' // paint is a 1-voxel skin on road surfaces
     case MAT_CONCRETE:
     case MAT_BRICK:
@@ -66,8 +82,16 @@ export function footstepSurface(mat: number): FootstepSurface | null {
     case MAT_GLASS:
     case MAT_METAL:
     case MAT_LAMP:
+    case MAT_RUST: // T99 — metal family
+    case MAT_GALV_METAL:
       return 'concrete' // hard mineral/metal surfaces share the concrete set
     case MAT_WOOD:
+    case MAT_CHAR: // T99 — burned wood, still wood underfoot
+    case MAT_OPERA_BLUE: // T99 — painted-wood art family
+    case MAT_ART_RED:
+    case MAT_ART_YELLOW:
+    case MAT_ART_TEAL:
+    case MAT_ART_PINK:
       return 'wood'
     case MAT_WATER_SOLID:
       return 'water'
@@ -86,6 +110,9 @@ export function impactGroup(mat: number): string | null {
     case MAT_DIRT:
     case MAT_FLESH:
     case MAT_SAND:
+    case MAT_SALT_CRUST: // T99 — soft playa family
+    case MAT_PLAYA_MUD:
+    case MAT_BONE_SHELL:
       return 'impact-dirt'
     case MAT_GRASS:
     case MAT_LEAVES:
@@ -95,15 +122,24 @@ export function impactGroup(mat: number): string | null {
     case MAT_CONCRETE:
     case MAT_PLASTER:
     case MAT_ROOFTILE:
+    case MAT_CRACKED_ASPHALT: // T99
       return 'impact-concrete'
     case MAT_BRICK:
       return 'impact-brick'
     case MAT_WOOD:
+    case MAT_CHAR: // T99 — burned wood
+    case MAT_OPERA_BLUE: // T99 — painted-wood art family
+    case MAT_ART_RED:
+    case MAT_ART_YELLOW:
+    case MAT_ART_TEAL:
+    case MAT_ART_PINK:
       return 'impact-wood'
     case MAT_GLASS:
       return 'impact-glass'
     case MAT_METAL:
     case MAT_LAMP:
+    case MAT_RUST: // T99 — metal family
+    case MAT_GALV_METAL:
       return 'impact-metal'
     case MAT_WATER_SOLID:
       return 'impact-water'

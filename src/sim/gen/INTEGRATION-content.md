@@ -129,7 +129,33 @@ bench (parks + cabana), shed. `stampScene` throws on any kind without a grid.
 | 14 | flesh | player body segments | |
 | 15 | paint | road markings, parking stalls, white | |
 
-The table is FULL (0-15). Never renumber existing ids (V13).
+Ids 0-15 original town set; 16 = sand (B32). Never renumber existing ids (V13).
+
+## Material id reservations (B1 discipline — reserve HERE before adding to materials.ts)
+
+Any track adding materials claims ids in this table FIRST, then lands the
+matching rows in `src/sim/materials.ts`. No id is valid until listed here.
+
+### T99 — WP1 bombay palette (reserved 2026-07-09)
+
+| id | name | used for | flags |
+|---|---|---|---|
+| 17 | salt-crust | playa surface, walkable bleached crust, scum line | |
+| 18 | playa-mud | cracked-mud patches, dirt alleys, sand-drift mud | |
+| 19 | rust | wrecked cars, scrap creature, drive-in hulks, corrugate streaks | |
+| 20 | char | burned trailer shells, collapsed roof rubble (already burned — NOT flammable) | floats |
+| 21 | bone-shell | fish-skeleton speckle band, barnacle crust | |
+| 22 | cracked-asphalt | bombay streets, weathered patches vs fresh asphalt (3) | |
+| 23 | galv-metal | trailer skins, roof sheet, dishes — dull vs metal (9) | |
+| 24 | opera-blue | Opera House facade #3E7FBF | flammable, floats |
+| 25 | art-red | art pops #E63946 (TV wall, signs) | flammable, floats |
+| 26 | art-yellow | art pops #F4C430 | flammable, floats |
+| 27 | art-teal | art pops #2EC4B6 | flammable, floats |
+| 28 | art-pink | art pops #FF6FB5 | flammable, floats |
+
+Next free id: 29. Palette cap headroom: P18 palette compression bails past
+PALETTE_MAX=128 distinct materials per chunk (`src/world/chunks.ts`) and voxel
+bytes cap the table at 256 — 29 total ids is far under both.
 
 ## Derived Prng streams (V2 bookkeeping)
 

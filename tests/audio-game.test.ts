@@ -35,6 +35,19 @@ describe('material id → footstep surface', () => {
     flesh: 'dirt',
     paint: 'asphalt',
     sand: 'dirt',
+    // T99 bombay set
+    'salt-crust': 'dirt',
+    'playa-mud': 'dirt',
+    rust: 'concrete',
+    char: 'wood',
+    'bone-shell': 'dirt',
+    'cracked-asphalt': 'asphalt',
+    'galv-metal': 'concrete',
+    'opera-blue': 'wood',
+    'art-red': 'wood',
+    'art-yellow': 'wood',
+    'art-teal': 'wood',
+    'art-pink': 'wood',
   }
 
   it('maps every material in the sim table (exhaustive, keyed by name not index)', () => {
@@ -71,6 +84,19 @@ describe('material id → impact group', () => {
     flesh: 'impact-dirt',
     paint: 'impact-concrete',
     sand: 'impact-dirt',
+    // T99 bombay set
+    'salt-crust': 'impact-dirt',
+    'playa-mud': 'impact-dirt',
+    rust: 'impact-metal',
+    char: 'impact-wood',
+    'bone-shell': 'impact-dirt',
+    'cracked-asphalt': 'impact-concrete',
+    'galv-metal': 'impact-metal',
+    'opera-blue': 'impact-wood',
+    'art-red': 'impact-wood',
+    'art-yellow': 'impact-wood',
+    'art-teal': 'impact-wood',
+    'art-pink': 'impact-wood',
   }
 
   it('maps every material in the sim table (exhaustive)', () => {
