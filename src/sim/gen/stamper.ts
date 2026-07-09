@@ -37,6 +37,13 @@ import {
   MAT_SAND,
   MAT_WOOD,
 } from '../materials'
+import { stampBombay_terrain } from './bombay/terrain'
+import { stampBombay_streets } from './bombay/streets'
+import { stampBombay_lots } from './bombay/lots'
+import { stampBombay_civic } from './bombay/civic'
+import { stampBombay_art } from './bombay/art'
+import { stampBombay_playa } from './bombay/playa'
+import { stampBombay_approach } from './bombay/approach'
 import {
   DOOR_H,
   DOOR_W,
@@ -1495,6 +1502,21 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   stampShoddyDesertRoads(store, layout)
   const aircraftSpawns: AircraftSpawnRequest[] = []
   for (const a of layout.airports) stampAirport(store, a, layout.groundY, aircraftSpawns)
+  // T97-T107 — Bombay Beach zone. Same slot rule as beach/desert/airport:
+  // AFTER roads so its surfaces overwrite the city grid inside the zone.
+  // Fixed module order = deterministic; each module is owned by ONE work
+  // package (src/sim/gen/bombay/*) so the packages build in parallel.
+  let bombaySeaFill: Box | null = null
+  if (layout.bombay) {
+    const z = layout.bombay
+    bombaySeaFill = stampBombay_terrain(store, layout, z).seaFill
+    stampBombay_streets(store, layout, z)
+    stampBombay_lots(store, layout, z)
+    stampBombay_civic(store, layout, z)
+    stampBombay_art(store, layout, z)
+    stampBombay_playa(store, layout, z)
+    stampBombay_approach(store, layout, z)
+  }
   for (const h of layout.houses) stampHouse(store, layout, h)
   stampVilla(store, layout)
   for (const b of layout.rowBlocks) stampRowBlock(store, layout, b)
@@ -1513,6 +1535,7 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
     waterFills.push({ box: { ...pond.box } })
   }
   for (const beach of layout.beaches) waterFills.push({ box: { ...beach.ocean } })
+  if (bombaySeaFill) waterFills.push({ box: { ...bombaySeaFill } }) // T100 — Salton slice
   for (const p of layout.parkPaths) stampParkPath(store, p, layout.groundY)
 
   for (const f of layout.fences) stampFence(store, f, layout.groundY)
