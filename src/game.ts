@@ -41,6 +41,7 @@ import { attachBuoyancy } from './sim/buoyancy-coupling'
 import { attachWaterSim, type WaterSim } from './sim/water/water-sim'
 import { generateLayout } from './sim/gen/layout'
 import { stampScene } from './sim/gen/stamper'
+import { stampMiniScene } from './sim/gen/mini-scene'
 import { placeholderProps } from './sim/gen/props'
 import { nextSeq } from './render/command-seq'
 import { CHUNK_COUNT, VOXEL_SIZE, WORLD_VX, WORLD_VZ } from './world/chunks'
@@ -73,6 +74,8 @@ export interface CreateGameOptions {
    * run — initStatic seeds the remesh feed without any ticks.
    */
   holdTicks?: boolean
+  /** T98 — 'mini' = small test arena (dev boot); 'full' (default) = the city */
+  world?: 'full' | 'mini'
 }
 
 /** orbit rig tuning (menu backdrop) */
@@ -584,8 +587,13 @@ export class Game {
     await nextFrame()
     const sim = new Sim(seed)
     registerEditOps(sim)
-    const layout = generateLayout(seed)
-    const { waterFills, vehicleSpawns, aircraftSpawns } = stampScene(sim.world, layout, placeholderProps())
+    // T98 — mini test arena for dev iteration: seconds instead of the ~10s+
+    // full-city stamp+mesh+compact cycle. Same systems, same determinism.
+    const mini = opts.world === 'mini'
+    const layout = mini ? null : generateLayout(seed)
+    const { waterFills, vehicleSpawns, aircraftSpawns } = mini
+      ? stampMiniScene(sim.world)
+      : stampScene(sim.world, layout!, placeholderProps())
 
     // T97/V21 — full palette-compaction sweep straight after the stamp: at
     // WORLD_CX=256 the freshly-stamped dense store would peak ~3 GB; one

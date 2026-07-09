@@ -71,8 +71,8 @@ try {
     consoleErrors.push(`${m.text()} (${url})`)
   })
 
-  // I.boot: ?boot=game bypasses the menu straight into gameplay (T31)
-  await page.goto(`http://localhost:${PORT}/?boot=game&seed=1337`, {
+  // I.boot: ?boot=game&world=full bypasses the menu straight into gameplay (T31)
+  await page.goto(`http://localhost:${PORT}/?boot=game&world=full&seed=1337`, {
     waitUntil: 'domcontentloaded',
     timeout: 15000,
   })

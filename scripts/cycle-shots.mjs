@@ -61,7 +61,7 @@ try {
       note(`CONSOLE ERROR: ${m.text()}`)
   })
 
-  await page.goto(`http://localhost:${PORT}/?boot=game&seed=1337`, {
+  await page.goto(`http://localhost:${PORT}/?boot=game&world=full&seed=1337`, {
     waitUntil: 'domcontentloaded',
     timeout: 15000,
   })

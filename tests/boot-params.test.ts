@@ -11,6 +11,9 @@ describe('parseBootParams (I.boot)', () => {
       dev: false,
       signalUrl: DEFAULT_SIGNAL_URL,
       transport: 'rtc',
+      // T98 — vitest runs under the dev-mode flag, so the default world is mini;
+      // production builds default to 'full' (?world= overrides both ways)
+      world: 'mini',
     })
   })
 
@@ -48,6 +51,7 @@ describe('parseBootParams (I.boot)', () => {
       dev: true,
       signalUrl: DEFAULT_SIGNAL_URL,
       transport: 'rtc' as const,
+      world: 'full' as const, // T98 — explicit in the round-trip (dev default is 'mini')
     }
     const url = bootUrl('http://localhost:5173', cfg)
     expect(parseBootParams(new URL(url).search)).toEqual(cfg)

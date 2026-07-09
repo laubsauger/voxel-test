@@ -27,6 +27,13 @@ export interface BootConfig {
    * real sessions.
    */
   transport: 'rtc' | 'ws'
+  /**
+   * T98 — world size. 'full' = complete procedural city (publish mode).
+   * 'mini' = small hand-authored test arena around spawn, boots in seconds.
+   * Default: mini on the dev server, full in production builds; ?world=
+   * overrides either way. MP peers must boot the same kind.
+   */
+  world: 'full' | 'mini'
 }
 
 export function parseBootParams(search: string): BootConfig {
@@ -39,6 +46,11 @@ export function parseBootParams(search: string): BootConfig {
     dev: params.get('dev') === '1',
     signalUrl: params.get('signal') ?? DEFAULT_SIGNAL_URL,
     transport: params.get('transport') === 'ws' ? 'ws' : 'rtc',
+    world: ((): 'full' | 'mini' => {
+      const w = params.get('world')
+      if (w === 'full' || w === 'mini') return w
+      return import.meta.env.DEV ? 'mini' : 'full'
+    })(),
   }
 }
 
@@ -48,5 +60,6 @@ export function bootUrl(origin: string, cfg: BootConfig): string {
   p.set('boot', 'game')
   p.set('seed', String(cfg.seed))
   if (cfg.dev) p.set('dev', '1')
+  p.set('world', cfg.world) // T98 — explicit so copied URLs reproduce the same world
   return `${origin}/?${p.toString()}`
 }

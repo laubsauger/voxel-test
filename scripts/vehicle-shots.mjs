@@ -55,7 +55,7 @@ try {
   const pageErrors = []
   page.on('pageerror', (e) => pageErrors.push(String(e)))
 
-  await page.goto(`http://localhost:${PORT}/?boot=game&seed=1337&dev=1`, { waitUntil: 'domcontentloaded', timeout: 15000 })
+  await page.goto(`http://localhost:${PORT}/?boot=game&world=full&seed=1337&dev=1`, { waitUntil: 'domcontentloaded', timeout: 15000 })
   await page.waitForFunction(() => /fps/.test(document.getElementById('hud')?.textContent ?? ''), { timeout: 30000 })
   await page
     .waitForFunction(() => /pending 0(\D|$)/.test(document.getElementById('hud')?.textContent ?? ''), { timeout: 90000 })

@@ -3,7 +3,7 @@
  * UI screenshot harness (T33 design iteration) — same CDP pattern as
  * smoke.mjs. Boots vite, drives real Chrome/WebGPU, captures:
  *   smoke-artifacts/menu.png      — main menu over the live orbit scene
- *   smoke-artifacts/game-hud.png  — in-game HUD (?boot=game)
+ *   smoke-artifacts/game-hud.png  — in-game HUD (?boot=game&world=full)
  *   smoke-artifacts/settings.png  — settings panel (graphics tab)
  *   smoke-artifacts/preloader.png — boot progress screen
  * Usage: node scripts/ui-shot.mjs [--headed]
@@ -76,8 +76,8 @@ try {
   await page.screenshot({ path: `${ARTIFACTS}/settings.png` })
   note('settings.png')
 
-  // --- game path (?boot=game) --------------------------------------------------
-  await page.goto(`http://localhost:${PORT}/?boot=game&seed=1337`, { waitUntil: 'domcontentloaded' })
+  // --- game path (?boot=game&world=full) --------------------------------------------------
+  await page.goto(`http://localhost:${PORT}/?boot=game&world=full&seed=1337`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(
     () => /pending 0(\D|$)/.test(document.getElementById('hud')?.textContent ?? ''),
     { timeout: 90000 },

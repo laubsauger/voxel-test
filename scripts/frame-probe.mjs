@@ -2,7 +2,7 @@
 /**
  * T63 — CDP frame-time probe (B23: destruction stutter).
  *
- * Boots ?boot=game&seed=1337 (smoke.mjs pattern), waits for the world to
+ * Boots ?boot=game&world=full&seed=1337 (smoke.mjs pattern), waits for the world to
  * settle, then instruments the live page WITHOUT source changes: dynamic
  * `import()` of the same Vite module URLs the app uses returns the same
  * module instances, so we wrap prototype methods with timers and capture the
@@ -63,14 +63,14 @@ try {
   await page.setViewport({ width: 1280, height: 800 })
   page.on('pageerror', (e) => console.error(`[probe] pageerror: ${e}`))
 
-  await page.goto(`http://localhost:${PORT}/?boot=game&seed=1337`, {
+  await page.goto(`http://localhost:${PORT}/?boot=game&world=full&seed=1337`, {
     waitUntil: 'domcontentloaded',
     timeout: 15000,
   })
 
   await page.waitForFunction(
     () => /fps/.test(document.getElementById('hud')?.textContent ?? ''),
-    { timeout: 30000 },
+    { timeout: 90000 },
   )
   note('render loop alive')
   await page.waitForFunction(

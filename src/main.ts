@@ -116,6 +116,7 @@ await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
 let game = await Game.create({
   seed: boot.seed,
   host: app,
+  world: boot.world, // T98 — mini test arena on the dev server (?world= overrides)
   onStage: (s) => pre.stage(s),
   graphics: { quality: store.get('graphics.quality'), fov: store.get('graphics.fov') },
 }).catch((e: unknown) => die(`boot failed: ${e instanceof Error ? e.message : String(e)}`))
@@ -213,10 +214,11 @@ applyCycleSpeed()
 store.subscribe('dev.timeOfDay', applyTime)
 store.subscribe('dev.cycleSpeed', applyCycleSpeed)
 
-// T70 — map + minimap (layout regenerated: pure fn of seed, cheap vs restamping)
-const map = new MapSystem(adaptLayout(generateLayout(boot.seed)), { vx: WORLD_VX, vz: WORLD_VZ })
-map.attach(root)
-map.setVisible(false) // hidden until play (user nit: no minimap over the menu)
+// T70 — map + minimap (layout regenerated: pure fn of seed, cheap vs restamping).
+// T98 — mini world has no city layout: the map stays detached (M is a no-op).
+const map = boot.world === 'mini' ? null : new MapSystem(adaptLayout(generateLayout(boot.seed)), { vx: WORLD_VX, vz: WORLD_VZ })
+map?.attach(root)
+map?.setVisible(false) // hidden until play (user nit: no minimap over the menu)
 // T64 — continuous vehicle audio: engine/skid loops follow the seated vehicle
 type LoopHandle = { gain: { gain: { value: number } }; source: { playbackRate?: { value: number } }; stop: (f?: number) => void }
 const vloops: { engine: LoopHandle | null; skid: LoopHandle | null; arch: string } = { engine: null, skid: null, arch: '' }
@@ -313,12 +315,13 @@ const promptHook = (): void => {
 }
 
 const mapHook = (): void => {
+  if (!map) return // T98 mini world: no map
   map.setVisible(game.state === 'play')
   const p = game.phys.players.get(game.localPlayerId)
   if (p && game.state === 'play') map.update(p.px, p.pz, p.yaw)
 }
 document.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyM' && game.state === 'play' && !settings.visible) map.toggleFullscreen()
+  if (e.code === 'KeyM' && game.state === 'play' && !settings.visible) map?.toggleFullscreen()
   if (e.code === 'KeyL' && game.state === 'play') game.flashlight.toggle() // T75
 })
 
@@ -605,7 +608,7 @@ document.addEventListener('pointerlockchange', () => {
     screenshotUnlock = false // deliberate unlock: no pause, HUD hint shows re-lock path
     return
   }
-  if (game.state === 'play' && !settings.visible && settingsReturn === null && !map.isOpen) {
+  if (game.state === 'play' && !settings.visible && settingsReturn === null && !(map?.isOpen ?? false)) {
     if (cinematic) setCinematic(false) // reveal UI when the session pauses
     pause.show()
   }
@@ -700,6 +703,7 @@ async function buildMpGame(seed: number): Promise<Game> {
   const g = await Game.create({
     seed,
     host: app,
+    world: boot.world, // T98 — MP peers must boot the SAME kind (harness uses mini; prod is full)
     onStage: (s) => mpPre.stage(s),
     graphics: { quality: store.get('graphics.quality'), fov: store.get('graphics.fov') },
     holdTicks: true, // sim stays pristine at tick 0 until attachNet (V2)

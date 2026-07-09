@@ -33,7 +33,7 @@ try {
   })
   const page = await browser.newPage()
   await page.setViewport({ width: 1280, height: 800 })
-  await page.goto(`http://localhost:${PORT}/?boot=game&seed=1337`, { waitUntil: 'domcontentloaded', timeout: 15000 })
+  await page.goto(`http://localhost:${PORT}/?boot=game&world=full&seed=1337`, { waitUntil: 'domcontentloaded', timeout: 15000 })
 
   await page.waitForFunction(() => /pending 0(\D|$)/.test(document.getElementById('hud')?.textContent ?? ''), { timeout: 240000 })
   note('settled')
@@ -93,7 +93,7 @@ try {
 
   // shot 4: park district — fresh page (fresh pointer-lock look budget),
   // climb high and drift due south (S at yaw 0), then look straight down
-  await page.goto(`http://localhost:${PORT}/?boot=game&seed=1337`, { waitUntil: 'domcontentloaded', timeout: 15000 })
+  await page.goto(`http://localhost:${PORT}/?boot=game&world=full&seed=1337`, { waitUntil: 'domcontentloaded', timeout: 15000 })
   await page.waitForFunction(() => /pending 0(\D|$)/.test(document.getElementById('hud')?.textContent ?? ''), { timeout: 240000 })
   await sleep(1500)
   await page.mouse.move(640, 4)

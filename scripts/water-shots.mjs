@@ -38,7 +38,7 @@ try {
   const page = await browser.newPage()
   await page.setViewport({ width: 1280, height: 800 })
   page.on('pageerror', (e) => console.error('[water-shots] pageerror:', e.message))
-  await page.goto(`http://localhost:${PORT}/?boot=game&seed=1337`, { waitUntil: 'domcontentloaded' })
+  await page.goto(`http://localhost:${PORT}/?boot=game&world=full&seed=1337`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(
     () => /pending 0(\D|$)/.test(document.getElementById('hud')?.textContent ?? ''),
     { timeout: 90000 },
