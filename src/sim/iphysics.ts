@@ -20,6 +20,20 @@ import type { PlayerEntity } from './player'
 export interface DynamicBody {
   /** entity id via sim.allocEntityId() (V8) */
   id: number
+  /**
+   * T99 — PREVIOUS-tick transform (render interpolation only, NEVER hashed):
+   * meshes/cameras lerp prev→current by the frame accumulator alpha so fast
+   * vehicles/planes stop shuddering when frame and tick rates beat. Optional:
+   * only entities the camera can ride (vehicles/aircraft) maintain them;
+   * undefined = render reads the raw transform as before.
+   */
+  prevPx?: number
+  prevPy?: number
+  prevPz?: number
+  prevQx?: number
+  prevQy?: number
+  prevQz?: number
+  prevQw?: number
   sx: number
   sy: number
   sz: number

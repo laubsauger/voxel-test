@@ -35,6 +35,9 @@ import { VOXEL_SIZE, CHUNK, WORLD_VY } from '../world/chunks'
 import { buildPaddedChunk, meshChunk } from './mesher'
 import { nextSeq } from './command-seq'
 import { nearestAircraftInRange } from '../sim/aircraft'
+import { lerpTransform, type LerpedTransform } from './interp'
+
+const _lt: LerpedTransform = { px: 0, py: 0, pz: 0, qx: 0, qy: 0, qz: 0, qw: 1 }
 
 interface Entry {
   group: Group
@@ -71,7 +74,7 @@ export class VehicleMeshes {
   }
 
   /** call once per rendered frame with phys.vehicles (read-only) */
-  update(vehicles: ReadonlyMap<number, VehicleEntity>): void {
+  update(vehicles: ReadonlyMap<number, VehicleEntity>, alpha = 1): void {
     for (const [id, entry] of this.meshes) {
       if (!vehicles.has(id)) {
         // despawned or converted to a wreck (BodyMeshes takes over there)
@@ -98,8 +101,11 @@ export class VehicleMeshes {
         }
         entry.version = v.version
       }
-      entry.group.position.set(v.px, v.py, v.pz)
-      entry.group.quaternion.set(v.qx, v.qy, v.qz, v.qw)
+      // T99 — interpolate prev→current by the frame alpha (fast cars shudder
+      // against the tick grid otherwise)
+      lerpTransform(v, alpha, _lt)
+      entry.group.position.set(_lt.px, _lt.py, _lt.pz)
+      entry.group.quaternion.set(_lt.qx, _lt.qy, _lt.qz, _lt.qw)
 
       for (let i = 0; i < entry.wheels.length; i++) {
         const w = v.wheels[i]

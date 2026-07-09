@@ -47,6 +47,7 @@ import { nextSeq } from './render/command-seq'
 import { CHUNK_COUNT, VOXEL_SIZE, WORLD_VX, WORLD_VZ } from './world/chunks'
 import type { Settings } from './ui/settings-store'
 import { PlayerMesh } from './render/player-mesh'
+import { lerpTransform } from './render/interp'
 
 /** solo default. In MP the session assigns Game.localPlayerId (host=1, guests 2..4). */
 export const LOCAL_PLAYER = 1
@@ -367,6 +368,16 @@ export class Game {
 
   private orbitSnap = true
 
+  /** T99 — interpolated chase-cam target (reused scratch; render-only) */
+  private readonly chaseScratch = { px: 0, py: 0, pz: 0, qx: 0, qy: 0, qz: 0, qw: 1, sx: 0, sy: 0, sz: 0 }
+  private lerpedChase(v: { sx: number; sy: number; sz: number } & Parameters<typeof lerpTransform>[0], alpha: number) {
+    lerpTransform(v, alpha, this.chaseScratch)
+    this.chaseScratch.sx = v.sx
+    this.chaseScratch.sy = v.sy
+    this.chaseScratch.sz = v.sz
+    return this.chaseScratch
+  }
+
   private orbitUpdate(nowMs: number, dt: number): void {
     const t = nowMs / 1000
     const cx = (WORLD_VX / 2) * VOXEL_SIZE
@@ -494,10 +505,14 @@ export class Game {
         this.equippedTool?.() ?? 'dig',
         seatYaw,
       )
+      // T99 — frame alpha for transform interpolation (fast vehicles/planes
+      // shudder against the 60Hz tick grid otherwise). Both drivers expose it.
+      const alpha = this.net ? this.net.driver.alpha : this.driver.alpha
       if (player) {
         if (this.state === 'play') {
-          if (seatedV) this.cam.updateVehicle(seatedV, this.sim.world, dt, player)
-          else if (seatedA) this.cam.updateVehicle(seatedA, this.sim.world, dt, player, AIRCRAFT_CHASE_BOOM)
+          if (seatedV) this.cam.updateVehicle(this.lerpedChase(seatedV, alpha), this.sim.world, dt, player)
+          else if (seatedA)
+            this.cam.updateVehicle(this.lerpedChase(seatedA, alpha), this.sim.world, dt, player, AIRCRAFT_CHASE_BOOM)
           else this.cam.update(player, this.sim.world)
         }
 
@@ -538,8 +553,8 @@ export class Game {
       this.world.update(dt, this.sim.tick) // remesh budget, debris, CSM, day cycle (V7/T58)
       this.bodyMeshes.update(this.phys.bodies)
       if (this.phys.debris) this.debrisMeshes.update(this.phys.debris) // T86
-      this.vehicleMeshes.update(this.phys.vehicles)
-      this.aircraftMeshes.update(this.phys.aircraft) // P17
+      this.vehicleMeshes.update(this.phys.vehicles, alpha) // T99 — interpolated
+      this.aircraftMeshes.update(this.phys.aircraft, alpha) // P17/T99
       this.ragdollMeshes.update(this.phys.ragdolls) // T77 — death ragdolls (V6 read)
       this.fx.update(dt, fxEvents, this.cam.camera)
       this.projectileMeshes.update(this.phys.projectiles, dt)

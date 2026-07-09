@@ -462,6 +462,16 @@ export class PhysicsWorld implements IPhysicsWorld {
   }
 
   tick(sim: Sim): void {
+    // T99 — snapshot rideable transforms BEFORE the step: render lerps
+    // prev→current by the frame alpha (interpolation only, never hashed)
+    for (const v of this.vehicles.values()) {
+      v.prevPx = v.px; v.prevPy = v.py; v.prevPz = v.pz
+      v.prevQx = v.qx; v.prevQy = v.qy; v.prevQz = v.qz; v.prevQw = v.qw
+    }
+    for (const a of this.aircraft.values()) {
+      a.prevPx = a.px; a.prevPy = a.py; a.prevPz = a.pz
+      a.prevQx = a.qx; a.prevQy = a.qy; a.prevQz = a.qz; a.prevQw = a.qw
+    }
     this.prewarmHotspots(sim) // T95b — generic pre-detonation warmup (all weapons)
     this.streamColliders(sim) // B35 — load/evict static colliders near anchors
     tickVehiclesPlow(sim, this) // T64 — carve weak materials BEFORE collider rebuild

@@ -2,6 +2,9 @@ import { BufferAttribute, BufferGeometry, Mesh, Object3D, type Material } from '
 import type { DynamicBody } from '../sim/physics'
 import { VOXEL_SIZE, CHUNK } from '../world/chunks'
 import { buildPaddedChunk, meshChunk } from './mesher'
+import { lerpTransform, type LerpedTransform } from './interp'
+
+const _lt: LerpedTransform = { px: 0, py: 0, pz: 0, qx: 0, qy: 0, qz: 0, qw: 1 }
 
 /**
  * Render dynamic island bodies (T12) — one mesh per body, rebuilt when the
@@ -21,7 +24,7 @@ export class BodyMeshes {
     return this.meshes.size
   }
 
-  update(bodies: ReadonlyMap<number, DynamicBody>): void {
+  update(bodies: ReadonlyMap<number, DynamicBody>, alpha = 1): void {
     // remove meshes whose body is gone
     for (const [id, entry] of this.meshes) {
       if (!bodies.has(id)) {
@@ -47,8 +50,11 @@ export class BodyMeshes {
           this.parent.add(mesh)
         }
       }
-      entry.mesh.position.set(body.px, body.py, body.pz)
-      entry.mesh.quaternion.set(body.qx, body.qy, body.qz, body.qw)
+      // T99 — aircraft carry prev* snapshots and lerp by alpha; wrecks/bodies
+      // without one fall back to the raw tick transform inside lerpTransform
+      lerpTransform(body, alpha, _lt)
+      entry.mesh.position.set(_lt.px, _lt.py, _lt.pz)
+      entry.mesh.quaternion.set(_lt.qx, _lt.qy, _lt.qz, _lt.qw)
     }
   }
 }
