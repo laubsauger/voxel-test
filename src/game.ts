@@ -20,6 +20,7 @@ import { SpectatorCam } from './render/spectator-cam'
 import { WaterSurface } from './render/water/surface'
 import { BodyMeshes } from './render/body-meshes'
 import { DebrisMeshes } from './render/debris-meshes'
+import { RagdollMeshes } from './render/ragdoll-meshes'
 import { VehicleMeshes } from './render/vehicle-meshes'
 import { Birds } from './render/birds'
 import { Flashlight } from './render/flashlight'
@@ -143,6 +144,8 @@ export class Game {
   /** P17 — flyable aircraft render from their voxel grid (BodyMeshes pattern;
    *  a wrecked plane moves into phys.bodies and the main bodyMeshes takes over) */
   private readonly aircraftMeshes: BodyMeshes
+  /** T77 — death-ragdoll corpses (6 boxes per ragdoll, V6 read-only) */
+  private readonly ragdollMeshes: RagdollMeshes
   private readonly fx: FxSystem
   private readonly vehicleMeshes: VehicleMeshes
   private readonly birds = new Birds()
@@ -190,6 +193,7 @@ export class Game {
     this.bodyMeshes = new BodyMeshes(this.scene, this.world.chunks.material)
     this.debrisMeshes = new DebrisMeshes(this.scene, this.world.chunks.material) // T86 — local Box3D debris (V17)
     this.aircraftMeshes = new BodyMeshes(this.scene, this.world.chunks.material) // P17
+    this.ragdollMeshes = new RagdollMeshes(this.scene) // T77 — death ragdolls
     // T64 — vehicle rendering (chassis via chunk materials, spinning wheels)
     this.vehicleMeshes = new VehicleMeshes(
       this.scene,
@@ -477,7 +481,16 @@ export class Game {
       const seatedA =
         player && player.seatedAircraft !== 0 ? this.phys.aircraft.get(player.seatedAircraft) : undefined
       const seatYaw = seatedV ? vehicleYaw(seatedV) : seatedA ? vehicleYaw(seatedA) : null
-      this.playerVisuals.update(dt, player, camMode, this.equippedTool?.() ?? 'dig', seatYaw)
+      // T77 — dead local player: the ragdoll is the corpse, so hide the
+      // animated body + viewmodel until respawn (undefined = hidden). The
+      // camera stays where the player died; the death screen overlays it.
+      this.playerVisuals.update(
+        dt,
+        player && player.alive ? player : undefined,
+        camMode,
+        this.equippedTool?.() ?? 'dig',
+        seatYaw,
+      )
       if (player) {
         if (this.state === 'play') {
           if (seatedV) this.cam.updateVehicle(seatedV, this.sim.world, dt, player)
@@ -502,6 +515,10 @@ export class Game {
           this.remoteMeshes.set(pid, mesh)
           this.scene.add(mesh.group)
         }
+        // T77 — dead remote: the ragdoll IS the corpse; hide the animated body
+        // so it isn't drawn twice (restored on respawn)
+        mesh.group.visible = p.alive
+        if (!p.alive) continue
         // B31 — seated remotes sit in their vehicle too
         const rv = p.seatedVehicle !== 0 ? this.phys.vehicles.get(p.seatedVehicle) : undefined
         mesh.update(p, dt, rv ? vehicleYaw(rv) : null)
@@ -520,6 +537,7 @@ export class Game {
       if (this.phys.debris) this.debrisMeshes.update(this.phys.debris) // T86
       this.vehicleMeshes.update(this.phys.vehicles)
       this.aircraftMeshes.update(this.phys.aircraft) // P17
+      this.ragdollMeshes.update(this.phys.ragdolls) // T77 — death ragdolls (V6 read)
       this.fx.update(dt, fxEvents, this.cam.camera)
       this.projectileMeshes.update(this.phys.projectiles, dt)
       this.rocketMeshes.update(this.phys.rockets, dt) // P19
@@ -527,7 +545,7 @@ export class Game {
       this.birds.update(dt, this.world.dayFactor)
       this.flashlight.update(dt)
       this.underwater.update(this.cam.camera.position, this.water)
-      { const __w0 = performance.now(); this.waterSurface.update(this.water, this.sim.world); const __d = performance.now() - __w0; if (__d > 4) console.warn("[perf] waterSurface.update " + __d.toFixed(1) + "ms") }
+      this.waterSurface.update(this.water, this.sim.world)
 
       frames++
       if (now - fpsAt > 500) {

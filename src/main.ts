@@ -1080,6 +1080,16 @@ if (boot.dev) {
         active: game.phys.debris?.activeCount ?? 0,
       }
     },
+    /** T77 — local player combat state + ragdoll count (CDP probes, read-only) */
+    get player() {
+      const p = game.phys.players.get(game.localPlayerId)
+      return p
+        ? { x: p.px, y: p.py, z: p.pz, hp: p.hp, alive: p.alive, respawnAtTick: p.respawnAtTick }
+        : null
+    },
+    get ragdolls() {
+      return game.phys.ragdolls.size
+    },
     /** T97/V21 — chunk-kind census (boot-memory verification probe) */
     get chunkCensus() {
       const w = game.sim.world as unknown as { chunkAtRaw(i: number): { kind: number }; dirty: Set<number> }

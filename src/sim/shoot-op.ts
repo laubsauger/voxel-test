@@ -14,7 +14,7 @@
 import type { Sim } from './loop'
 import { VOXEL_SIZE } from '../world/chunks'
 import { destroySphere } from './destruction'
-import { damagePlayerHp, damagePlayersSphere, raycastPlayers } from './player'
+import { damagePlayerHp, damagePlayersSphere, raycastPlayers, RAGDOLL_GUN_LAUNCH } from './player'
 import { MAT_FLESH } from './materials'
 import type { IPhysicsWorld } from './iphysics'
 
@@ -254,7 +254,12 @@ export function registerShootOp(sim: Sim, phys: IPhysicsWorld): void {
         SHOOT_RADIUS,
         SHOOT_POWER,
       )
-      damagePlayerHp(s, phys, playerHit.player, dmg, cmd.playerId)
+      // T77 — a gun kill shoves the ragdoll gently along the ray (crumple,
+      // not fling); ignored unless this hit is lethal
+      damagePlayerHp(
+        s, phys, playerHit.player, dmg, cmd.playerId,
+        nx * RAGDOLL_GUN_LAUNCH, ny * RAGDOLL_GUN_LAUNCH, nz * RAGDOLL_GUN_LAUNCH,
+      )
       return
     }
 

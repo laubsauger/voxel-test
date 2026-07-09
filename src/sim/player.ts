@@ -45,6 +45,13 @@ export const MAX_HP = 100
 export const RESPAWN_DELAY_TICKS = 300
 /** hp lost per unit explosion power at the blast center (linear falloff to 0 at r) */
 export const EXPLOSION_HP_PER_POWER = 12
+/** T77 — ragdoll launch speed (m/s) per unit of power·falloff on an explosion
+ *  kill: a point-blank bomb (power 9) flings the corpse ~11 m/s, a rocket
+ *  (power 12) harder still */
+export const RAGDOLL_LAUNCH_PER_POWER = 1.2
+/** T77 — ragdoll launch speed (m/s) along the shot ray on a gun kill — small:
+ *  the body mostly crumples where it stood */
+export const RAGDOLL_GUN_LAUNCH = 2.5
 
 export const WALK_SPEED = 4
 export const CROUCH_SPEED = 2
@@ -406,6 +413,10 @@ interface CombatPhys {
   players: Map<number, PlayerEntity>
   vehicles?: Map<number, { occupants: number[] }>
   aircraft?: Map<number, { occupants: number[] }>
+  /** T77 — death-ragdoll hook (Jolt backend implements it; spike backends
+   *  omit it and deaths simply leave no corpse body). (vx,vy,vz) = full
+   *  launch velocity m/s: victim momentum + killing impulse. */
+  spawnRagdoll?(sim: Sim, victim: PlayerEntity, vx: number, vy: number, vz: number): void
 }
 
 /**
@@ -414,6 +425,10 @@ interface CombatPhys {
  * flips the entity dead (inert until respawnAtTick), bumps K/D counters
  * (suicide/world death credits nobody) and emits 'player-death'.
  * Deterministic: integer hp, all inputs sim state (V2/V3).
+ *
+ * (lvx,lvy,lvz) — T77: killing-impulse launch velocity (m/s) for the death
+ * ragdoll, threaded by the damage source (explosions: power·falloff away from
+ * the blast; guns: a small shove along the ray). Only used if this hit kills.
  */
 export function damagePlayerHp(
   sim: Sim,
@@ -421,6 +436,9 @@ export function damagePlayerHp(
   victim: PlayerEntity,
   dmg: number,
   attacker: number,
+  lvx = 0,
+  lvy = 0,
+  lvz = 0,
 ): void {
   if (!victim.alive) return // dead players take no damage
   dmg = Math.min(victim.hp, Math.max(0, dmg | 0)) // int hp only (V2)
@@ -451,6 +469,10 @@ export function damagePlayerHp(
   victim.alive = false
   victim.deaths++
   victim.respawnAtTick = sim.tick + RESPAWN_DELAY_TICKS
+  // T77 — the corpse becomes a physical ragdoll seeded with the victim's
+  // momentum + the killing impulse (BEFORE the velocity zero below). V1 scope
+  // is DEATH only — knockdown/"blends back on recovery" is v2 (see ragdoll.ts).
+  phys.spawnRagdoll?.(sim, victim, victim.vx + lvx, victim.vy + lvy, victim.vz + lvz)
   victim.input = 0
   victim.vx = 0
   victim.vy = 0
@@ -509,7 +531,16 @@ export function damagePlayersExplosion(
     if (d >= r) continue
     const dmg = Math.floor(power * EXPLOSION_HP_PER_POWER * (1 - d / r))
     if (dmg <= 0) continue
-    damagePlayerHp(sim, phys, p, dmg, attacker)
+    // T77 — ragdoll launch: away from the blast center (voxel-space direction
+    // is scale-free), with an upward bias so a killed body lifts off the
+    // ground; straight up when standing exactly at the center. Only consumed
+    // if this damage kills.
+    const lspeed = power * (1 - d / r) * RAGDOLL_LAUNCH_PER_POWER
+    const inv = d > 1e-6 ? 1 / d : 0
+    const lvx = dx * inv * lspeed
+    const lvy = d > 1e-6 ? dy * inv * lspeed + lspeed * 0.35 : lspeed
+    const lvz = dz * inv * lspeed
+    damagePlayerHp(sim, phys, p, dmg, attacker, lvx, lvy, lvz)
   }
 }
 

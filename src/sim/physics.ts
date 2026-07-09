@@ -61,6 +61,13 @@ import {
   tickAircraftPreStep,
   type AircraftEntity,
 } from './aircraft'
+import {
+  disposeRagdolls,
+  hashRagdolls,
+  spawnRagdoll as ragdollSpawn,
+  tickRagdolls,
+  type RagdollEntity,
+} from './ragdoll'
 
 type JoltApi = typeof Jolt
 
@@ -304,6 +311,12 @@ export class PhysicsWorld implements IPhysicsWorld {
   /** P17 flyable aircraft keyed by entity id (V8) — see aircraft.ts */
   readonly aircraft = new Map<number, AircraftEntity>()
 
+  /** T77 death ragdolls keyed by entity id (V8) — see ragdoll.ts */
+  readonly ragdolls = new Map<number, RagdollEntity>()
+
+  /** T77 — ragdolls removed by the kill plane; hashed sim state (V3) */
+  removedRagdolls = 0
+
   /** total bodies removed by the kill plane — hashed sim state (T40, V3) */
   removedBodies = 0
 
@@ -463,6 +476,7 @@ export class PhysicsWorld implements IPhysicsWorld {
     tickVehiclesPostStep(sim, this) // T64 — readback, crash damage, seat sync
     tickAircraftPostStep(sim, this) // P17 — readback, crash damage, seat sync
     updatePlayers(this, sim) // character controllers, fixed order (T21)
+    tickRagdolls(sim, this) // T77 — corpse readback + despawn at the respawn tick
     tickProjectiles(sim, this) // T54 — bomb arcs/fuses; detonation spawns ejecta this tick
     tickRockets(sim, this) // P19 — rockets fly straight, detonate on first impact
     this.readbackBodies()
@@ -1450,6 +1464,15 @@ export class PhysicsWorld implements IPhysicsWorld {
     }
   }
 
+  /**
+   * T77 — CombatPhys hook (player.ts death path): the corpse becomes a
+   * 6-body constrained ragdoll in this shared deterministic Jolt world.
+   * (vx,vy,vz) = full launch velocity (victim momentum + killing impulse).
+   */
+  spawnRagdoll(sim: Sim, victim: PlayerEntity, vx: number, vy: number, vz: number): void {
+    ragdollSpawn(this, sim, victim, vx, vy, vz)
+  }
+
   /** Free Jolt-side resources (tests). The WASM module itself stays loaded. */
   dispose(): void {
     const api = this.api
@@ -1457,6 +1480,7 @@ export class PhysicsWorld implements IPhysicsWorld {
     this.debris = null
     disposeVehicles(this) // T64 — constraints/listeners must go before bodies
     disposeAircraft(this) // P17 — flyable aircraft bodies
+    disposeRagdolls(this) // T77 — ragdoll constraints must go before their bodies
     for (const body of this.chunkBodies.values()) {
       this.bodyInterface.RemoveBody(body.GetID())
       this.bodyInterface.DestroyBody(body.GetID())
@@ -1562,6 +1586,8 @@ export function hashPhysics(phys: PhysicsWorld): number {
   hashVehicles(h, phys)
   // P17 — aircraft are sim state (V3)
   hashAircraft(h, phys)
+  // T77 — death-ragdoll part transforms are sim state (V3)
+  hashRagdolls(h, phys)
   return h.value
 }
 
