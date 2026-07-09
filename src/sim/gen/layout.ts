@@ -62,6 +62,8 @@ export type DistrictKind =
   | 'suburb' | 'rowhouse' | 'commercial' | 'park' | 'beach' | 'desert' | 'airport'
   // T98 — Bombay Beach town grid + its Salton Sea shore column (east rim)
   | 'bombay' | 'bombayBeach'
+  // T68 — rundown neighborhood column east of downtown
+  | 'hood'
 
 export interface District {
   bi: number
@@ -286,6 +288,34 @@ export interface DesertPlot {
   seed: number
 }
 
+/**
+ * T68 — hood district: rundown residential blocks. Layout stays declarative
+ * (lot rects + building footprints + fence runs + dumpsters); all wear detail
+ * (boarded windows, faded paint, broken roofs, overgrowth) is derived in the
+ * stamper from each lot's seed — same convention as BombayLot.
+ */
+export interface HoodLot {
+  rect: Rect
+  /** side of the lot touching its street */
+  front: 'z-' | 'z+'
+  kind: 'house' | 'overgrown' | 'store'
+  /** building footprint; null for overgrown lots */
+  house: Rect | null
+  /** per-lot variant seed (wear/boarding/roof damage, T68 stamper) */
+  seed: number
+}
+
+export interface HoodPlot {
+  rect: Rect
+  lots: HoodLot[]
+  /** chain-link fence runs (stamped as metal post+lattice, not pickets) */
+  fences: FenceLine[]
+  /** alley/backyard dumpsters */
+  dumpsters: { x: number; z: number; rot: 0 | 1 | 2 | 3 }[]
+  /** seed for the stamper's ground mottle + street-wear noise */
+  seed: number
+}
+
 /** B32 — airport district: flat apron, one runway, hangar + terminal box,
  * and a parked plane or two. One Airport per contiguous airport zone. */
 export interface Airport {
@@ -492,6 +522,8 @@ export interface Layout {
   beaches: Beach[]
   deserts: DesertPlot[]
   airports: Airport[]
+  /** T68 — hood blocks (rundown neighborhood) */
+  hoods: HoodPlot[]
   /** T98 — Bombay Beach zone; null when its districts don't exist */
   bombay: BombayZone | null
   farmhouses: Farmhouse[]
@@ -717,6 +749,11 @@ function districtKindAt(bi: number, bj: number): DistrictKind {
     if (bi >= last - 2 && bi <= last - 1) return 'bombay'
     if (bi === last) return 'bombayBeach'
   }
+  // T68 — hood: the column directly EAST of the core, hugging the commercial
+  // edge (bj CORE_LO+1..+2) and the core's south-east suburb block (CORE_LO+3)
+  // so it borders downtown/suburbia naturally. On the 12-block world that is
+  // bi 8, bj 5-7 — the decayed corridor between downtown and Bombay Beach.
+  if (bi === CORE_LO + 4 && bj >= CORE_LO + 1 && bj <= CORE_LO + 3) return 'hood'
   return 'park'
 }
 
@@ -1227,6 +1264,96 @@ function makeDeserts(seed: number, districts: District[]): DesertPlot[] {
       }
     }
     out.push({ rect: r, trailers, seed: rng.nextU32() })
+  }
+  return out
+}
+
+/**
+ * T68 — hood blocks: two lot rows (fronting the z- / z+ streets) of small worn
+ * houses, ~1 in 4 lots an overgrown vacancy, chain-link fence rings, dumpsters
+ * in the backyard alley band, and ONE corner store in the whole hood (first
+ * block, downtown-side street corner). Every feature draws from the block's
+ * own derived Prng stream (makeCommercial convention) — deterministic (V2).
+ */
+function makeHoods(seed: number, districts: District[]): HoodPlot[] {
+  const out: HoodPlot[] = []
+  let storePlaced = false
+  for (const d of districts) {
+    if (d.kind !== 'hood') continue
+    const hp = new Prng((seed ^ 0x600d1e5 ^ Math.imul(d.bi * 31 + d.bj + 1, GOLD)) >>> 0)
+    const r = d.rect
+    const lots: HoodLot[] = []
+    const fences: FenceLine[] = []
+    const dumpsters: HoodPlot['dumpsters'] = []
+    const usable = r.x1 - r.x0 + 1 - 2 * LOT_GAP
+    const depth = 130
+    const rows = [
+      { z0: r.z0 + LOT_GAP, z1: r.z0 + LOT_GAP + depth - 1, front: 'z-' as const },
+      { z0: r.z1 - LOT_GAP - depth + 1, z1: r.z1 - LOT_GAP, front: 'z+' as const },
+    ]
+    for (const row of rows) {
+      const n = 3
+      const w = (usable / n) | 0
+      for (let i = 0; i < n; i++) {
+        const x0 = r.x0 + LOT_GAP + i * w
+        const rect: Rect = {
+          x0,
+          z0: row.z0,
+          x1: i === n - 1 ? r.x0 + LOT_GAP + usable - 1 : x0 + w - 7,
+          z1: row.z1,
+        }
+        // per-lot draws are unconditional (stream stability)
+        const roll = hp.nextInt(100)
+        const lotSeed = hp.nextU32()
+        const hw = 56 + hp.nextInt(25) // 5.6-8 m
+        const hd = 44 + hp.nextInt(13) // 4.4-5.6 m
+        const setback = 26 + hp.nextInt(13)
+        const jitter = hp.nextInt(17) - 8
+        const fenceRoll = hp.nextInt(100)
+        const lotW = rect.x1 - rect.x0 + 1
+        // the one corner store: first block, front row, downtown-side corner
+        // (commercial sits at bi-1 → the x- end of the z- row)
+        const isStore = !storePlaced && row.front === 'z-' && i === 0
+        let kind: HoodLot['kind'] = 'house'
+        let house: Rect | null = null
+        if (isStore) {
+          kind = 'store'
+          storePlaced = true
+          // store hugs the street corner (small setback, sidewalk presence)
+          house = { x0: rect.x0 + 8, z0: rect.z0 + 10, x1: rect.x0 + 8 + 79, z1: rect.z0 + 10 + 55 }
+        } else if (roll < 25) {
+          kind = 'overgrown'
+        } else {
+          const hx0 = Math.max(rect.x0 + 8, Math.min(rect.x1 - 8 - hw + 1, rect.x0 + ((lotW - hw) >> 1) + jitter))
+          const hz0 = row.front === 'z-' ? rect.z0 + setback : rect.z1 - setback - hd + 1
+          house = { x0: hx0, z0: hz0, x1: hx0 + hw - 1, z1: hz0 + hd - 1 }
+        }
+        lots.push({ rect, front: row.front, kind, house, seed: lotSeed })
+        // chain-link ring on ~70% of lots (sides + back; the stamper tears
+        // random spans out of the lattice for the run-down look)
+        if (fenceRoll < 70) {
+          const backZ = row.front === 'z-' ? rect.z1 : rect.z0
+          fences.push({ x0: rect.x0, z0: rect.z0, x1: rect.x0, z1: rect.z1 })
+          fences.push({ x0: rect.x1, z0: rect.z0, x1: rect.x1, z1: rect.z1 })
+          fences.push({ x0: rect.x0 + 1, z0: backZ, x1: rect.x1 - 1, z1: backZ })
+        }
+        // dumpster behind the store
+        if (isStore && house) {
+          dumpsters.push({ x: house.x0 + 4, z: house.z1 + 6, rot: 1 })
+        }
+      }
+    }
+    // 2-3 dumpsters in the backyard alley band between the rows
+    const midZ = (r.z0 + r.z1) >> 1
+    const nD = 2 + hp.nextInt(2)
+    for (let k = 0; k < nD; k++) {
+      dumpsters.push({
+        x: r.x0 + 30 + hp.nextInt(Math.max(1, usable - 60)),
+        z: midZ - 8 + hp.nextInt(13),
+        rot: hp.nextInt(4) as 0 | 1 | 2 | 3,
+      })
+    }
+    out.push({ rect: r, lots, fences, dumpsters, seed: hp.nextU32() })
   }
   return out
 }
@@ -2116,6 +2243,7 @@ export function generateLayout(seed: number): Layout {
   const beaches = makeBeaches()
   const deserts = makeDeserts(seed, districts)
   const airports = makeAirports(districts)
+  const hoods = makeHoods(seed, districts) // T68
   const bombay = makeBombay(seed, districts) // T98 — null when districts absent
   props.push(...com.props)
   lamps.push(...com.lamps)
@@ -2128,6 +2256,8 @@ export function generateLayout(seed: number): Layout {
     ...rowBlocks.map((b) => growRect(b.rect, 4)),
     ...com.towers.map((t) => growRect(t.rect, 6)),
     ...com.parking.map((p) => growRect(p.rect, 2)),
+    // T68 — hood buildings (worn houses + the corner store)
+    ...hoods.flatMap((h) => h.lots.filter((l) => l.house).map((l) => growRect(l.house as Rect, 2))),
   ]
 
   // T42 — parkway street trees: alternating road sides every ~9.6 m, clear of
@@ -2250,7 +2380,7 @@ export function generateLayout(seed: number): Layout {
   return {
     seed, groundY: GROUND_Y, roads, districts, lots, houses, pools, villa,
     rowBlocks, towers: com.towers, parking: com.parking, plazas: com.plazas,
-    ponds: park.ponds, beaches, deserts, airports, bombay, farmhouses: park.farmhouses, parkPaths: park.parkPaths,
+    ponds: park.ponds, beaches, deserts, airports, hoods, bombay, farmhouses: park.farmhouses, parkPaths: park.parkPaths,
     props: clearedProps, trees: keptTrees, shrubs: keptShrubs, fences: keptFences, lamps: keptLamps, mailboxes, bins: keptBins,
   }
 }

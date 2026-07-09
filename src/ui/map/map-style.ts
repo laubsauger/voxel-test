@@ -70,6 +70,15 @@ export const DISTRICT_STYLES: Record<string, DistrictStyle> = {
     buildingShade: '#8a8a84',
     label: 'AIRFIELD',
   },
+  // T68 — hood: greyed-out worn paper, drab lots, dingy buildings — reads
+  // rundown next to suburbia's warm green without leaving the plat language.
+  hood: {
+    ground: '#dcd7c7',
+    lot: '#d3cdb8',
+    building: '#aa9d82',
+    buildingShade: '#7f7359',
+    label: 'THE HOOD',
+  },
   // T107 — Bombay Beach town: sun-bleached paper, warmer + lighter than
   // suburbia (research §3 WP9: everything reads bleached-bone neutral).
   bombay: {

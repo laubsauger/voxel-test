@@ -99,10 +99,12 @@ describe('town layout generator (T19/T50, V2)', () => {
     expect(byKind.get('commercial')).toBe(4)
     // ring: 3 core parks + 41 nature-ring parks (P22 rim thinning halves the
     // rim block count vs the old uniform grid)
-    expect(byKind.get('park')).toBe(112) // T98 — 12 east-rim parks became bombay
+    expect(byKind.get('park')).toBe(109) // T98 — 12 east-rim parks became bombay; T68 — 3 became hood
     expect(byKind.get('desert')).toBe(4)
     expect(byKind.get('airport')).toBe(3)
     expect(byKind.get('beach')).toBe(1)
+    // T68 — hood: the 3-block column directly east of the downtown core
+    expect(byKind.get('hood')).toBe(3)
     // T98 — Bombay Beach: 2×4 town grid + 1×4 shore column on the east rim
     expect(byKind.get('bombay')).toBe(8)
     expect(byKind.get('bombayBeach')).toBe(4)

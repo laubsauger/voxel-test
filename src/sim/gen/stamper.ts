@@ -22,10 +22,14 @@ import { ChunkStore, CHUNK, VOXEL_SIZE, WORLD_VX, WORLD_VZ } from '../../world/c
 import { Prng } from '../prng'
 import {
   MAT_AIR,
+  MAT_ART_TEAL,
+  MAT_ART_YELLOW,
   MAT_ASPHALT,
   MAT_BRICK,
   MAT_CONCRETE,
+  MAT_CRACKED_ASPHALT,
   MAT_DIRT,
+  MAT_GALV_METAL,
   MAT_GLASS,
   MAT_GRASS,
   MAT_LAMP,
@@ -34,6 +38,7 @@ import {
   MAT_PAINT,
   MAT_PLASTER,
   MAT_ROOFTILE,
+  MAT_RUST,
   MAT_SAND,
   MAT_WOOD,
 } from '../materials'
@@ -67,6 +72,8 @@ import {
   type Beach,
   type Box,
   type FenceLine,
+  type HoodLot,
+  type HoodPlot,
   type House,
   type Lamp,
   type Layout,
@@ -148,7 +155,7 @@ function stampTerrain(store: ChunkStore, layout: Layout): void {
   for (const r of layout.roads) flat.push(r.asphalt, ...r.sidewalks)
   for (const l of layout.lots) flat.push({ x0: l.rect.x0 - 1, z0: l.rect.z0 - 1, x1: l.rect.x1 + 1, z1: l.rect.z1 + 1 })
   for (const d of layout.districts) {
-    if (d.kind === 'rowhouse' || d.kind === 'commercial') {
+    if (d.kind === 'rowhouse' || d.kind === 'commercial' || d.kind === 'hood') {
       flat.push({ x0: d.rect.x0 - 1, z0: d.rect.z0 - 1, x1: d.rect.x1 + 1, z1: d.rect.z1 + 1 })
     }
   }
@@ -1171,6 +1178,335 @@ function stampShoddyDesertRoads(store: ChunkStore, layout: Layout): void {
   }
 }
 
+// --- T68: hood district (rundown neighborhood) ------------------------------
+
+/**
+ * T68 — faded/mismatched paint: blotch a second material over the perimeter
+ * walls of r via deterministic value noise. Only replaces `base` voxels so
+ * windows/doors/boards survive. Reads as peeling repaint at voxel scale.
+ */
+function fadeWalls(store: ChunkStore, r: Rect, y0: number, y1: number, base: number, fade: number, seed: number): void {
+  const strips: [number, number, number, number, 'x' | 'z'][] = [
+    [r.x0, r.z0, r.x1, r.z0 + 1, 'x'],
+    [r.x0, r.z1 - 1, r.x1, r.z1, 'x'],
+    [r.x0, r.z0, r.x0 + 1, r.z1, 'z'],
+    [r.x1 - 1, r.z0, r.x1, r.z1, 'z'],
+  ]
+  for (const [x0, z0, x1, z1, axis] of strips) {
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) {
+        const along = axis === 'x' ? x : z
+        for (let y = y0; y <= y1; y++) {
+          if (valueNoise(along, y, 7, seed) <= 0.66) continue
+          if (store.getVoxel(x, y, z) === base) store.setVoxel(x, y, z, fade)
+        }
+      }
+    }
+  }
+}
+
+/** T68 — board an opening shut: horizontal wood planks with 1-voxel gaps */
+function boardOpening(store: ChunkStore, r: Rect, side: Side, offset: number, w: number, y0: number, y1: number): void {
+  for (let y = y0; y <= y1; y++) {
+    if ((y - y0) % 3 === 2) continue // gap between planks
+    wallOpening(store, r, side, offset, w, y, y, MAT_WOOD)
+  }
+}
+
+/** T68 — small rusted junk boxes (dead appliances/scrap) scattered in yards */
+function stampHoodJunk(store: ChunkStore, g: number, p: Prng, r: Rect, n: number, keep: Rect | null): void {
+  for (let k = 0; k < n; k++) {
+    const jw = 4 + p.nextInt(4)
+    const jd = 3 + p.nextInt(3)
+    const jh = 2 + p.nextInt(4)
+    const jx = r.x0 + 6 + p.nextInt(Math.max(1, r.x1 - r.x0 - jw - 12))
+    const jz = r.z0 + 6 + p.nextInt(Math.max(1, r.z1 - r.z0 - jd - 12))
+    if (keep && jx + jw >= keep.x0 - 2 && jx <= keep.x1 + 2 && jz + jd >= keep.z0 - 2 && jz <= keep.z1 + 2) continue
+    store.fillBox(jx, g, jz, jx + jw - 1, g + jh - 1, jz + jd - 1, MAT_RUST)
+  }
+}
+
+/**
+ * T68 — worn house: small single/two-story box with mismatched faded paint,
+ * boarded/broken windows, a sometimes-boarded door, a porch missing a post,
+ * and a partially caved roof. All wear derives from the lot's own Prng
+ * stream (V2 — identical stamp on every peer).
+ */
+function stampHoodHouse(store: ChunkStore, g: number, lot: HoodLot): void {
+  const r = lot.house as Rect
+  const p = new Prng(lot.seed)
+  const frontZneg = lot.front === 'z-'
+  const w = r.x1 - r.x0 + 1
+  const d = r.z1 - r.z0 + 1
+  // mismatched paint pairs: base wall + tonally-close weathering blotches
+  const [wallMat, fadeMat] = ([
+    [MAT_PLASTER, MAT_CONCRETE], // off-white, grey peeling
+    [MAT_WOOD, MAT_PLASTER], // bare siding, primer patches
+    [MAT_BRICK, MAT_ROOFTILE], // brick, smoke-darkened patches
+    [MAT_PLASTER, MAT_WOOD], // plaster, exposed siding
+  ] as const)[p.nextInt(4)]
+  const floors = p.nextInt(100) < 30 ? 2 : 1
+  const wallTop = g + floors * STORY_H - 1
+
+  store.fillBox(r.x0, g, r.z0, r.x1, g, r.z1, MAT_WOOD) // slab
+  stampWalls(store, r, g, wallTop, wallMat)
+  if (floors > 1) {
+    store.fillBox(r.x0 + WALL_T, g + STORY_H - 1, r.z0 + WALL_T, r.x1 - WALL_T, g + STORY_H, r.z1 - WALL_T, MAT_WOOD)
+  }
+  fadeWalls(store, r, g + 1, wallTop, wallMat, fadeMat, lot.seed)
+
+  // door: centered on the front; ~30% boarded shut
+  const doorOff = (w - DOOR_W) >> 1
+  wallOpening(store, r, lot.front, doorOff, DOOR_W, g + 1, g + DOOR_H, MAT_AIR)
+  if (p.nextInt(100) < 30) boardOpening(store, r, lot.front, doorOff, DOOR_W, g + 1, g + DOOR_H)
+
+  // windows: front pair flanking the door, back pair, one per side wall.
+  // Rolls per window: boarded / broken(open) / dirty glass.
+  const win = (side: Side, off: number, wallLen: number, floor: number): void => {
+    const roll = p.nextInt(100) // unconditional (stream stability)
+    if (off < 3 || off + 8 > wallLen - 3) return
+    const y0 = g + floor * STORY_H + 10
+    wallOpening(store, r, side, off, 8, y0, y0 + 9, roll < 45 ? MAT_AIR : roll < 62 ? MAT_AIR : MAT_GLASS)
+    if (roll < 45) boardOpening(store, r, side, off, 8, y0, y0 + 9)
+  }
+  const backSide: Side = frontZneg ? 'z+' : 'z-'
+  for (let f = 0; f < floors; f++) {
+    win(lot.front, doorOff - 16, w, f)
+    win(lot.front, doorOff + DOOR_W + 8, w, f)
+    win(backSide, 10, w, f)
+    win(backSide, w - 18, w, f)
+    win('x-', (d - 8) >> 1, d, f)
+    win('x+', (d - 8) >> 1, d, f)
+  }
+
+  // porch on ~55%: concrete stoop + posts + wood awning — one post often gone
+  const porchRoll = p.nextInt(100)
+  const missingPost = p.nextInt(100) < 40
+  if (porchRoll < 55) {
+    const pw = DOOR_W + 10
+    const px0 = r.x0 + doorOff + (DOOR_W >> 1) - (pw >> 1)
+    const pz0 = frontZneg ? r.z0 - 8 : r.z1 + 1
+    const pz1 = frontZneg ? r.z0 - 1 : r.z1 + 8
+    store.fillBox(px0, g, pz0, px0 + pw - 1, g, pz1, MAT_CONCRETE)
+    const outerZ = frontZneg ? pz0 : pz1
+    const awnY = g + 23
+    const posts = missingPost ? [px0] : [px0, px0 + pw - 1]
+    for (const px of posts) store.fillBox(px, g + 1, outerZ, px, awnY - 1, outerZ, MAT_WOOD)
+    store.fillBox(px0, awnY, pz0, px0 + pw - 1, awnY + 1, pz1, MAT_WOOD)
+  }
+
+  // roof: flat (concrete) or stepped gable in weathered wood/rooftile
+  const roofY = wallTop + 1
+  const flatRoof = p.nextInt(100) < 35
+  const roofMat = p.nextInt(100) < 50 ? MAT_WOOD : MAT_ROOFTILE
+  let roofBand = 1
+  if (flatRoof) {
+    store.fillBox(r.x0, roofY, r.z0, r.x1, roofY + 1, r.z1, MAT_CONCRETE)
+  } else if (w >= d) {
+    for (let lvl = 0; r.z0 + 2 * lvl <= r.z1 - 2 * lvl; lvl++) {
+      store.fillBox(r.x0, roofY + lvl, r.z0 + 2 * lvl, r.x1, roofY + lvl, r.z1 - 2 * lvl, roofMat)
+      roofBand = lvl + 1
+    }
+  } else {
+    for (let lvl = 0; r.x0 + 2 * lvl <= r.x1 - 2 * lvl; lvl++) {
+      store.fillBox(r.x0 + 2 * lvl, roofY + lvl, r.z0, r.x1 - 2 * lvl, roofY + lvl, r.z1, roofMat)
+      roofBand = lvl + 1
+    }
+  }
+  // partially-broken roof on ~40%: 1-2 ragged holes caved through
+  const holes = p.nextInt(100) < 40 ? 1 + p.nextInt(2) : 0
+  for (let h = 0; h < holes; h++) {
+    const hx = r.x0 + 8 + p.nextInt(Math.max(1, w - 16))
+    const hz = r.z0 + 8 + p.nextInt(Math.max(1, d - 16))
+    const rad = 3 + p.nextInt(4)
+    for (let dz = -rad; dz <= rad; dz++) {
+      for (let dx = -rad; dx <= rad; dx++) {
+        if (dx * dx + dz * dz > rad * rad) continue
+        if (dx * dx + dz * dz > (rad - 1) * (rad - 1) && (hash3(hx + dx, 11, hz + dz, lot.seed) & 3) === 0) continue
+        store.fillBox(hx + dx, roofY, hz + dz, hx + dx, roofY + roofBand, hz + dz, MAT_AIR)
+      }
+    }
+  }
+
+  // cracked walkway: door → street, concrete with missing slabs
+  const pcx = r.x0 + doorOff + (DOOR_W >> 1)
+  const wz0 = frontZneg ? lot.rect.z0 : r.z1 + 1
+  const wz1 = frontZneg ? r.z0 - 1 : lot.rect.z1
+  for (let z = wz0; z <= wz1; z++) {
+    for (let x = pcx - 2; x <= pcx + 2; x++) {
+      if (hash3(x, 13, z, lot.seed) % 5 === 0) continue // missing slab
+      store.setVoxel(x, g - 1, z, MAT_CONCRETE)
+    }
+  }
+
+  // 0-2 junk piles in the yard, clear of the house
+  stampHoodJunk(store, g, p, lot.rect, p.nextInt(3), r)
+}
+
+/**
+ * T68 — corner store: one small flat-roofed commercial box. Brick shell,
+ * storefront glass band + door, faded sign strip over the front, boarded
+ * side window, parapet roof, wood counter inside.
+ */
+function stampCornerStore(store: ChunkStore, g: number, lot: HoodLot): void {
+  const r = lot.house as Rect
+  const p = new Prng(lot.seed)
+  const w = r.x1 - r.x0 + 1
+  const top = g + 30
+  store.fillBox(r.x0, g, r.z0, r.x1, g, r.z1, MAT_CONCRETE) // slab
+  stampWalls(store, r, g + 1, top, MAT_BRICK)
+  fadeWalls(store, r, g + 1, top, MAT_BRICK, MAT_CONCRETE, lot.seed)
+  store.fillBox(r.x0, top + 1, r.z0, r.x1, top + 2, r.z1, MAT_CONCRETE) // flat roof
+  stampWalls(store, r, top + 3, top + 4, MAT_BRICK) // parapet ring
+
+  // storefront on the street face: door + glass bays split by brick pillars
+  const front: Side = lot.front
+  const doorOff = 6
+  wallOpening(store, r, front, doorOff, DOOR_W, g + 1, g + 21, MAT_AIR)
+  for (let off = doorOff + DOOR_W + 4; off + 10 <= w - 6; off += 14) {
+    wallOpening(store, r, front, off, 10, g + 6, g + 20, MAT_GLASS)
+  }
+  // faded sign strip: 1-voxel-proud band above the storefront
+  const signZ = front === 'z-' ? r.z0 - 1 : r.z1 + 1
+  for (let x = r.x0 + 2; x <= r.x1 - 2; x++) {
+    for (let y = top - 6; y <= top - 2; y++) {
+      const n = valueNoise(x, y, 5, (lot.seed ^ 0x51e7) >>> 0)
+      store.setVoxel(x, y, signZ, n > 0.45 ? MAT_ART_YELLOW : MAT_PLASTER)
+    }
+  }
+  // boarded window on one side wall
+  const sideOff = ((r.z1 - r.z0 + 1 - 10) >> 1)
+  const boardSide: Side = p.nextInt(2) === 0 ? 'x-' : 'x+'
+  wallOpening(store, r, boardSide, sideOff, 10, g + 10, g + 19, MAT_AIR)
+  boardOpening(store, r, boardSide, sideOff, 10, g + 10, g + 19)
+  // counter inside, facing the door
+  const cz0 = front === 'z-' ? r.z0 + 14 : r.z1 - 19
+  store.fillBox(r.x0 + 6, g + 1, cz0, r.x0 + 21, g + 8, cz0 + 5, MAT_WOOD)
+}
+
+/**
+ * T68 — chain-link fence: metal posts every 14 voxels, galvanized top rail +
+ * thin vertical wires every other voxel (lattice reading at voxel scale, same
+ * geometry budget as picket fences). Random spans are torn out entirely.
+ */
+function stampChainlink(store: ChunkStore, f: FenceLine, g: number): void {
+  const alongX = f.z0 === f.z1
+  const len = (alongX ? f.x1 - f.x0 : f.z1 - f.z0) + 1
+  if (len < 4) return
+  for (let t = 0; t < len; t++) {
+    const x = alongX ? f.x0 + t : f.x0
+    const z = alongX ? f.z0 : f.z0 + t
+    if (t % 14 === 0 || t === len - 1) {
+      store.fillBox(x, g, z, x, g + 12, z, MAT_METAL) // post
+      continue
+    }
+    // torn span: ~1 in 4 of the 14-voxel bays lost their mesh (posts stay)
+    const span = (t / 14) | 0
+    if (hash3(alongX ? f.x0 + span : f.x0, 9, alongX ? f.z0 : f.z0 + span, 0xc41a11) % 4 === 0) continue
+    store.setVoxel(x, g + 11, z, MAT_GALV_METAL) // top rail
+    // see-through mesh: sparse vertical wires + two horizontal wire runs
+    if (t % 3 === 0) store.fillBox(x, g + 1, z, x, g + 10, z, MAT_GALV_METAL)
+    else {
+      store.setVoxel(x, g + 4, z, MAT_GALV_METAL)
+      store.setVoxel(x, g + 8, z, MAT_GALV_METAL)
+    }
+  }
+}
+
+/** T68 — dumpster: faded-teal municipal box, rust-eaten, dark metal lid.
+ * 1.2×0.8 m footprint. Rust blotches are position-hashed (V2). */
+function stampDumpster(store: ChunkStore, dp: { x: number; z: number; rot: 0 | 1 | 2 | 3 }, g: number): void {
+  const [w, d] = dp.rot % 2 === 0 ? [12, 8] : [8, 12]
+  const x1 = dp.x + w - 1
+  const z1 = dp.z + d - 1
+  store.fillBox(dp.x, g, dp.z, x1, g + 7, z1, MAT_ART_TEAL)
+  store.fillBox(dp.x + 1, g + 3, dp.z + 1, x1 - 1, g + 7, z1 - 1, MAT_AIR) // hollow
+  store.fillBox(dp.x, g + 8, dp.z, x1, g + 8, z1, MAT_METAL) // lid
+  // rust eating up from the base
+  for (let z = dp.z; z <= z1; z++) {
+    for (let x = dp.x; x <= x1; x++) {
+      for (let y = g; y <= g + 7; y++) {
+        const h = hash3(x, y, z, 0xd0357e)
+        if ((h & 7) < (y - g < 2 ? 3 : 1) && store.getVoxel(x, y, z) === MAT_ART_TEAL) {
+          store.setVoxel(x, y, z, MAT_RUST)
+        }
+      }
+    }
+  }
+}
+
+/** T68 — overgrown vacant lot: dirt mottle, tall-grass tufts, bramble mounds, junk */
+function stampOvergrown(store: ChunkStore, g: number, lot: HoodLot): void {
+  const p = new Prng(lot.seed)
+  const r = lot.rect
+  for (let z = r.z0; z <= r.z1; z++) {
+    for (let x = r.x0; x <= r.x1; x++) {
+      // tall grass tufts (leaves, 1-2 high) over the scruffy ground
+      const h = hash3(x, 1, z, lot.seed)
+      if ((h & 7) === 0 && store.getVoxel(x, g, z) === MAT_AIR) {
+        store.setVoxel(x, g, z, MAT_LEAVES)
+        if ((h & 31) === 8) store.setVoxel(x, g + 1, z, MAT_LEAVES)
+      }
+    }
+  }
+  // 2-4 bramble mounds (air-only leaf blobs)
+  const mounds = 2 + p.nextInt(3)
+  for (let m = 0; m < mounds; m++) {
+    const mx = r.x0 + 12 + p.nextInt(Math.max(1, r.x1 - r.x0 - 24))
+    const mz = r.z0 + 12 + p.nextInt(Math.max(1, r.z1 - r.z0 - 24))
+    fillLeafBlob(store, mx, g + 2, mz, 3 + p.nextInt(3), p.nextU32())
+  }
+  stampHoodJunk(store, g, p, r, 1 + p.nextInt(2), null)
+}
+
+/** T68 — one hood block: scruffy ground, then lots, chain-link, dumpsters */
+function stampHood(store: ChunkStore, layout: Layout, plot: HoodPlot): void {
+  const g = layout.groundY
+  const r = plot.rect
+  // scruffy ground: bare-dirt mottle over the block's grass
+  for (let z = r.z0; z <= r.z1; z++) {
+    for (let x = r.x0; x <= r.x1; x++) {
+      if (valueNoise(x, z, 17, plot.seed) <= 0.58) continue
+      if (store.getVoxel(x, g - 1, z) === MAT_GRASS) store.setVoxel(x, g - 1, z, MAT_DIRT)
+    }
+  }
+  for (const lot of plot.lots) {
+    if (lot.kind === 'overgrown') stampOvergrown(store, g, lot)
+    else if (lot.kind === 'store') stampCornerStore(store, g, lot)
+    else stampHoodHouse(store, g, lot)
+  }
+  for (const f of plot.fences) stampChainlink(store, f, g)
+  for (const dp of plot.dumpsters) stampDumpster(store, dp, g)
+}
+
+/**
+ * T68 — cracked asphalt + patches: degrade the road surfaces in and around
+ * the hood blocks — cracked-asphalt patch blotches, bare-dirt potholes, faded
+ * lane paint, crumbling sidewalk spots. Same shape as stampShoddyDesertRoads:
+ * surface voxel only, material-guarded, deterministic noise (V2).
+ */
+function stampHoodRoads(store: ChunkStore, layout: Layout): void {
+  const g = layout.groundY
+  const y = g - 1
+  const M = 48 // reaches across the bordering roads (extent ~42) + curb
+  for (const hp of layout.hoods) {
+    const r = hp.rect
+    for (let z = Math.max(0, r.z0 - M); z <= Math.min(WORLD_VZ - 1, r.z1 + M); z++) {
+      for (let x = Math.max(0, r.x0 - M); x <= Math.min(WORLD_VX - 1, r.x1 + M); x++) {
+        const cur = store.getVoxel(x, y, z)
+        const n = valueNoise(x, z, 26, (0x400d ^ hp.seed) >>> 0)
+        if (cur === MAT_ASPHALT || cur === MAT_PAINT) {
+          if (n > 0.74) store.setVoxel(x, y, z, MAT_DIRT) // pothole
+          else if (n > 0.52) store.setVoxel(x, y, z, MAT_CRACKED_ASPHALT) // patch blotch
+          else if (cur === MAT_PAINT && n > 0.4) store.setVoxel(x, y, z, MAT_ASPHALT) // faded markings
+        } else if (cur === MAT_CONCRETE && n > 0.74) {
+          store.setVoxel(x, y, z, MAT_DIRT) // crumbled sidewalk spots
+        }
+      }
+    }
+  }
+}
+
 /** a parked airliner: tube fuselage, swept wings, tail fin. ~24 m long. */
 /** P20 — small high-wing Cessna-style plane: ~7 m fuselage, ~9 m wingspan, fixed
  * gear. Footprint along its axis: fuselage 70 vox from origin, wings ±45.
@@ -1500,6 +1836,11 @@ export function stampScene(store: ChunkStore, layout: Layout, propGrids: Record<
   // P6 — rough up the city roads bordering the trailer park (after markings so
   // it wipes the crisp lane paint; after the desert fill so the sand stays clean)
   stampShoddyDesertRoads(store, layout)
+  // T68 — hood blocks (worn houses / chain-link / dumpsters / overgrown lots)
+  // + the cracked-asphalt-and-patches pass over their streets (after markings
+  // so the patch blotches also eat the crisp lane paint)
+  for (const hp of layout.hoods) stampHood(store, layout, hp)
+  stampHoodRoads(store, layout)
   const aircraftSpawns: AircraftSpawnRequest[] = []
   for (const a of layout.airports) stampAirport(store, a, layout.groundY, aircraftSpawns)
   // T97-T107 — Bombay Beach zone. Same slot rule as beach/desert/airport:
