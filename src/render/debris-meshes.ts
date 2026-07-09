@@ -26,6 +26,8 @@ import type { DebrisLayer } from '../sim/debris'
 import { buildBodyGeometry } from './body-meshes'
 
 const BATCH_VERTS = 600000
+/** T97 — freeze-transition bakes per frame (each pays buildBodyGeometry) */
+const BAKE_BUDGET = 6
 const BATCH_INDICES = 1200000
 
 const _m4 = new Matrix4()
@@ -163,9 +165,17 @@ export class DebrisMeshes {
     }
     for (const id of this.batch.ids()) if (!bodies.has(id)) this.batch.remove(id)
 
+    // T97 — bake BUDGET: a whole blast's pieces freeze within a tick or two of
+    // each other (same FREEZE_TICKS) and each bake pays buildBodyGeometry —
+    // 30-80 in one frame was a ~27ms spike. Budgeted, an unbaked frozen piece
+    // keeps its static individual mesh a few frames longer (identical visuals)
+    // and the batch absorbs the backlog over the following frames.
+    let bakes = 0
     for (const [id, b] of bodies) {
       if (frozen.has(id)) {
         if (this.batch.has(id)) continue // baked + static — nothing per-frame
+        if (bakes >= BAKE_BUDGET) continue // keep the static individual mesh this frame
+        bakes++
         // freeze transition: bake fresh geometry at the rest transform, then
         // drop the individual mesh. On a full batch, fall through to the
         // individual-mesh path below (graceful: the piece just stays an object).

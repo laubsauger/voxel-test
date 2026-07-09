@@ -7,9 +7,11 @@ describe('FixedStepDriver (V11)', () => {
   it('steps floor(elapsed/TICK_MS) ticks and keeps remainder as alpha', () => {
     const sim = new Sim(1)
     const driver = new FixedStepDriver()
-    const steps = driver.advance(TICK_MS * 3.5, sim)
-    expect(steps).toBe(3)
-    expect(sim.tick).toBe(3)
+    // 2.5 ticks: below maxStepsPerAdvance (3 since T97) so the remainder
+    // survives — at/over the cap the accumulator intentionally DROPS
+    const steps = driver.advance(TICK_MS * 2.5, sim)
+    expect(steps).toBe(2)
+    expect(sim.tick).toBe(2)
     expect(driver.alpha).toBeCloseTo(0.5)
   })
 

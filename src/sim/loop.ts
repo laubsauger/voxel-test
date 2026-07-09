@@ -89,8 +89,19 @@ export class Sim {
  */
 export class FixedStepDriver {
   private accumulator = 0
-  /** cap per advance() so a stall doesn't spiral (still deterministic: ticks, not time, are authoritative) */
-  maxStepsPerAdvance = 10
+  /**
+   * cap per advance() so a stall doesn't spiral (still deterministic: ticks,
+   * not time, are authoritative). T97 — 10→3: the T94 attribution showed the
+   * worst destruction frames (75-83ms) were CATCH-UP COMPOUNDING, not the
+   * blast itself — one ~25ms edit tick put the driver behind, the next frame
+   * replayed the debt (each replayed tick carrying its own debris/stress
+   * work), fell further behind, and the spiral only broke at the cap. 3 = one
+   * real tick + two catch-ups per frame; beyond that the accumulator DROPS
+   * (sim time slips a few ms under sustained overload instead of freezing the
+   * frame). SP only — the MP LockstepDriver has its own advance (lockstep can
+   * never drop ticks).
+   */
+  maxStepsPerAdvance = 3
 
   advance(elapsedMs: number, sim: Sim): number {
     this.accumulator += elapsedMs
