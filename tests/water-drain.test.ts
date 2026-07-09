@@ -1,20 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { ChunkStore } from '../src/world/chunks'
 import { WaterSim } from '../src/sim/water/water-sim'
-import { DonorMode, LATERAL_DEADBAND, MAX_LEVEL, lateralNext } from '../src/sim/water/rules'
+import { FLOW_CAP, MAX_LEVEL, SURFACE_DEADBAND, columnFlow } from '../src/sim/water/rules'
 
 // T62/B21 — the pool-never-drains regression, reproduced LIVE-style: a
 // world-scale pool crossing a chunk border, filled and fully SETTLED
 // (sleeping enabled — the wake/active-set machinery is part of the system
 // under test), then breached through one wall via plain voxel edits wired
-// through onVoxelChanged exactly like game.ts does. The original failure
-// mode was not a mass leak: transport was pure half-diff diffusion and
-// diff-2 residue ramps sustained a bucket-brigade trickle for O(area)
-// steps, so the breach "ran forever" while the basin level barely moved and
-// the sim never slept (which also rebuilt the surface mesh every frame —
-// B20 flicker). These assertions pin all three fixes: drain RATE
-// (waterfall leg), guaranteed SETTLE (lateral deadband), and V9 mass
-// exactness throughout.
+// through onVoxelChanged exactly like game.ts does. The B21 promise the old
+// 3D CA never delivered: a breached pool must VISIBLY drain on gameplay
+// timescales, conserve mass exactly while doing it, and fully settle after
+// (no endless trickle keeping the sim awake / the surface mesh rebuilding).
 
 function buildBreachScenario() {
   const world = new ChunkStore()
@@ -48,7 +44,7 @@ function buildBreachScenario() {
 }
 
 describe('B21 — breached pool drains at world scale (T62, V9)', () => {
-  it('drains fast, conserves mass exactly, and fully settles', { timeout: 240000 }, () => {
+  it('drains fast, water exits the pool, mass conserves exactly, and it fully settles', () => {
     const { world, w, poured, basinSum } = buildBreachScenario()
 
     // pool settles and SLEEPS before the breach (live pools are asleep)
@@ -61,18 +57,21 @@ describe('B21 — breached pool drains at world scale (T62, V9)', () => {
       for (let z = 14; z <= 17; z++) world.setVoxel(25, y, z, 0)
     expect(w.activeChunkCount).toBeGreaterThan(0)
 
-    // drain RATE: the level must move on gameplay timescales, not just
-    // asymptotically. (Pre-fix: >60% left at 2000 steps and still trickling.)
-    let prev = poured
+    // drain RATE (the B21 promise): the level must move on gameplay
+    // timescales. 300 steps = 2.5s of game time — the basin must be more
+    // than half empty by then, and water must be OUTSIDE the pool.
     let settledAt = -1
-    for (let step = 1; step <= 12000; step++) {
+    for (let step = 1; step <= 6000; step++) {
       w.step()
-      if (step === 500 || step === 2000) {
+      if (step === 300) {
         expect(w.totalMass(), `mass drifted by step ${step}`).toBe(poured)
-        const b = basinSum()
-        expect(b, `basin did not drain by step ${step}`).toBeLessThan(prev)
-        expect(b / poured).toBeLessThan(step === 500 ? 0.5 : 0.3)
-        prev = b
+        expect(basinSum() / poured, 'basin did not visibly drain in 2.5s').toBeLessThan(0.5)
+        // outflow is real water in the yard, not vanished mass
+        let outside = 0
+        for (let y = 8; y <= 12; y++)
+          for (let z = 5; z <= 26; z++)
+            for (let x = 9; x <= 24; x++) outside += w.levelAt(x, y, z)
+        expect(outside, 'no water left the pool through the breach').toBeGreaterThan(0)
       }
       if (w.activeChunkCount === 0) {
         settledAt = step
@@ -82,72 +81,51 @@ describe('B21 — breached pool drains at world scale (T62, V9)', () => {
 
     // guaranteed settle (the deadband): no endless bucket-brigade trickle
     expect(settledAt, 'water never settled after the breach').toBeGreaterThan(0)
-    // near-empty basin: only sub-voxel residue films remain
+    // near-empty basin: pool level equalized with the yard outside
     expect(basinSum() / poured).toBeLessThan(0.25)
     // V9: every drop that left the basin still exists somewhere in the yard
     expect(w.totalMass()).toBe(poured)
   })
 })
 
-describe('T62 — lateral rule legs (rules.ts contract)', () => {
-  it('lateralNext is pairwise mass-exact for every mode/level combination', () => {
-    const levels = [0, 1, 2, 3, 4, 5, 17, 100, 127, 128, 254, 255]
-    const modes = [DonorMode.Falling, DonorMode.Splashing, DonorMode.Supported]
-    for (const a of levels)
-      for (const b of levels)
-        for (const mode of modes)
-          for (const ru of [false, true]) {
-            const na = lateralNext(a, b, mode, ru)
-            const nb = lateralNext(b, a, mode, ru)
-            expect(na + nb, `mass broke for (${a},${b},${mode},${ru})`).toBe(a + b)
-            expect(na).toBeGreaterThanOrEqual(0)
-            expect(na).toBeLessThanOrEqual(MAX_LEVEL)
+describe('T62 — column flow rule (rules.ts contract)', () => {
+  const U = MAX_LEVEL // 255 units per voxel
+
+  it('never moves more than the donor holds above the sill, never over the cap', () => {
+    for (const surfA of [10, 300, 1000, 5000])
+      for (const surfB of [0, 5, 299, 900])
+        for (const sill of [0, 255, 765])
+          for (const wet of [false, true]) {
+            if (surfB >= surfA) continue
+            const t = columnFlow(surfA, surfB, sill, wet)
+            expect(t).toBeGreaterThanOrEqual(0)
+            expect(t).toBeLessThanOrEqual(FLOW_CAP) // rate-limited (reads as flow)
+            expect(t).toBeLessThanOrEqual(Math.max(0, surfA - sill)) // sill holds what's below it
+            expect(surfA - t).toBeGreaterThanOrEqual(surfB) // donor never ends below receiver
           }
   })
 
-  it('supported deadband: small differences are a fixpoint, larger ones flow', () => {
-    expect(lateralNext(100, 100 - LATERAL_DEADBAND, DonorMode.Supported, false)).toBe(100)
-    expect(lateralNext(100, 100 - LATERAL_DEADBAND - 1, DonorMode.Supported, false)).not.toBe(100)
+  it('deadband: settled wet pairs are a fixpoint, steeper ones flow', () => {
+    expect(columnFlow(10 * U, 10 * U - SURFACE_DEADBAND, 8 * U, true)).toBe(0)
+    expect(columnFlow(10 * U, 10 * U - SURFACE_DEADBAND - 2, 8 * U, true)).toBeGreaterThan(0)
+    // dry receivers have NO deadband — residue still rolls over a ledge
+    expect(columnFlow(8 * U + 2, 5 * U, 8 * U, false)).toBe(2)
   })
 
-  it('waterfall leg: an empty falling receiver takes everything from a supported donor', () => {
-    expect(lateralNext(200, 0, DonorMode.Supported, true)).toBe(0)
-    expect(lateralNext(0, 200, DonorMode.Supported, true)).toBe(200)
-    // receiver on solid ground: normal equalization instead
-    expect(lateralNext(200, 0, DonorMode.Supported, false)).toBe(100)
-    // even sub-deadband residue rolls over a ledge (no stranded films at lips)
-    expect(lateralNext(2, 0, DonorMode.Supported, true)).toBe(0)
+  it('a wall with no opening blocks all flow (sill above the surface)', () => {
+    expect(columnFlow(10 * U, 2 * U, 10 * U, false)).toBe(0) // sill at surface: nothing above it
+    expect(columnFlow(10 * U, 2 * U, 12 * U, false)).toBe(0) // sill above surface
   })
 
-  it('splashing donor spills a quarter of the difference; falling donor holds', () => {
-    expect(lateralNext(100, 0, DonorMode.Splashing, false)).toBe(75)
-    expect(lateralNext(0, 100, DonorMode.Splashing, false)).toBe(25)
-    expect(lateralNext(3, 0, DonorMode.Splashing, false)).toBe(3) // diff>>2 == 0
-    expect(lateralNext(255, 0, DonorMode.Falling, false)).toBe(255)
+  it('a breach below the surface advects everything above the sill (capped)', () => {
+    // deep drop into an empty yard: full cap per visit, not a diffusion trickle
+    expect(columnFlow(12 * U, 8 * U, 8 * U, false)).toBe(FLOW_CAP)
+    // nearly drained to the sill: the remaining head keeps halving out
+    expect(columnFlow(8 * U + 40, 8 * U, 8 * U, false)).toBe(20)
   })
 
-  it('a column landing on rising water sloshes outward (rolling, not stacking)', () => {
-    const world = new ChunkStore()
-    world.fillBox(0, 0, 0, 31, 4, 31, 2) // floor at y=4
-    const w = new WaterSim(world)
-    // seed a shallow pool so the fall lands on partial water (splash regime)
-    for (let x = 12; x <= 20; x++) for (let z = 12; z <= 20; z++) w.addWater(x, 5, z, 60)
-    // heavy column pouring onto the center
-    for (let y = 8; y <= 12; y++) w.addWater(16, y, 16, MAX_LEVEL)
-    // within a few steps the impact cell's neighbors ABOVE the pool surface
-    // must have received water sideways — pre-T62 the column could only
-    // stack straight up (levels moved strictly vertically while falling)
-    let sloshed = false
-    for (let i = 0; i < 12 && !sloshed; i++) {
-      w.step()
-      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-        if (w.levelAt(16 + dx, 6, 16 + dz) > 0) sloshed = true
-      }
-    }
-    expect(sloshed, 'falling column never spilled sideways at the impact').toBe(true)
-    // and it still settles + conserves mass
-    for (let i = 0; i < 4000 && w.activeChunkCount > 0; i++) w.step()
-    expect(w.activeChunkCount).toBe(0)
-    expect(w.totalMass()).toBe(9 * 9 * 60 + 5 * MAX_LEVEL)
+  it('connected columns equalize by half the difference', () => {
+    expect(columnFlow(10 * U, 10 * U - 100, 8 * U, true)).toBe(50)
+    expect(columnFlow(10 * U, 10 * U - 100, 9 * U, true)).toBe(50)
   })
 })

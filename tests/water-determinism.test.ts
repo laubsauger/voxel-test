@@ -52,12 +52,16 @@ describe('water determinism (V2, V3, I.hash)', () => {
     expect(hashWater(a.w)).not.toBe(hashWater(b.w))
   })
 
-  it('hashWater is FNV-1a over stepCount + sorted pages (Fnv integration)', () => {
+  it('hashWater is FNV-1a over stepCount + sorted column pages (Fnv integration)', () => {
     const { w } = runScenario(10)
     // reproduce the format manually with the I.hash primitive
     const h = new Fnv()
     h.u32(w.stepCount)
-    w.forEachPage((ci, data) => h.u32(ci).bytes(data))
+    w.forEachColumnPage((key, m, bottom) => {
+      h.u32(key)
+      h.bytes(new Uint8Array(m.buffer, m.byteOffset, m.byteLength))
+      h.bytes(new Uint8Array(bottom.buffer, bottom.byteOffset, bottom.byteLength))
+    })
     expect(h.value).toBe(hashWater(w))
     // and it composes into a larger digest without disturbing it
     const combined = hashWaterInto(new Fnv().u32(0xdeadbeef), w).value

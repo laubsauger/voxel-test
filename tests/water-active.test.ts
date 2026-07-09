@@ -55,6 +55,34 @@ describe('water active set (T15 perf invariant)', () => {
     expect(hashWater(w)).not.toBe(before) // it actually simulates again
   })
 
+  it('settled water does ZERO work — column work counter frozen at scale (V2-pure cost proof)', () => {
+    // a large settled sheet (128×128 columns ≈ a park pond / sea slice) must
+    // cost literally nothing per step: no wall-clock here (V2 purity) — the
+    // sim's own work counter is the evidence
+    const world = new ChunkStore()
+    world.fillBox(0, 0, 0, 129, 4, 129, 2) // floor
+    world.fillBox(0, 5, 0, 129, 6, 0, 2) // containment walls around the sheet
+    world.fillBox(0, 5, 129, 129, 6, 129, 2)
+    world.fillBox(0, 5, 0, 0, 6, 129, 2)
+    world.fillBox(129, 5, 0, 129, 6, 129, 2)
+    const w = new WaterSim(world)
+    for (let x = 1; x <= 128; x++) for (let z = 1; z <= 128; z++) w.addWater(x, 5, z, 200)
+    for (let i = 0; i < 5000 && w.activeChunkCount > 0; i++) w.step()
+    expect(w.activeChunkCount).toBe(0)
+
+    const work = w.workCount
+    const hash = hashWater(w)
+    for (let i = 0; i < 1000; i++) w.step() // ~8 seconds of game time
+    expect(w.workCount, 'settled water still burned work').toBe(work)
+    expect(hashWater(w)).toBe(hash)
+
+    // a disturbance costs work again (the counter is live, not a stub)
+    world.setVoxel(64, 4, 64, 0) // open the floor under the sheet
+    w.notifyVoxelChanged(64, 4, 64)
+    for (let i = 0; i < 4 && w.activeChunkCount > 0; i++) w.step()
+    expect(w.workCount).toBeGreaterThan(work)
+  })
+
   it('a voxel edit notification wakes a settled chunk', () => {
     const world = new ChunkStore()
     world.fillBox(0, 0, 0, 31, 8, 31, 2)

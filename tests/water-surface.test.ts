@@ -9,7 +9,7 @@ import { WaterSurface, extractWaterSurface } from '../src/render/water/surface'
 
 describe('water surface extraction (T16, V6)', () => {
   it('a lone full water cell yields all 6 faces', () => {
-    const world = new ChunkStore()
+    const world = new ChunkStore() // empty world: the cell rests at y=0, all faces exposed
     const w = new WaterSim(world)
     w.addWater(5, 5, 5, MAX_LEVEL)
     const s = extractWaterSurface(w, world)
@@ -87,12 +87,13 @@ describe('water surface extraction (T16, V6)', () => {
     }
   })
 
-  it('B20: a partial cell under falling water still has a top surface', () => {
+  it('B20: every wet column exposes exactly one top face — at its partial surface, never mid-column', () => {
     const world = new ChunkStore()
     world.fillBox(0, 0, 0, 31, 4, 31, 2)
     const w = new WaterSim(world)
-    w.addWater(5, 5, 5, 120) // partial pool cell
-    w.addWater(5, 7, 5, 200) // blob falling in from above (gap at y=6)
+    w.addWater(5, 5, 5, 120) // shallow partial column
+    w.addWater(6, 5, 5, MAX_LEVEL) // deeper neighbor: full cell…
+    w.addWater(6, 6, 5, 95) // …plus a partial surface cell above it
     const s = extractWaterSurface(w, world)
     let tops = 0
     let bottoms = 0
@@ -101,9 +102,10 @@ describe('water surface extraction (T16, V6)', () => {
       if (ny === 1) tops++
       if (ny === -1) bottoms++
     }
-    // partial cell top + blob top; blob underside + (partial cell over solid floor -> none)
+    // one free surface per column — the full cell under more water must NOT
+    // emit a top (open band bug, B20), and solid-floored cells no bottom
     expect(tops).toBe(2)
-    expect(bottoms).toBe(1)
+    expect(bottoms).toBe(0)
   })
 
   it('B26: edits far from water are free — no wake, no version bump, no rebuild', () => {
