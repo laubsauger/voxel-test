@@ -163,7 +163,7 @@ T103|.|[C] WP5 bombay Ski Inn + civic: Ski Inn 100×80vox @ Ave A (tan+brown, fl
 T104|.|[C] WP6 bombay art: Drive-In (2×4 wheel-less rust cars → white trailer screen @ E-St/berm), Opera House (#3E7FBF flip-flop speckle facade), TV wall (20-40 multicolor boxes @ 4th St), Da Vinci Fish 12m, text sign, star+barbed wire, rusted-scrap creature (NOT Breceda dinosaur — that's Borrego Springs)|T98,T99|V19
 T105|.|[C] WP7 bombay playa dressing: swing set alone 50-60m past berm (recession marker), 5-6 half-buried tilted trailers (one ~45°) near berm foot, salt-rimed piling row off E-St axis, derelict dock, Lodestar nose-down plane (re-skin Cessna grid, rust + glass-flower tip), fish-skeleton speckle + boat hulk + scum line at waterline. Half-buried stamp helper|T100|V18
 T106|.|[C] WP8 bombay approach: welcome sign @ spur junction, leaning utility poles, faded billboard, creosote scrub props, cosmetic SINGLE-track rail + poles on frame-road far side (verified: not double)|T98,T99|
-T107|.|[R] WP9 bombay map style: map-style.ts 'bombay' (sun-bleached) + 'bombayBeach' (salt-white + water edge), district label; optional milky-haze TOD tuning|T98|
+T107|x|[R] WP9 bombay map style: map-style.ts 'bombay' (sun-bleached) + 'bombayBeach' (salt-white + water edge), district label; optional milky-haze TOD tuning|T98|
 
 Parallel plan: T1→(T2,T3)→T4,T5 serial-ish core. Then tracks fan out — R(T6-T9,T14), P(T10-T13), W(T15-T17), C(T18-T20), PL(T21-T23), N(T24-T27) run parallel where deps met. Subagents per track, worktree isolation for file-overlap safety.
 

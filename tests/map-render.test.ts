@@ -140,3 +140,44 @@ describe('T50 forward-compat (districts table-driven by kind string)', () => {
     expect(labels).toEqual(['DOWNTOWN', 'POND PARK'])
   })
 })
+
+describe('T107 — bombay district + street styles', () => {
+  it('bombay/bombayBeach resolve to real entries, not the fallback', () => {
+    for (const kind of ['bombay', 'bombayBeach'] as const) {
+      const s = districtStyle(kind)
+      expect(s).toBe(DISTRICT_STYLES[kind]) // table hit, not synthesized default
+      expect(s.ground).not.toBe(DISTRICT_STYLES.suburban.ground)
+    }
+    expect(districtStyle('bombay').label).toBe('BOMBAY BEACH')
+    // shore district must read distinct from town on the paper
+    expect(DISTRICT_STYLES.bombayBeach.ground).not.toBe(DISTRICT_STYLES.bombay.ground)
+    expect(DISTRICT_STYLES.bombayBeach.label).not.toBe(DISTRICT_STYLES.bombay.label)
+  })
+
+  it('bombay districts label and tint like any other kind on the map', () => {
+    const fake: MapLayout = {
+      roads: [],
+      districts: [
+        { kind: 'bombay', rect: { x0: 0, z0: 0, x1: 511, z1: 1023 } },
+        { kind: 'bombayBeach', rect: { x0: 512, z0: 0, x1: 1023, z1: 1023 } },
+      ],
+      buildings: [{ rect: { x0: 40, z0: 40, x1: 140, z1: 120 } }],
+    }
+    const list = buildMapCommands(fake, { vx: 1024, vz: 1024 })
+    const has = (color: string) => list.cmds.some((c) => 'fill' in c && c.fill === color)
+    expect(has(DISTRICT_STYLES.bombay.ground)).toBe(true)
+    expect(has(DISTRICT_STYLES.bombayBeach.ground)).toBe(true)
+    expect(has(DISTRICT_STYLES.bombay.building)).toBe(true) // tinted by ITS district
+    const labels = list.cmds.filter((c) => c.op === 'label').map((c) => (c.op === 'label' ? c.text : ''))
+    expect(labels).toEqual(['BOMBAY BEACH', 'THE PLAYA'])
+  })
+
+  it('bombay street kinds style as worn surfaces, never the clean default', () => {
+    for (const kind of ['asphalt-cracked', 'dirt'] as const) {
+      const s = roadStyle(kind)
+      expect(s).not.toBe(roadStyle(undefined))
+      expect(s.fill).not.toBe(roadStyle(undefined).fill)
+      expect(s.centerLine).toBe(false) // no arterial dressing on bombay streets
+    }
+  })
+})

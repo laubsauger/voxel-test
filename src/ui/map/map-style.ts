@@ -70,6 +70,24 @@ export const DISTRICT_STYLES: Record<string, DistrictStyle> = {
     buildingShade: '#8a8a84',
     label: 'AIRFIELD',
   },
+  // T107 — Bombay Beach town: sun-bleached paper, warmer + lighter than
+  // suburbia (research §3 WP9: everything reads bleached-bone neutral).
+  bombay: {
+    ground: '#efe9d8',
+    lot: '#e9e0c9',
+    building: '#c6bba1',
+    buildingShade: '#9f9276',
+    label: 'BOMBAY BEACH',
+  },
+  // T107 — the shore/playa district: salt-white ground with a faint
+  // grey-green water-edge tint on lots/structures (the dead-sea side).
+  bombayBeach: {
+    ground: '#f2efe3',
+    lot: '#e8ecdf',
+    building: '#c6cab9',
+    buildingShade: '#9aa090',
+    label: 'THE PLAYA',
+  },
 }
 
 const DEFAULT_STYLE: DistrictStyle = DISTRICT_STYLES.suburban
@@ -94,6 +112,10 @@ export interface RoadStyle {
 export const ROAD_STYLES: Record<string, RoadStyle> = {
   default: { fill: '#fdfcf7', casing: '#aca489', casingPx: 4, centerLine: false },
   arterial: { fill: '#fdf3d5', casing: '#a29a7e', casingPx: 4.5, centerLine: true },
+  // T107 — bombay street kinds (layout BombayStreet.kind): cracked asphalt
+  // reads faded grey-brown, dirt alleys read dusty tan — never clean white.
+  'asphalt-cracked': { fill: '#d4ccbc', casing: '#9c917c', casingPx: 4, centerLine: false },
+  dirt: { fill: '#e0d4b4', casing: '#b0a17e', casingPx: 3.5, centerLine: false },
 }
 
 export function roadStyle(kind: string | undefined): RoadStyle {
