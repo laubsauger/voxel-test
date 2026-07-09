@@ -58,7 +58,10 @@ export interface Road {
   sidewalks: [Rect, Rect]
 }
 
-export type DistrictKind = 'suburb' | 'rowhouse' | 'commercial' | 'park' | 'beach' | 'desert' | 'airport'
+export type DistrictKind =
+  | 'suburb' | 'rowhouse' | 'commercial' | 'park' | 'beach' | 'desert' | 'airport'
+  // T98 — Bombay Beach town grid + its Salton Sea shore column (east rim)
+  | 'bombay' | 'bombayBeach'
 
 export interface District {
   bi: number
@@ -294,6 +297,96 @@ export interface Airport {
 }
 
 /**
+ * T98 — Bombay Beach layout contract (docs/research/bombay-beach.md §2).
+ * Declarative only: streets/lots/landmarks/berm/playa/sea entries; the
+ * stampers (T100-T107) turn them into voxels. Orientation: real south → game
+ * east. Berm + sea sit on the world's east rim; avenues run E-W toward the
+ * berm (their stubs cross it at the ramp cuts), streets 1st..5th run N-S,
+ * 5th nearest the berm; entrance spur drops in from CA-111 (the world road
+ * on the zone's north edge) at the 1st-St/Ave-A corner.
+ */
+export type BombayCondition = 'lived' | 'vacant' | 'burned' | 'collapsed'
+
+/** named road strip. axis = run direction; center = perp coordinate;
+ * a0..a1 = inclusive span along the run axis */
+export interface BombayStreet {
+  name: string
+  axis: 'x' | 'z'
+  center: number
+  a0: number
+  a1: number
+  kind: 'asphalt-cracked' | 'dirt'
+  /** 5th St only (the one bent street): for run coord ≥ at, center += offset */
+  bend?: { at: number; offset: number }
+}
+
+export interface BombayLot {
+  rect: Rect
+  /** side of the lot touching its street */
+  front: Side
+  /** street face id (V20 adjacency runs are per face) */
+  face: string
+  condition: BombayCondition
+  /** per-lot variant seed (tint/rotation/addon set, T102) */
+  seed: number
+}
+
+export type BombayLandmarkKind =
+  | 'skiInn' | 'market' | 'fireStation' | 'legion' | 'church' | 'commsMast'
+  | 'driveIn' | 'operaHouse' | 'tvWall' | 'daVinciFish'
+
+export interface BombayLandmark {
+  kind: BombayLandmarkKind
+  rect: Rect
+}
+
+/** earthen flood dike east of town: trapezoid strip, jittered crest polyline,
+ * ramp cut-throughs where the beach crossings pass over (T100 stamps it) */
+export interface BombayBerm {
+  strip: Rect
+  crest: { x: number; z: number }[]
+  /** height above street grade, voxels (research §2.3: 40) */
+  h: number
+  crestW: number
+  baseW: number
+  ramps: { z: number; w: number; name: string }[]
+}
+
+export type BombayArtKind =
+  | 'swingSet' | 'lodestar' | 'pilingRow' | 'dock' | 'buriedTrailer' | 'textSign' | 'star'
+
+export interface BombayArt {
+  kind: BombayArtKind
+  x: number
+  z: number
+  rot: 0 | 1 | 2 | 3
+  seed: number
+  /** run length (pilingRow/dock), voxels */
+  len?: number
+  /** half-buried trailers: lean angle (one famously ~45°) */
+  tiltDeg?: number
+}
+
+export interface BombayZone {
+  /** town grid blocks (bi last-2..last-1, bj 2..5) */
+  town: Rect
+  /** berm+playa+sea column (bi last + east GRID_MARGIN) */
+  shore: Rect
+  streets: BombayStreet[]
+  alleys: BombayStreet[]
+  /** the one junction with the outside world (open desert approach) */
+  spur: BombayStreet
+  /** dead-end dirt stubs of B/C/E-St past 5th toward the berm */
+  stubs: BombayStreet[]
+  lots: BombayLot[]
+  landmarks: BombayLandmark[]
+  berm: BombayBerm
+  playa: Rect
+  sea: Box
+  art: BombayArt[]
+}
+
+/**
  * P21 — rural compound on the park/nature rim: a long low farmhouse (with a
  * covered front porch), a big gable barn, and an optional grain silo. Bigger
  * footprint and distinctly rural vs the suburb houses. Placed occasionally on
@@ -399,6 +492,8 @@ export interface Layout {
   beaches: Beach[]
   deserts: DesertPlot[]
   airports: Airport[]
+  /** T98 — Bombay Beach zone; null when its districts don't exist */
+  bombay: BombayZone | null
   farmhouses: Farmhouse[]
   parkPaths: Rect[]
   props: Prop[]
@@ -615,6 +710,13 @@ function districtKindAt(bi: number, bj: number): DistrictKind {
   if (bi >= last - 1 && bj <= 1) return 'desert'
   // airport — a long flat apron on the west edge (1 block wide × 3 tall)
   if (bi === 0 && bj >= CORE_LO && bj <= CORE_LO + 2) return 'airport'
+  // T98 — Bombay Beach on the east rim, directly south of the desert corner
+  // (desert keeps bj 0-1; research §2.2). Gated on the 12-block world (T97)
+  // so smaller worlds never grow a half-zone.
+  if (BLOCKS >= 12 && bj >= 2 && bj <= 5) {
+    if (bi >= last - 2 && bi <= last - 1) return 'bombay'
+    if (bi === last) return 'bombayBeach'
+  }
   return 'park'
 }
 
@@ -1155,6 +1257,259 @@ function makeAirports(districts: District[]): Airport[] {
   const p1 = { x: leftCx, z: hangar.z1 + 60, rot: 0 as const } // parked left, below the hangar
   if (leftCx - 45 > apron.x0 && p1.z + 70 < terminal.z0 - 20) planes.push(p1)
   return [{ apron, runway, hangar, terminal, planes }]
+}
+
+// T98 — Bombay Beach dimensions (research §2.3 compression table). Streets:
+// 5 m cracked asphalt + 1 m sand verge each side. NOTE the research §2.3
+// street plan (gaps 500/500/600/600 + spur 600-800) assumed the zone ≈3330
+// vox tall (§2.2 "~333 m"); the real bj2-5 span is 1984 (bj3-5 are core-band
+// 416-pitch roads, not rim 832) — even with a zero spur the literal gaps
+// don't fit. Kept: street/avenue counts, the 5:5:6:6 gap ratio, spur length
+// band, alley offsets, no-Avenue-E quirk, prop scales. Rescaled: street gaps
+// → 325/325/390/390, avenue pitch 300 → 270.
+export const BOMBAY_STREET_HALF = 25 // 50 vox cracked asphalt
+export const BOMBAY_VERGE_W = 10 // 1 m sand verge each side
+export const BOMBAY_ALLEY_W = 30 // dirt two-track
+const BB_ROAD_EXT = BOMBAY_STREET_HALF + BOMBAY_VERGE_W // 35
+const BB_LOT_W = 80
+const BB_ST_GAPS = [325, 325, 390, 390] as const
+const BB_AVE_PITCH = 270
+
+/**
+ * T98 — Bombay Beach zone emitter. Deterministic per seed (V2): every feature
+ * group draws from its own derived Prng stream (makeCommercial convention).
+ * Returns null when the bombay districts don't exist (defensive — small
+ * worlds, doctored district lists).
+ */
+export function makeBombay(seed: number, districts: District[]): BombayZone | null {
+  const townBlocks = districts.filter((d) => d.kind === 'bombay')
+  const shoreBlocks = districts.filter((d) => d.kind === 'bombayBeach')
+  if (townBlocks.length === 0 || shoreBlocks.length === 0) return null
+  const union = (rs: Rect[]): Rect => ({
+    x0: Math.min(...rs.map((r) => r.x0)),
+    z0: Math.min(...rs.map((r) => r.z0)),
+    x1: Math.max(...rs.map((r) => r.x1)),
+    z1: Math.max(...rs.map((r) => r.z1)),
+  })
+  const town = union(townBlocks.map((d) => d.rect))
+  const shoreU = union(shoreBlocks.map((d) => d.rect))
+  // shore column claims the east GRID_MARGIN band too (research §2.2)
+  const shore: Rect = { x0: shoreU.x0, z0: town.z0, x1: WORLD_VX - 1, z1: town.z1 }
+
+  // ---- street plan (§2.3) ----------------------------------------------
+  // streets 1st..5th run N-S, stacked west→east, 5th nearest the berm
+  const stX: number[] = [town.x0 + 43]
+  for (const g of BB_ST_GAPS) stX.push(stX[stX.length - 1] + g)
+  // avenues run E-W toward the berm. CA-111 = the world road on the north
+  // edge; Ave A sits 634 vox south of its centerline → the open-desert spur
+  // run reads 600-800 per spec
+  const ca111 = town.z0 - RES_EXTENT - 1
+  const aveZ = [0, 1, 2, 3, 4, 5].map((i) => ca111 + 634 + i * BB_AVE_PITCH)
+  const stNames = ['1st Street', '2nd Street', '3rd Street', '4th Street', '5th Street']
+  // the real naming quirk: there is no Avenue E — "E St" instead
+  const aveNames = ['Avenue A', 'Avenue B', 'Avenue C', 'E St', 'Avenue F', 'Aisle of Palms']
+  const stz0 = aveZ[0] - BB_ROAD_EXT
+  const stz1 = aveZ[5] + BB_ROAD_EXT
+  const streets: BombayStreet[] = []
+  for (let i = 0; i < 5; i++) {
+    const st: BombayStreet = {
+      name: stNames[i],
+      axis: 'z',
+      center: stX[i],
+      a0: stz0,
+      a1: stz1,
+      // 2nd Street is the untagged one — dirt (research §1.1)
+      kind: i === 1 ? 'dirt' : 'asphalt-cracked',
+    }
+    // 5th is the only bent street: kinks east toward the shore past Ave F
+    if (i === 4) st.bend = { at: aveZ[4], offset: 40 }
+    streets.push(st)
+  }
+  for (let i = 0; i < 6; i++) {
+    streets.push({
+      name: aveNames[i],
+      axis: 'x',
+      center: aveZ[i],
+      a0: stX[0] - BB_ROAD_EXT,
+      a1: stX[4] + BB_ROAD_EXT,
+      kind: 'asphalt-cracked',
+    })
+  }
+  // 2 dirt alleys mid-block between 1st-2nd and 2nd-3rd
+  const alleys: BombayStreet[] = [0, 1].map((i) => ({
+    name: `alley ${i + 1}`,
+    axis: 'z' as const,
+    center: (stX[i] + stX[i + 1]) >> 1,
+    a0: stz0,
+    a1: stz1,
+    kind: 'dirt' as const,
+  }))
+  // the ONE junction with the outside world: 1st-St leg up to CA-111
+  const spur: BombayStreet = {
+    name: 'Avenue A spur',
+    axis: 'z',
+    center: stX[0],
+    a0: town.z0,
+    a1: stz0 - 1,
+    kind: 'asphalt-cracked',
+  }
+  // dead-end dirt stubs of B/C/E-St past 5th toward the berm. E-St longest =
+  // the beach-access line (continues over the berm at its ramp cut)
+  const stubs: BombayStreet[] = [
+    { name: 'Avenue B stub', axis: 'x', center: aveZ[1], a0: stX[4], a1: stX[4] + 100, kind: 'dirt' },
+    { name: 'Avenue C stub', axis: 'x', center: aveZ[2], a0: stX[4], a1: stX[4] + 80, kind: 'dirt' },
+    { name: 'E St stub', axis: 'x', center: aveZ[3], a0: stX[4], a1: Math.min(town.x1, stX[4] + 110), kind: 'dirt' },
+  ]
+
+  // ---- lot rows ----------------------------------------------------------
+  // lots front the streets; alley blocks carry two shallow rows backing onto
+  // the alley, the two east blocks are double-deep back-to-back (no alley,
+  // research §1.1 "3rd-4th 201.7 m — no alley")
+  interface BbRow { x0: number; x1: number; front: Side; face: string }
+  const rows: BbRow[] = []
+  for (let b = 0; b < 4; b++) {
+    const cx0 = stX[b] + BB_ROAD_EXT + 1
+    const cx1 = stX[b + 1] - BB_ROAD_EXT - 1
+    const depth = b < 2 ? 110 : 150
+    rows.push({ x0: cx0 + 1, x1: cx0 + depth, front: 'x-', face: `${stNames[b]}/E` })
+    rows.push({ x0: cx1 - depth, x1: cx1 - 1, front: 'x+', face: `${stNames[b + 1]}/W` })
+  }
+
+  // ---- landmarks (§1.5 placements, compressed per §2.3) ------------------
+  const L = (kind: BombayLandmarkKind, x0: number, z0: number, w: number, d: number): BombayLandmark => ({
+    kind,
+    rect: { x0, z0, x1: x0 + w - 1, z1: z0 + d - 1 },
+  })
+  const landmarks: BombayLandmark[] = [
+    L('skiInn', rows[0].x0, aveZ[0] + 50, 100, 80), // Ave A at the entrance corner — the lowest bar
+    L('market', rows[0].x0, aveZ[0] + 160, 80, 60), // Bombay Market, next lot down
+    L('commsMast', stX[1] - 75, aveZ[0] + 40, 20, 20), // mast + 3 dishes near Ave A/2nd
+    L('fireStation', rows[4].x0, aveZ[1] + 45, 80, 60), // tiny volunteer bay on 3rd St
+    L('legion', rows[0].x0, aveZ[4] + 45, 100, 100), // the "other bar", 1st St far corner, fenced
+    L('church', rows[6].x0, aveZ[4] + 60, 70, 60), // far-avenue corner
+    L('driveIn', stX[3] + 170, aveZ[3] + 45, 150, 120), // rusted cars → screen, E St end by the berm
+    L('operaHouse', rows[1].x0 + 10, aveZ[2] + 50, 90, 80), // sky-blue flip-flop trailer, mid-grid
+    L('tvWall', rows[5].x1 - 79, aveZ[1] + 45, 80, 80), // stacked painted TVs, lot at 4th St
+    L('daVinciFish', rows[2].x0 + 30, aveZ[3] - 80, 40, 40), // kinetic fish near 2nd/E-St
+  ]
+
+  // ---- lots + V20 condition mix ------------------------------------------
+  const lotKeep = landmarks.map((l) => growRect(l.rect, 6))
+  const lp = new Prng((seed ^ 0xb0bb47 ^ Math.imul(1, GOLD)) >>> 0)
+  const lots: BombayLot[] = []
+  for (const row of rows) {
+    for (let g = 0; g < 5; g++) {
+      const gz0 = aveZ[g] + BB_ROAD_EXT + 1
+      for (const off of [10, 109]) {
+        const rect: Rect = { x0: row.x0, z0: gz0 + off, x1: row.x1, z1: gz0 + off + BB_LOT_W - 1 }
+        if (lotKeep.some((k) => rectsTouch(rect, k))) continue // landmark owns the ground
+        lots.push({ rect, front: row.front, face: row.face, condition: 'vacant', seed: lp.nextU32() })
+      }
+    }
+  }
+  // V20 — exact 35/40/(10+15) quota deck (histogram holds by construction),
+  // shuffled, then run-repaired: no street face carries >3 adjacent
+  // same-condition lots (lots are emitted face-major, z-ascending)
+  const n = lots.length
+  const nL = Math.round(n * 0.35)
+  const nV = Math.round(n * 0.4)
+  const nB = Math.round(n * 0.1)
+  const deck: BombayCondition[] = [
+    ...(Array(nL).fill('lived') as BombayCondition[]),
+    ...(Array(nV).fill('vacant') as BombayCondition[]),
+    ...(Array(nB).fill('burned') as BombayCondition[]),
+    ...(Array(n - nL - nV - nB).fill('collapsed') as BombayCondition[]),
+  ]
+  for (let i = n - 1; i > 0; i--) {
+    const j = lp.nextInt(i + 1)
+    const t = deck[i]
+    deck[i] = deck[j]
+    deck[j] = t
+  }
+  // 4-run ending at i on one face?
+  const runAt = (i: number): boolean =>
+    i >= 3 &&
+    i < n &&
+    lots[i].face === lots[i - 3].face &&
+    deck[i] === deck[i - 1] &&
+    deck[i] === deck[i - 2] &&
+    deck[i] === deck[i - 3]
+  for (let pass = 0; pass < 64; pass++) {
+    let bad = -1
+    for (let i = 3; i < n; i++) {
+      if (runAt(i)) {
+        bad = i
+        break
+      }
+    }
+    if (bad < 0) break
+    // swap the run tail with the nearest lot of another condition that
+    // doesn't just move the violation (histogram unchanged)
+    for (let s = 1; s < n; s++) {
+      const j = (bad + s) % n
+      if (deck[j] === deck[bad]) continue
+      const t = deck[bad]
+      deck[bad] = deck[j]
+      deck[j] = t
+      let ok = true
+      for (const k of [bad, bad + 1, bad + 2, bad + 3, j, j + 1, j + 2, j + 3]) {
+        if (runAt(k)) {
+          ok = false
+          break
+        }
+      }
+      if (ok) break
+      deck[j] = deck[bad]
+      deck[bad] = t
+    }
+  }
+  for (let i = 0; i < n; i++) lots[i].condition = deck[i]
+
+  // ---- berm / playa / sea (§1.2-§1.4, §2.3) -------------------------------
+  const bp = new Prng((seed ^ 0xb0bb47 ^ Math.imul(2, GOLD)) >>> 0)
+  const bermC = shore.x0 + 100
+  const strip: Rect = { x0: bermC - 70, z0: shore.z0, x1: bermC + 70, z1: shore.z1 }
+  const crest: { x: number; z: number }[] = []
+  // jittered crest line echoes the real NW-SE diagonal skew
+  for (let z = shore.z0 + 40; z <= shore.z1; z += 220) crest.push({ x: bermC - 25 + bp.nextInt(51), z })
+  const berm: BombayBerm = {
+    strip,
+    crest,
+    h: 40,
+    crestW: 50,
+    baseW: 140,
+    ramps: [
+      { z: shore.z0 + 90, w: 60, name: 'north end' },
+      { z: aveZ[2], w: 60, name: 'Avenue C' },
+      { z: aveZ[3], w: 80, name: 'E St' }, // widest — the beach-access crossing
+    ],
+  }
+  const bermFoot = strip.x1 + 1
+  const waterX = bermFoot + 680 // berm-to-waterline 600-800 (§2.3)
+  const playa: Rect = { x0: bermFoot, z0: shore.z0, x1: waterX - 1, z1: shore.z1 }
+  // dead sea surface 10-20 vox BELOW town grade — you look DOWN from the crest
+  const sea: Box = { x0: waterX, y0: GROUND_Y - 18, z0: shore.z0, x1: shore.x1, y1: GROUND_Y - 12, z1: shore.z1 }
+
+  // ---- beach art (§1.5 on-the-beach list) ---------------------------------
+  const ap = new Prng((seed ^ 0xb0bb47 ^ Math.imul(3, GOLD)) >>> 0)
+  const art: BombayArt[] = []
+  const put = (kind: BombayArtKind, x: number, z: number, extra?: Partial<BombayArt>): void => {
+    art.push({ kind, x, z, rot: ap.nextInt(4) as 0 | 1 | 2 | 3, seed: ap.nextU32(), ...extra })
+  }
+  put('swingSet', bermFoot + 300, aveZ[3] - 160) // stranded mid-playa — THE recession marker
+  put('lodestar', bermFoot + 140, shore.z0 + 400) // nose-down plane sculpture, north playa
+  put('pilingRow', bermFoot + 20, aveZ[3], { len: 600 }) // stumps marching seaward off E St
+  put('dock', waterX - 120, aveZ[3] + 40, { len: 140 }) // derelict dock reaching the waterline
+  put('textSign', bermFoot + 430, shore.z0 + 800) // "The only other thing is nothing"
+  put('star', bermFoot + 40, aveZ[2] - 50) // concrete star + barbed wire by the C ramp
+  // half-buried tilted trailers near the berm foot, first one at the famous ~45°
+  for (let i = 0; i < 5; i++) {
+    put('buriedTrailer', bermFoot + 20 + ap.nextInt(240), shore.z0 + 260 + i * 380 + ap.nextInt(120), {
+      tiltDeg: i === 0 ? 45 : 6 + ap.nextInt(20),
+    })
+  }
+
+  return { town, shore, streets, alleys, spur, stubs, lots, landmarks, berm, playa, sea, art }
 }
 
 /** T50 — park blocks: path cross + plaza, ponds, tree clusters, benches */
@@ -1761,6 +2116,7 @@ export function generateLayout(seed: number): Layout {
   const beaches = makeBeaches()
   const deserts = makeDeserts(seed, districts)
   const airports = makeAirports(districts)
+  const bombay = makeBombay(seed, districts) // T98 — null when districts absent
   props.push(...com.props)
   lamps.push(...com.lamps)
   trees.push(...park.trees)
@@ -1871,6 +2227,9 @@ export function generateLayout(seed: number): Layout {
     ...airports.map((a) => a.apron),
     ...beaches.map((b) => b.rect),
     ...deserts.map((d) => d.rect),
+    // T98 — same rule for the bombay town + shore: no city-grid furniture on
+    // salt flats / cracked-asphalt blocks (stampBombay overwrites surfaces)
+    ...(bombay ? [bombay.town, bombay.shore] : []),
   ]
   const inDistrict = (x: number, z: number): boolean =>
     districtRects.some((r) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1)
@@ -1891,7 +2250,7 @@ export function generateLayout(seed: number): Layout {
   return {
     seed, groundY: GROUND_Y, roads, districts, lots, houses, pools, villa,
     rowBlocks, towers: com.towers, parking: com.parking, plazas: com.plazas,
-    ponds: park.ponds, beaches, deserts, airports, farmhouses: park.farmhouses, parkPaths: park.parkPaths,
+    ponds: park.ponds, beaches, deserts, airports, bombay, farmhouses: park.farmhouses, parkPaths: park.parkPaths,
     props: clearedProps, trees: keptTrees, shrubs: keptShrubs, fences: keptFences, lamps: keptLamps, mailboxes, bins: keptBins,
   }
 }
