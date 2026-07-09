@@ -35,8 +35,8 @@ import {
   MAT_GALV_METAL,
   MAT_GLASS,
   MAT_METAL,
-  MAT_PAINT,
   MAT_PLASTER,
+  MAT_SALT_CRUST,
   MAT_RUST,
   MAT_SAND,
   MAT_WOOD,
@@ -520,7 +520,9 @@ function stampLot(store: ChunkStore, g: number, lot: BombayLot, bungalow: boolea
     case 'lived': {
       // white/pastel mass, art chroma ONLY on the door (V19)
       const roll = p.next()
-      const bodyMat = kind === 'bungalow' ? MAT_PLASTER : roll < 0.45 ? MAT_PLASTER : roll < 0.75 ? MAT_PAINT : MAT_BONE_SHELL
+      // NOTE: MAT_PAINT is road-marking skin (T43 guard: paint ONLY on
+      // asphalt) — white trailer walls use salt-crust's bleached tone instead
+      const bodyMat = kind === 'bungalow' ? MAT_PLASTER : roll < 0.45 ? MAT_PLASTER : roll < 0.75 ? MAT_SALT_CRUST : MAT_BONE_SHELL
       const style: ShellStyle = { bodyMat, door: 'accent', accentMat, windowDropPct: 0, shellDropPct: 0, dropSeed }
       if (kind === 'bungalow') buildBungalowShell(store, f, base, pl, style)
       else buildTrailerShell(store, f, base, pl, style)

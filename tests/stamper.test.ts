@@ -144,6 +144,7 @@ describe('scene stamper (T20/T50/T51, V2, V5)', () => {
       ...layout.pools.map((p) => p.basin),
       ...layout.ponds.map((p) => p.box),
       ...layout.beaches.map((b) => b.ocean),
+      ...(layout.bombay ? [layout.bombay.sea] : []), // T100 — Salton slice fill
     ])
   })
 
