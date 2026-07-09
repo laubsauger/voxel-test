@@ -17,7 +17,7 @@
  * come from layout, so no real vehicles here) and a boat hulk on 2-3 lots
  * zone-wide. V19: the mass stays bleached/rust neutrals; art-pop chroma is
  * accents only (doors + graffiti). Deterministic per lot.seed (V2) — Prng +
- * position hashing only, no Math.random.
+ * position hashing only — no nondeterministic randomness (V2).
  */
 import type { ChunkStore } from '../../../world/chunks'
 import type { BombayLot, BombayZone, Layout, Rect, Side } from '../layout'
