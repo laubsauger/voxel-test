@@ -271,7 +271,7 @@ function stampMarkings(store: ChunkStore, layout: Layout): void {
 }
 
 /** carve one opening through the walls of an arbitrary rect footprint */
-function wallOpening(
+export function wallOpening(
   store: ChunkStore,
   r: Rect,
   side: Side,
@@ -304,7 +304,7 @@ function stampOpening(store: ChunkStore, h: House, o: Opening, mat: number, grou
 }
 
 /** perimeter walls (thickness 2) over [y0..y1] for a rect */
-function stampWalls(store: ChunkStore, r: Rect, y0: number, y1: number, mat: number): void {
+export function stampWalls(store: ChunkStore, r: Rect, y0: number, y1: number, mat: number): void {
   store.fillBox(r.x0, y0, r.z0, r.x1, y1, r.z0 + 1, mat)
   store.fillBox(r.x0, y0, r.z1 - 1, r.x1, y1, r.z1, mat)
   store.fillBox(r.x0, y0, r.z0, r.x0 + 1, y1, r.z1, mat)
@@ -607,7 +607,7 @@ function stampRowBlock(store: ChunkStore, layout: Layout, b: RowBlock): void {
 }
 
 /** deterministic integer hash (pure fn of position+seed — V2-safe) */
-function hash3(x: number, y: number, z: number, seed: number): number {
+export function hash3(x: number, y: number, z: number, seed: number): number {
   let h = (seed ^ Math.imul(x + 1, 0x9e3779b1) ^ Math.imul(y + 1, 0x85ebca6b) ^ Math.imul(z + 1, 0xc2b2ae35)) >>> 0
   h ^= h >>> 15
   h = Math.imul(h, 0x2c1b3c6d) >>> 0
@@ -1045,7 +1045,7 @@ function stampBeach(store: ChunkStore, beach: Beach, g: number): void {
 
 /** deterministic value noise in [0,1] on a coarse lattice (bilinear), for
  * smooth dune/terrain height. Pure integer hashing — deterministic (V2). */
-function valueNoise(x: number, z: number, cell: number, seed: number): number {
+export function valueNoise(x: number, z: number, cell: number, seed: number): number {
   const gx = Math.floor(x / cell)
   const gz = Math.floor(z / cell)
   const fx = x / cell - gx
